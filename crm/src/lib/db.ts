@@ -1,0 +1,551 @@
+import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
+import path from "node:path";
+
+const DATA_DIR = path.join(process.cwd(), "data");
+const DB_PATH = path.join(DATA_DIR, "darshan.db");
+
+let db: DatabaseSync | null = null;
+
+export function getDb(): DatabaseSync {
+  if (db) return db;
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  db = new DatabaseSync(DB_PATH);
+  db.exec("PRAGMA journal_mode = WAL;");
+  db.exec("PRAGMA foreign_keys = ON;");
+  applySchema(db);
+  return db;
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  phone TEXT,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('admin','manager','finance','staff')),
+  branch TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_login TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  ip TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS customers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  phone TEXT,
+  whatsapp TEXT,
+  email TEXT,
+  address TEXT,
+  city TEXT,
+  date_of_birth TEXT,
+  emergency_contact TEXT,
+  source TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);
+CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+
+CREATE TABLE IF NOT EXISTS branches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  city TEXT,
+  address TEXT,
+  phone TEXT,
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS vehicle_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'bike' CHECK (kind IN ('bike','scooter','car','van')),
+  icon TEXT,
+  image TEXT,
+  short_desc TEXT,
+  description TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS vehicles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  brand TEXT NOT NULL,
+  model TEXT NOT NULL,
+  year INTEGER,
+  category_id INTEGER REFERENCES vehicle_categories(id) ON DELETE SET NULL,
+  branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+  registration_no TEXT,
+  cc INTEGER,
+  fuel_type TEXT NOT NULL DEFAULT 'Petrol',
+  transmission TEXT NOT NULL DEFAULT 'Manual',
+  seats INTEGER NOT NULL DEFAULT 2,
+  mileage TEXT,
+  included_km INTEGER NOT NULL DEFAULT 100,
+  extra_km_rate REAL NOT NULL DEFAULT 5,
+  rate_12h REAL NOT NULL DEFAULT 0,
+  rate_24h REAL NOT NULL DEFAULT 0,
+  hourly_rate REAL NOT NULL DEFAULT 0,
+  weekend_rate_24h REAL,
+  deposit REAL NOT NULL DEFAULT 0,
+  late_fee_per_hour REAL NOT NULL DEFAULT 0,
+  description TEXT,
+  terms TEXT,
+  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','booked','maintenance','archived')),
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_vehicles_category ON vehicles(category_id);
+CREATE INDEX IF NOT EXISTS idx_vehicles_status ON vehicles(status);
+
+CREATE TABLE IF NOT EXISTS vehicle_photos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_vehicle_photos_vehicle ON vehicle_photos(vehicle_id);
+
+CREATE TABLE IF NOT EXISTS pricing_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE CASCADE,
+  category_id INTEGER REFERENCES vehicle_categories(id) ON DELETE CASCADE,
+  day_type TEXT NOT NULL DEFAULT 'weekend' CHECK (day_type IN ('weekend','long_weekend','holiday','festival','peak','off_season')),
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  rate_24h REAL,
+  rate_12h REAL,
+  deposit REAL,
+  included_km INTEGER,
+  extra_km_rate REAL,
+  min_days INTEGER NOT NULL DEFAULT 1,
+  priority INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_pricing_rules_dates ON pricing_rules(start_date, end_date);
+
+CREATE TABLE IF NOT EXISTS availability_blocks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  starts_at TEXT NOT NULL,
+  ends_at TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'booked' CHECK (reason IN ('booked','maintenance','manual_block')),
+  booking_id INTEGER,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_availability_vehicle ON availability_blocks(vehicle_id, starts_at, ends_at);
+
+CREATE TABLE IF NOT EXISTS terms_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version INTEGER UNIQUE NOT NULL,
+  content TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS enquiries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  enquiry_no TEXT UNIQUE NOT NULL,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  category_id INTEGER REFERENCES vehicle_categories(id) ON DELETE SET NULL,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+  pickup_date TEXT,
+  return_date TEXT,
+  pickup_time TEXT,
+  return_time TEXT,
+  location TEXT,
+  budget_min REAL,
+  budget_max REAL,
+  passengers INTEGER,
+  name TEXT,
+  phone TEXT,
+  email TEXT,
+  source TEXT NOT NULL DEFAULT 'Website',
+  assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  stage TEXT NOT NULL DEFAULT 'New',
+  notes TEXT,
+  data TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'submitted',
+  draft_token TEXT UNIQUE,
+  submitted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_enquiries_phone ON enquiries(phone);
+CREATE INDEX IF NOT EXISTS idx_enquiries_stage ON enquiries(stage);
+
+CREATE TABLE IF NOT EXISTS enquiry_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  enquiry_id INTEGER NOT NULL REFERENCES enquiries(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  detail TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS bookings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_no TEXT UNIQUE NOT NULL,
+  enquiry_id INTEGER REFERENCES enquiries(id) ON DELETE SET NULL,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+  branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+  pickup_at TEXT NOT NULL,
+  return_at TEXT NOT NULL,
+  actual_pickup_at TEXT,
+  actual_return_at TEXT,
+  after_hours INTEGER NOT NULL DEFAULT 0,
+  after_hours_approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'Draft',
+  base_amount REAL NOT NULL DEFAULT 0,
+  surcharge_amount REAL NOT NULL DEFAULT 0,
+  extra_hours_amount REAL NOT NULL DEFAULT 0,
+  gst_amount REAL NOT NULL DEFAULT 0,
+  discount_amount REAL NOT NULL DEFAULT 0,
+  deposit_amount REAL NOT NULL DEFAULT 0,
+  other_fees_amount REAL NOT NULL DEFAULT 0,
+  extra_km_amount REAL NOT NULL DEFAULT 0,
+  late_fee_amount REAL NOT NULL DEFAULT 0,
+  damage_amount REAL NOT NULL DEFAULT 0,
+  total_amount REAL NOT NULL DEFAULT 0,
+  paid_amount REAL NOT NULL DEFAULT 0,
+  included_km INTEGER NOT NULL DEFAULT 0,
+  start_odometer REAL,
+  end_odometer REAL,
+  manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  terms_version_id INTEGER REFERENCES terms_versions(id) ON DELETE SET NULL,
+  terms_accepted_at TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_bookings_vehicle ON bookings(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_customer ON bookings(customer_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
+CREATE INDEX IF NOT EXISTS idx_bookings_pickup ON bookings(pickup_at, return_at);
+
+CREATE TABLE IF NOT EXISTS booking_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  detail TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_booking_history_booking ON booking_history(booking_id);
+
+CREATE TABLE IF NOT EXISTS customer_documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('licence','govt_id','address_proof','photo','other')),
+  number TEXT,
+  expiry_date TEXT,
+  file_path TEXT NOT NULL,
+  verified INTEGER NOT NULL DEFAULT 0,
+  verified_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_customer_documents_customer ON customer_documents(customer_id);
+
+CREATE TABLE IF NOT EXISTS inspections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('handover','return')),
+  employee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  odometer REAL,
+  fuel_level TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_inspections_booking ON inspections(booking_id);
+
+CREATE TABLE IF NOT EXISTS inspection_photos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  inspection_id INTEGER NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+  side TEXT NOT NULL CHECK (side IN ('front','rear','left','right','odometer','fuel','damage','customer')),
+  url TEXT NOT NULL,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS damage_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  inspection_id INTEGER REFERENCES inspections(id) ON DELETE SET NULL,
+  description TEXT NOT NULL,
+  charge_amount REAL NOT NULL DEFAULT 0,
+  approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS manual_adjustments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('late_fee_waiver','late_fee_change','price_override','discount','damage_charge','other')),
+  amount REAL NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL,
+  employee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_adjustments_booking ON manual_adjustments(booking_id);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  payment_no TEXT UNIQUE NOT NULL,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  amount REAL NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'advance' CHECK (kind IN ('advance','full','deposit','extra_charge')),
+  method TEXT,
+  gateway_ref TEXT,
+  due_date TEXT,
+  paid_at TEXT,
+  status TEXT NOT NULL DEFAULT 'Pending',
+  notes TEXT,
+  receipt_no TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_payments_booking ON payments(booking_id);
+
+CREATE TABLE IF NOT EXISTS refunds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  refund_no TEXT UNIQUE NOT NULL,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  payment_id INTEGER REFERENCES payments(id) ON DELETE SET NULL,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  reason TEXT NOT NULL,
+  requested_amount REAL NOT NULL DEFAULT 0,
+  approved_amount REAL,
+  status TEXT NOT NULL DEFAULT 'Requested',
+  method TEXT,
+  transaction_ref TEXT,
+  admin_notes TEXT,
+  requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+  approved_at TEXT,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_refunds_booking ON refunds(booking_id);
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_no TEXT UNIQUE NOT NULL,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  subtotal REAL NOT NULL DEFAULT 0,
+  tax_pct REAL NOT NULL DEFAULT 0,
+  discount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS problem_tickets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_no TEXT UNIQUE NOT NULL,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  category TEXT NOT NULL DEFAULT 'other' CHECK (category IN ('breakdown','tyre','battery','engine','accident','existing_damage','fuel','document','misuse','other')),
+  description TEXT NOT NULL,
+  media TEXT NOT NULL DEFAULT '[]',
+  location TEXT,
+  status TEXT NOT NULL DEFAULT 'Open',
+  assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  replacement_vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+  resolution_notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS maintenance_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  ends_at TEXT,
+  cost REAL,
+  notes TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  priority TEXT NOT NULL DEFAULT 'Normal',
+  due_date TEXT,
+  status TEXT NOT NULL DEFAULT 'Not started',
+  checklist TEXT NOT NULL DEFAULT '[]',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_booking ON tasks(booking_id);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  enquiry_id INTEGER REFERENCES enquiries(id) ON DELETE SET NULL,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+  channel TEXT NOT NULL,
+  to_address TEXT,
+  subject TEXT,
+  content TEXT,
+  status TEXT NOT NULL DEFAULT 'sent',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS message_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  channel TEXT NOT NULL DEFAULT 'whatsapp',
+  subject TEXT,
+  body TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  enquiry_id INTEGER REFERENCES enquiries(id) ON DELETE SET NULL,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  read INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_id INTEGER NOT NULL,
+  kind TEXT,
+  name TEXT NOT NULL,
+  path TEXT,
+  size INTEGER,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  rating INTEGER,
+  review TEXT,
+  is_public INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS testimonials (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  vehicle TEXT,
+  location TEXT,
+  rating INTEGER NOT NULL DEFAULT 5,
+  quote TEXT NOT NULL,
+  image TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS gallery (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT,
+  image TEXT NOT NULL,
+  category TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS blog_posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  excerpt TEXT,
+  content TEXT NOT NULL,
+  cover TEXT,
+  author TEXT,
+  published INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS faqs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS otp_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS customer_sessions (
+  token TEXT PRIMARY KEY,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE,
+  target TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_customer_sessions_customer ON customer_sessions(customer_id);
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id INTEGER,
+  detail TEXT,
+  ip TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`;
+
+function applySchema(database: DatabaseSync) {
+  database.exec(SCHEMA);
+}
+
+export function runNow<T = void>(fn: (database: DatabaseSync) => T): T {
+  const database = getDb();
+  return fn(database);
+}

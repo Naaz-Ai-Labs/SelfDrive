@@ -1,0 +1,370 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f7f1e8;
+  --foreground: #332216;
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+  max-width: 100%;
+  /* Keeps anchor-scrolled content clear of the sticky/fixed header instead
+     of landing tucked underneath it. */
+  scroll-padding-top: 5rem;
+}
+
+/* Momentum scrolling on touch devices for any horizontally-scrollable strip
+   (tables, filter chip rows, the marquee) — without this, iOS Safari can
+   feel stiff/laggy on a drag-scroll instead of gliding. */
+*::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(51, 34, 22, 0.2);
+}
+.overflow-x-auto, .overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* Baseline smooth interaction for every link/button/input, so nothing snaps
+   abruptly even where a component didn't set its own transition. Specific
+   component transitions (e.g. Tailwind's transition-all) still take over
+   where declared — this is just the floor. */
+a, button, input, select, textarea, summary {
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+}
+
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+  background-color: var(--background);
+  /* Bauhaus grid reference — a faint structural grid instead of soft ambient
+     glow. Flat, precise, never blurred. */
+  background-image:
+    linear-gradient(rgba(51, 34, 22, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(51, 34, 22, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-display), "Helvetica Neue", Arial, sans-serif;
+  letter-spacing: -0.01em;
+  font-weight: 400;
+  line-height: 1.05;
+}
+
+::selection {
+  background: #be5103;
+  color: #fff;
+}
+
+@layer components {
+  .container-x {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Flat geometric buttons — solid colour block, thick black rule, hard
+     offset shadow (no blur, no gradient). The shadow collapses flush on
+     press, like a physical stamp meeting paper. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border-2 border-ink-950 px-6 py-3 text-sm font-bold uppercase tracking-wide transition-all duration-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bblue-500 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-brand-500 text-ink-950;
+    box-shadow: 4px 4px 0 theme("colors.ink.950");
+  }
+  .btn-primary:hover {
+    background: theme("colors.brand.400");
+  }
+  .btn-primary:active {
+    box-shadow: 0 0 0 theme("colors.ink.950");
+    transform: translate(4px, 4px);
+  }
+  .btn-secondary {
+    @apply btn bg-white text-ink-900;
+    box-shadow: 4px 4px 0 theme("colors.ink.950");
+  }
+  .btn-secondary:hover {
+    background: theme("colors.brand.50");
+  }
+  .btn-secondary:active {
+    box-shadow: 0 0 0 theme("colors.ink.950");
+    transform: translate(4px, 4px);
+  }
+  .btn-dark {
+    @apply btn border-ink-950 bg-ink-950 text-white;
+    box-shadow: 4px 4px 0 theme("colors.bred.500");
+  }
+  .btn-dark:hover {
+    background: theme("colors.ink.800");
+  }
+  .btn-dark:active {
+    box-shadow: 0 0 0 theme("colors.bred.500");
+    transform: translate(4px, 4px);
+  }
+
+  /* Flat input — a plain ruled field, no recessed groove, no blur. */
+  .input {
+    @apply w-full rounded-none border-2 border-ink-900 bg-white px-4 py-2.5 text-sm text-ink-900 transition placeholder:text-ink-400 focus:outline-none;
+  }
+  .input:focus {
+    @apply border-bblue-500;
+    box-shadow: 3px 3px 0 theme("colors.bblue.500");
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-bold uppercase tracking-wider text-ink-600;
+  }
+
+  /* Flat card — solid white, thick black rule, hard offset shadow. No
+     translucency, no blur: the defining break from every material style
+     this site has worn before. */
+  .card {
+    @apply rounded-none border-2 border-ink-950 bg-white text-ink-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bblue-500;
+    box-shadow: 6px 6px 0 theme("colors.ink.950");
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full border-2 border-ink-950 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide;
+  }
+  .field-error {
+    @apply mt-1 text-xs font-bold text-bred-500;
+  }
+}
+
+/* ---------- Hard-shadow elevation scale (no blur, ever) ---------- */
+.elevation-1 { box-shadow: 2px 2px 0 theme("colors.ink.950"); }
+.elevation-2 { box-shadow: 3px 3px 0 theme("colors.ink.950"); }
+.elevation-3 { box-shadow: 5px 5px 0 theme("colors.ink.950"); }
+.elevation-4 { box-shadow: 8px 8px 0 theme("colors.ink.950"); }
+
+/* Flat solid overlay panels — replaces translucent glass with an opaque
+   colour block. Used over photos/video where a legible panel is needed. */
+.glass {
+  background: rgba(255, 255, 255, 0.94);
+  border: 2px solid #332216;
+}
+.glass-dark {
+  background: rgba(51, 34, 22, 0.92);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .hero-video {
+    display: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.skeleton {
+  @apply relative overflow-hidden rounded-none border-2 border-ink-200 bg-ink-100;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* ---------- Bauhaus geometric primitives ---------- */
+
+/* Grain is a textural/organic effect — inert here, kept only so the class
+   name stays valid on sections that still reference it. */
+.grain {
+  position: relative;
+  isolation: isolate;
+}
+/* Excludes aria-hidden decorative accents (dots/blocks meant to be
+   absolutely positioned) — otherwise this would force them into
+   position:relative, knocking them into normal flow and pushing real
+   content down the page. */
+.grain > *:not([aria-hidden]) {
+  position: relative;
+  z-index: 1;
+}
+
+/* Infinite marquee ticker */
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 26s linear infinite;
+}
+.marquee-track:hover {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+}
+
+/* Shine sweep neutralised — a soft light glint doesn't belong in a flat,
+   hard-edged system. Kept as a no-op so existing className usage is safe. */
+.btn-shine::after {
+  content: none;
+}
+
+/* Scroll-reveal (paired with the Reveal client component) */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* Tabular, oversized stat numerals */
+.stat-figure {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.02em;
+}
+
+/* Angled section divider */
+.clip-diagonal-down {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 3.5vw));
+}
+.clip-diagonal-up {
+  clip-path: polygon(0 3.5vw, 100% 0, 100% 100%, 0 100%);
+}
+
+/* Dropdown / mobile-menu pop-in — eases into view instead of snapping. */
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.dropdown-pop {
+  animation: dropdown-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dropdown-pop { animation: none; }
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* Slow-motion fleet strip — a much longer duration than the text ticker so
+   the photos drift rather than scroll, plus a reverse row for a subtle
+   counter-motion effect. */
+.fleet-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 80s linear infinite;
+}
+.fleet-track-reverse {
+  display: flex;
+  width: max-content;
+  animation: marquee-reverse 80s linear infinite;
+}
+.fleet-track:hover, .fleet-track-reverse:hover {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fleet-track, .fleet-track-reverse {
+    animation: none;
+  }
+}
+@keyframes marquee-reverse {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
+}
+
+/* "How booking works" flow diagram — a sweep across the connector line plus
+   a small dot travelling node-to-node, so the steps read as an active
+   process rather than a static route map. */
+.workflow-pulse {
+  animation: workflow-sweep 2.6s ease-in-out infinite;
+}
+@keyframes workflow-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.workflow-runner {
+  animation: workflow-run 2.6s ease-in-out infinite;
+}
+@keyframes workflow-run {
+  0%, 8% { left: 16.6667%; }
+  46%, 54% { left: 50%; }
+  92%, 100% { left: 83.3333%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workflow-pulse, .workflow-runner {
+    animation: none;
+  }
+}
+
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.animate-float {
+  animation: float-y 5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-float { animation: none; }
+}
+
+/* ---------- Flat surfaces (formerly Fluent) ---------- */
+
+/* Fluent's pointer-tracking glow and acrylic noise are gone — a flat system
+   doesn't shimmer. These classes now render as plain opaque surfaces so
+   every component that already references them keeps working unmodified. */
+.fluent-surface,
+.fluent-surface-dark {
+  position: relative;
+}
+
+.acrylic {
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 2px solid #332216;
+}
+
+/* Depth scale — same hard-shadow language as .elevation-*, kept under its
+   old name for compatibility with existing chrome/nav components. */
+.depth-4 { box-shadow: 2px 2px 0 theme("colors.ink.950"); }
+.depth-8 { box-shadow: 3px 3px 0 theme("colors.ink.950"); }
+.depth-16 { box-shadow: 5px 5px 0 theme("colors.ink.950"); }
+.depth-64 { box-shadow: 10px 10px 0 theme("colors.ink.950"); }
+
+/* ---------- Geometric accent shapes ---------- */
+.shape-circle {
+  border-radius: 9999px;
+}
+.shape-square {
+  border-radius: 0;
+}
+.shape-triangle {
+  width: 0;
+  height: 0;
+  border-style: solid;
+}
