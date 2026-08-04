@@ -71,15 +71,14 @@ function findSeasonalRule(vehicle: Vehicle, pickup: Date, ret: Date): PricingRul
  * booking that spans both. A seasonal/festival rule, if active for the period, overrides
  * the whole booking at its own flat day rate instead.
  */
-export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date, pickupTimeHM?: string): Quote {
+export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date, pickupTimeHM?: string, returnTimeHM?: string): Quote {
   const rentalRules = getSetting<Record<string, unknown>>("rental_rules", {});
-  const gstPct = getSetting<number>("tax_pct", 5);
+  const gstPct = getSetting<number>("tax_pct", 6);
   const gatewayFeePassThrough = Boolean(rentalRules.gateway_fee_pass_through ?? false);
   const gatewayFeePct = gatewayFeePassThrough ? Number(rentalRules.gateway_fee_pct ?? 2) : 0;
   const weekendMinDays = Number(rentalRules.weekend_min_days ?? 2);
-  const offSchedulePickupFee = Number(rentalRules.off_schedule_pickup_fee ?? 250);
-  const standardPickupTime = String(rentalRules.standard_pickup_time ?? "08:00");
-  const afterHoursCutoff = String(rentalRules.after_hours_cutoff ?? "20:00");
+  const earlyPickupFee = Number(rentalRules.early_pickup_fee ?? 250);
+  const lateDropFee = Number(rentalRules.late_drop_fee ?? 250);
 
   const msPerDay = 24 * 60 * 60 * 1000;
   const days = Math.max(1, Math.round((returnAt.getTime() - pickupAt.getTime()) / msPerDay));
@@ -105,24 +104,33 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
   const belowWeekendMinimum = bookingStartsWeekend && days < effectiveWeekendMin;
 
   const pickupHM = pickupTimeHM ?? `${String(pickupAt.getHours()).padStart(2, "0")}:${String(pickupAt.getMinutes()).padStart(2, "0")}`;
-  const afterHours = pickupHM >= afterHoursCutoff || pickupHM < "05:00";
-  const offSchedulePickup = !afterHours && pickupHM !== standardPickupTime;
-  const offScheduleFeeAmount = offSchedulePickup ? offSchedulePickupFee : 0;
+  const returnHM = returnTimeHM ?? `${String(returnAt.getHours()).padStart(2, "0")}:${String(returnAt.getMinutes()).padStart(2, "0")}`;
 
-  const includedKm = (seasonalRule?.included_km ?? vehicle.included_km) * days;
-  const extraKmRate = seasonalRule?.extra_km_rate ?? vehicle.extra_km_rate;
+  // Early pickup fee: picking up at 7:59 AM or earlier (< 08:00) adds 250 INR
+  const isEarlyPickup = pickupHM < "08:00";
+  const earlyPickupAmount = isEarlyPickup ? earlyPickupFee : 0;
+
+  // Late drop / return fee: returning after 8:00 PM (> 20:00) or pickup after 8:00 PM adds 250 INR
+  const isLateDrop = returnHM > "20:00" || pickupHM > "20:00";
+  const lateDropAmount = isLateDrop ? lateDropFee : 0;
+
+  const timingFeeAmount = earlyPickupAmount + lateDropAmount;
+
+  const rawKm = seasonalRule?.included_km ?? vehicle.included_km ?? 100;
+  const includedKm = rawKm >= 999 ? 999999 : rawKm * days;
+  const extraKmRate = seasonalRule?.extra_km_rate ?? vehicle.extra_km_rate ?? 8;
   const deposit = seasonalRule?.deposit ?? vehicle.deposit;
 
-  const taxableAmount = baseAmount + offScheduleFeeAmount;
+  const taxableAmount = baseAmount + timingFeeAmount;
   const gstAmount = Math.round(taxableAmount * (gstPct / 100));
   const gatewayFeeAmount = Math.round((taxableAmount + gstAmount) * (gatewayFeePct / 100));
-  const totalAmount = taxableAmount + gstAmount + gatewayFeeAmount;
+  const totalAmount = taxableAmount + gstAmount + gatewayFeeAmount + deposit;
 
   return {
     days,
     dayBreakdown,
     baseAmount,
-    offSchedulePickupFee: offScheduleFeeAmount,
+    offSchedulePickupFee: timingFeeAmount,
     gstAmount,
     gstPct,
     gatewayFeeAmount,
@@ -130,13 +138,13 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
     depositAmount: deposit,
     includedKm,
     extraKmRate,
-    afterHours,
-    offSchedulePickup,
+    afterHours: isLateDrop,
+    offSchedulePickup: isEarlyPickup || isLateDrop,
     weekendMinDays: effectiveWeekendMin,
     belowWeekendMinimum,
     appliedRuleName: seasonalRule?.name ?? null,
     totalAmount,
-    payableNow: totalAmount + deposit,
+    payableNow: totalAmount,
   };
 }
 
@@ -165,7 +173,8 @@ export function calculateLateFee(scheduledReturn: Date, actualReturn: Date): { m
 export function calculateExtraKm(includedKm: number, startOdo: number, endOdo: number, extraKmRate: number): { travelled: number; extraKm: number; amount: number } {
   const travelled = Math.max(0, endOdo - startOdo);
   const extraKm = Math.max(0, travelled - includedKm);
-  return { travelled, extraKm, amount: Math.round(extraKm * extraKmRate) };
+  const rate = extraKmRate || 8;
+  return { travelled, extraKm, amount: Math.round(extraKm * rate) };
 }
 
 /** Cancellation refund slabs, based on how far ahead of pickup the request is made. */

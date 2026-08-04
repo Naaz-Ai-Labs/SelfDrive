@@ -14,13 +14,16 @@ export const revalidate = 60;
 
 const FLEET_VIDEO = "https://videos.pexels.com/video-files/5061405/5061405-sd_640_360_30fps.mp4";
 
-export default async function VehiclesPage({ searchParams }: { searchParams: { kind?: string; pickup?: string; return?: string } }) {
+export default async function VehiclesPage(
+  props: { searchParams: Promise<{ kind?: string; pickup?: string; return?: string }> }
+) {
+  const searchParams = await props.searchParams;
   const kind = searchParams.kind;
   const [categories, vehicles] = await Promise.all([getVehicleCategories(), getVehicles({ kind: kind || undefined })]);
 
   return (
     <>
-      <section className="grain relative -mt-16 overflow-hidden border-b border-ink-100 bg-ink-950 pt-16 text-white">
+      <section className="grain relative -mt-20 sm:-mt-24 overflow-hidden border-b border-ink-100 bg-ink-950 pt-20 sm:pt-24 text-white">
         <Image src="/vehicles/mahindra-thar.avif" alt="" aria-hidden fill priority className="object-cover object-center" sizes="100vw" />
         <video
           className="hero-video absolute inset-0 h-full w-full object-cover"
@@ -71,11 +74,14 @@ export default async function VehiclesPage({ searchParams }: { searchParams: { k
                     {v.primary_photo && <Image src={v.primary_photo} alt={v.name} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-110" sizes="(max-width:768px) 100vw, 33vw" />}
                     <div className="absolute inset-0 bg-gradient-to-t from-ink-950/50 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" aria-hidden />
                     <span className="absolute left-3 top-3 badge bg-white/95 text-ink-800 shadow-sm">{v.category_name}</span>
-                    <span className="absolute right-3 top-3 badge bg-ink-950/80 text-brand-300 shadow-sm">{v.transmission}</span>
+                    <span className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${v.total_units <= 2 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                      {v.total_units ?? 1} Left
+                    </span>
                   </div>
                   <div className="p-5">
                     <h3 className="font-display text-lg font-semibold text-ink-900">{v.name}</h3>
-                    <p className="mt-1 text-xs text-ink-500">{v.fuel_type} · {v.seats} seats · {v.included_km} km/day included</p>
+                    <p className="mt-1 text-xs text-ink-500">{v.fuel_type} · {v.seats} seats · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day`}</p>
                     <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-700">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
                       {formatINR(v.deposit)} refundable deposit

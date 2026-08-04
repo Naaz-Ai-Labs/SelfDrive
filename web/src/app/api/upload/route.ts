@@ -17,11 +17,15 @@ export async function POST(req: NextRequest) {
 
   const proxied = new FormData();
   proxied.append("file", file, file.name);
-  const res = await fetch(`${BASE}/api/gateway/v1/upload`, {
-    method: "POST",
-    headers: { "x-gateway-key": KEY },
-    body: proxied,
-  });
-  const data = await res.json().catch(() => ({ error: "Upload failed." }));
-  return NextResponse.json(data, { status: res.status });
+  try {
+    const res = await fetch(`${BASE}/api/gateway/v1/upload`, {
+      method: "POST",
+      headers: { "x-gateway-key": KEY },
+      body: proxied,
+    });
+    const data = await res.json().catch(() => ({ error: "Upload failed." }));
+    return NextResponse.json(data, { status: res.status });
+  } catch {
+    return NextResponse.json({ error: "Failed to connect to backend server." }, { status: 502 });
+  }
 }

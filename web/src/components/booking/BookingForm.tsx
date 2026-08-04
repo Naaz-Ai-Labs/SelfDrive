@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { formatINR, formatDate, waLink } from "@/lib/utils";
+import { formatINR, formatDate, formatTimeLabel, waLink } from "@/lib/utils";
 import { saveBookingDraft, getDraft, submitBooking, getAvailableVehicles, getQuoteEstimate, getVehicleById } from "@/lib/booking-actions";
 import { RazorpayCheckout } from "./RazorpayCheckout";
 import type { Vehicle } from "@/lib/data";
@@ -39,16 +39,21 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   const [categoryKind, setCategoryKind] = useState(search.get("kind") ?? "");
   const [location, setLocation] = useState("");
   const [pickupDate, setPickupDate] = useState(search.get("pickup") ?? todayISO());
-  const [pickupTime, setPickupTime] = useState(STANDARD_PICKUP_TIME);
-  const [days, setDays] = useState(1);
+  const [pickupTime, setPickupTime] = useState(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
+  const [returnDate, setReturnDate] = useState(search.get("return") ?? todayISO());
+  const [returnTime, setReturnTime] = useState(search.get("returnTime") ?? STANDARD_PICKUP_TIME);
   const [passengers, setPassengers] = useState("");
 
   const pickupAt = combineIso(pickupDate, pickupTime);
-  const returnAt = useMemo(() => {
-    const d = new Date(`${pickupDate}T${STANDARD_PICKUP_TIME}`);
-    d.setDate(d.getDate() + days);
-    return combineIso(d.toISOString().slice(0, 10), STANDARD_PICKUP_TIME);
-  }, [pickupDate, days]);
+  const returnAt = combineIso(returnDate, returnTime);
+
+  const days = useMemo(() => {
+    const p = new Date(`${pickupDate}T${pickupTime}`);
+    const r = new Date(`${returnDate}T${returnTime}`);
+    const diffMs = r.getTime() - p.getTime();
+    if (Number.isNaN(diffMs) || diffMs <= 0) return 1;
+    return Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000)));
+  }, [pickupDate, pickupTime, returnDate, returnTime]);
 
   const [vehicleId, setVehicleId] = useState<number | null>(search.get("vehicle") ? Number(search.get("vehicle")) : null);
   const [availableVehicles, setAvailableVehicles] = useState<Vehicle[]>([]);
@@ -80,6 +85,11 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
           setPickupDate(d ?? todayISO());
           setPickupTime(t ?? STANDARD_PICKUP_TIME);
         }
+        if (draft.returnAt) {
+          const [rd, rt] = draft.returnAt.split("T");
+          setReturnDate(rd ?? todayISO());
+          setReturnTime(rt ?? STANDARD_PICKUP_TIME);
+        }
         setPassengers(draft.passengers ? String(draft.passengers) : "");
         setVehicleId(draft.vehicleId);
         setContact(draft.contact as typeof contact);
@@ -91,14 +101,15 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     if (local) {
       try {
         const draft = JSON.parse(local);
-        setCategoryKind(draft.categoryKind ?? "");
-        setLocation(draft.location ?? "");
-        if (draft.pickupDate) setPickupDate(draft.pickupDate);
+        if (!search.get("kind") && draft.categoryKind) setCategoryKind(draft.categoryKind);
+        if (draft.location) setLocation(draft.location);
+        if (!search.get("pickup") && draft.pickupDate) setPickupDate(draft.pickupDate);
         if (draft.pickupTime) setPickupTime(draft.pickupTime);
-        if (draft.days) setDays(draft.days);
-        setPassengers(draft.passengers ?? "");
-        setVehicleId(draft.vehicleId ?? null);
-        setContact(draft.contact ?? contact);
+        if (!search.get("return") && draft.returnDate) setReturnDate(draft.returnDate);
+        if (draft.returnTime) setReturnTime(draft.returnTime);
+        if (draft.passengers) setPassengers(draft.passengers);
+        if (!search.get("vehicle") && draft.vehicleId) setVehicleId(draft.vehicleId);
+        if (draft.contact) setContact(draft.contact);
       } catch {
         // ignore corrupt draft
       }
@@ -108,7 +119,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
   // Autosave (localStorage instantly, server debounced) whenever key fields change.
   useEffect(() => {
-    localStorage.setItem("darshh_booking_draft", JSON.stringify({ categoryKind, location, pickupDate, pickupTime, days, passengers, vehicleId, contact }));
+    localStorage.setItem("darshh_booking_draft", JSON.stringify({ categoryKind, location, pickupDate, pickupTime, returnDate, returnTime, passengers, vehicleId, contact }));
     if (!contact.name && !contact.phone && !vehicleId) return;
     setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -127,7 +138,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     }, 1600);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryKind, location, pickupDate, pickupTime, days, passengers, vehicleId, contact, step]);
+  }, [categoryKind, location, pickupDate, pickupTime, returnDate, returnTime, passengers, vehicleId, contact, step]);
 
   // Load available vehicles when period/category changes (step 2).
   useEffect(() => {
@@ -220,7 +231,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             <div className="mt-6">
               <RazorpayCheckout
                 bookingId={result.bookingId}
-                amountDue={(quote?.totalAmount ?? 0) + (quote?.depositAmount ?? 0)}
+                amountDue={quote?.totalAmount ?? 0}
                 customerName={contact.name}
                 customerPhone={contact.phone}
                 customerEmail={contact.email}
@@ -291,7 +302,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
         {step === 1 && (
           <div className="space-y-4">
             <h2 className="font-display text-xl font-semibold text-ink-900">When and what do you need?</h2>
-            <p className="text-sm text-ink-500">Fixed rental cycle: pickup at {STANDARD_PICKUP_TIME.replace(":00", ":00 AM")}, return by the same time {days > 1 ? `${days} days later` : "the next day"}.</p>
+            <p className="text-sm text-ink-500">Standard rental day is 8:00 AM to 8:00 AM (24 hours complete cycle). Included drive limit is 100 km per day. Exceeding the limit costs ₹8 per extra KM. Early pickup (&le;7:59 AM) or late drop (&gt;8:00 PM) incurs an extra ₹250 fee.</p>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="label">Vehicle type</label>
@@ -304,29 +315,45 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 <label className="label">Pickup location</label>
                 <input className="input" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Sakleshpura branch" />
               </div>
+
               <div>
                 <label className="label">Pickup date *</label>
                 <input className="input" type="date" min={todayISO()} value={pickupDate} onChange={(e) => setPickupDate(e.target.value)} aria-invalid={!!errors.pickupDate} />
                 {errors.pickupDate && <p className="field-error">{errors.pickupDate}</p>}
               </div>
               <div>
-                <label className="label">Number of days *</label>
-                <input className="input" type="number" min={1} value={days} onChange={(e) => setDays(Math.max(1, Number(e.target.value)))} aria-invalid={!!errors.days} />
-                {errors.days && <p className="field-error">{errors.days}</p>}
+                <label className="label">Pickup time</label>
+                <select className="input" value={pickupTime} onChange={(e) => setPickupTime(e.target.value)}>
+                  {["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"].map((t) => (
+                    <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard)" : formatTimeLabel(t)}</option>
+                  ))}
+                </select>
+                {pickupTime <= "07:59" && <p className="mt-1 text-xs font-medium text-amber-700">Early pickup (7:59 AM or earlier) incurs an extra ₹250 fee.</p>}
+              </div>
+
+              <div>
+                <label className="label">Drop date (Return date) *</label>
+                <input className="input" type="date" min={pickupDate} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} aria-invalid={!!errors.returnDate} />
+                {errors.returnDate && <p className="field-error">{errors.returnDate}</p>}
               </div>
               <div>
-                <label className="label">Pickup time</label>
-                <input className="input" type="time" value={pickupTime} onChange={(e) => setPickupTime(e.target.value)} />
-                {pickupTime !== STANDARD_PICKUP_TIME && (
-                  <p className="mt-1 text-xs text-amber-700">A different pickup time may carry an off-schedule fee, shown once you pick a vehicle.</p>
-                )}
+                <label className="label">Drop time (Return time)</label>
+                <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
+                  {["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"].map((t) => (
+                    <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard 24h)" : formatTimeLabel(t)}</option>
+                  ))}
+                </select>
+                {returnTime > "08:00" && <p className="mt-1 text-xs font-medium text-amber-700">Late drop-off (after 8:00 AM) incurs an extra ₹250 fee.</p>}
               </div>
+
               <div>
                 <label className="label">Passengers (optional)</label>
                 <input className="input" type="number" min={1} value={passengers} onChange={(e) => setPassengers(e.target.value)} />
               </div>
             </div>
-            <p className="text-xs text-ink-500">Return: {formatDate(returnAt)} · {STANDARD_PICKUP_TIME.replace(":00", ":00 AM")}</p>
+            <p className="text-xs text-ink-500 font-medium">
+              Calculated Duration: {days} day{days > 1 ? "s" : ""} · Standard Daily Limit: 100 km/day (Bikes) / 300 km/day (Cars) / Unlimited (Tempo) · Extra KM: ₹8/km
+            </p>
           </div>
         )}
 
@@ -344,8 +371,14 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                   onClick={() => setVehicleId(v.id)}
                   className={`rounded-xl border p-4 text-left transition ${vehicleId === v.id ? "border-brand-500 bg-brand-50" : "border-ink-100 hover:border-ink-300"}`}
                 >
-                  <p className="font-semibold text-ink-900">{v.name}</p>
-                  <p className="text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km} km/day</p>
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-ink-900">{v.name}</p>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${v.total_units <= 2 ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                      {v.total_units ?? 1} Left
+                    </span>
+                  </div>
+                  <p className="text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day`}</p>
                   <p className="mt-2 font-display text-lg font-semibold text-ink-900">
                     {formatINR(v.rate_24h)}<span className="text-xs font-normal text-ink-500">/day weekday</span>
                   </p>
@@ -362,8 +395,8 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 <p className="text-ink-600">
                   {quote.days} day{quote.days > 1 ? "s" : ""} ({formatINR(quote.baseAmount)}) + GST {formatINR(quote.gstAmount)}
                   {quote.offSchedulePickupFee > 0 && <> + off-schedule pickup fee {formatINR(quote.offSchedulePickupFee)}</>}
-                  {quote.gatewayFeeAmount > 0 && <> + gateway fee {formatINR(quote.gatewayFeeAmount)}</>}.
-                  {" "}Deposit {formatINR(quote.depositAmount)} collected separately (refundable).
+                  {quote.gatewayFeeAmount > 0 && <> + gateway fee {formatINR(quote.gatewayFeeAmount)}</>}
+                  {quote.depositAmount > 0 && <> + refundable security deposit {formatINR(quote.depositAmount)}</>}.
                 </p>
                 {quote.belowWeekendMinimum && (
                   <p className="mt-2 font-medium text-red-700">Weekend bookings need a minimum of {quote.weekendMinDays} days for this vehicle — please add more days on the previous step.</p>
@@ -440,8 +473,8 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             <h2 className="font-display text-xl font-semibold text-ink-900">Review & confirm</h2>
             <div className="space-y-3 text-sm">
               <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Vehicle</span><span className="font-medium text-ink-900">{selectedVehicle?.name ?? "—"} <button type="button" onClick={() => setStep(2)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
-              <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Pickup</span><span className="font-medium text-ink-900">{formatDate(pickupAt)}, {pickupTime} {location && `· ${location}`} <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
-              <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Return</span><span className="font-medium text-ink-900">{formatDate(returnAt)}, {STANDARD_PICKUP_TIME}</span></div>
+              <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Pickup</span><span className="font-medium text-ink-900">{formatDate(pickupAt)}, {formatTimeLabel(pickupTime)} {location && `· ${location}`} <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
+              <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Return (Drop)</span><span className="font-medium text-ink-900">{formatDate(returnAt)}, {formatTimeLabel(returnTime)}</span></div>
               <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Customer</span><span className="font-medium text-ink-900">{contact.name} · {contact.phone} <button type="button" onClick={() => setStep(3)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
               {quote && (
                 <>
@@ -450,7 +483,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                   <div className="flex justify-between"><span className="text-ink-500">GST ({quote.gstPct}%)</span><span>{formatINR(quote.gstAmount)}</span></div>
                   {quote.gatewayFeeAmount > 0 && <div className="flex justify-between"><span className="text-ink-500">Payment gateway fee ({quote.gatewayFeePct}%)</span><span>{formatINR(quote.gatewayFeeAmount)}</span></div>}
                   <div className="flex justify-between"><span className="text-ink-500">Security deposit (refundable)</span><span>{formatINR(quote.depositAmount)}</span></div>
-                  <div className="flex justify-between border-t border-ink-100 pt-2 text-base font-semibold text-ink-900"><span>Total payable</span><span>{formatINR(quote.totalAmount + quote.depositAmount)}</span></div>
+                  <div className="flex justify-between border-t border-ink-100 pt-2 text-base font-semibold text-ink-900"><span>Total payable</span><span>{formatINR(quote.totalAmount)}</span></div>
                 </>
               )}
             </div>

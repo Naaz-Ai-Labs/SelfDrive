@@ -3,12 +3,30 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+const TIME_SLOTS = [
+  { value: "08:00", label: "8:00 AM" },
+  { value: "09:00", label: "9:00 AM" },
+  { value: "10:00", label: "10:00 AM" },
+  { value: "11:00", label: "11:00 AM" },
+  { value: "12:00", label: "12:00 PM" },
+  { value: "13:00", label: "1:00 PM" },
+  { value: "14:00", label: "2:00 PM" },
+  { value: "15:00", label: "3:00 PM" },
+  { value: "16:00", label: "4:00 PM" },
+  { value: "17:00", label: "5:00 PM" },
+  { value: "18:00", label: "6:00 PM" },
+  { value: "19:00", label: "7:00 PM" },
+  { value: "20:00", label: "8:00 AM" },
+];
+
 export function BookingBar({ categories }: { categories: { id: number; name: string; kind: string }[] }) {
   const router = useRouter();
   const [kind, setKind] = useState("");
   const today = new Date().toISOString().slice(0, 10);
   const [pickupDate, setPickupDate] = useState(today);
+  const [pickupTime, setPickupTime] = useState("08:00");
   const [returnDate, setReturnDate] = useState(today);
+  const [returnTime, setReturnTime] = useState("08:00");
 
   return (
     <form
@@ -17,10 +35,12 @@ export function BookingBar({ categories }: { categories: { id: number; name: str
         const params = new URLSearchParams();
         if (kind) params.set("kind", kind);
         if (pickupDate) params.set("pickup", pickupDate);
+        if (pickupTime) params.set("pickupTime", pickupTime);
         if (returnDate) params.set("return", returnDate);
+        if (returnTime) params.set("returnTime", returnTime);
         router.push(`/vehicles?${params.toString()}`);
       }}
-      className="grid gap-4 rounded-2xl border border-white/15 bg-ink-950/70 p-4 shadow-lift backdrop-blur-xl sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto] lg:items-end lg:p-5"
+      className="grid gap-4 rounded-2xl border border-white/15 bg-ink-950/70 p-4 shadow-lift backdrop-blur-xl sm:grid-cols-2 lg:grid-cols-5 lg:items-end lg:p-5"
       aria-label="Search available vehicles"
     >
       <label className="block">
@@ -37,38 +57,70 @@ export function BookingBar({ categories }: { categories: { id: number; name: str
         </select>
       </label>
 
-      <label className="block">
-        <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Pickup date</span>
-        <input
-          type="date"
-          value={pickupDate}
-          min={today}
-          onChange={(e) => setPickupDate(e.target.value)}
-          className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [color-scheme:dark]"
-        />
-      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Pickup date</span>
+          <input
+            type="date"
+            value={pickupDate}
+            min={today}
+            onChange={(e) => setPickupDate(e.target.value)}
+            className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [color-scheme:dark]"
+          />
+        </label>
 
-      <label className="block">
-        <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Return date</span>
-        <input
-          type="date"
-          value={returnDate}
-          min={pickupDate}
-          onChange={(e) => setReturnDate(e.target.value)}
-          className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [color-scheme:dark]"
-        />
-      </label>
+        <label className="block">
+          <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Pickup time</span>
+          <select
+            value={pickupTime}
+            onChange={(e) => setPickupTime(e.target.value)}
+            className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
+          >
+            {TIME_SLOTS.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
 
-      <button
-        type="submit"
-        className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3 text-sm font-bold uppercase tracking-wider text-ink-950 shadow-lift transition hover:bg-brand-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-300 active:scale-[0.98]"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
-          <circle cx="11" cy="11" r="7" />
-          <path d="m20 20-3.5-3.5" />
-        </svg>
-        Search available vehicles
-      </button>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Drop date</span>
+          <input
+            type="date"
+            value={returnDate}
+            min={pickupDate}
+            onChange={(e) => setReturnDate(e.target.value)}
+            className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [color-scheme:dark]"
+          />
+        </label>
+
+        <label className="block">
+          <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Drop time</span>
+          <select
+            value={returnTime}
+            onChange={(e) => setReturnTime(e.target.value)}
+            className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
+          >
+            {TIME_SLOTS.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="sm:col-span-2 lg:col-span-2">
+        <button
+          type="submit"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wider text-ink-950 shadow-lift transition hover:bg-brand-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-300 active:scale-[0.98]"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          Search available vehicles
+        </button>
+      </div>
     </form>
   );
 }

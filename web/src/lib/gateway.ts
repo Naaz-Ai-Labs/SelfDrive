@@ -16,19 +16,28 @@ async function gatewayFetch<T>(path: string, init: RequestInit & FetchOptions = 
   headers.set("x-gateway-key", KEY);
   if (rest.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (auth) {
-    const token = cookies().get(CUSTOMER_COOKIE)?.value;
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    try {
+      const token = (await cookies()).get(CUSTOMER_COOKIE)?.value;
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+    } catch {
+      // Ignore if called outside a request context
+    }
   }
-  const res = await fetch(`${BASE}${path}`, {
-    ...rest,
-    headers,
-    ...(revalidate ? { next: { revalidate } } : { cache: cache ?? "no-store" }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok && !("error" in data)) {
-    return { error: `Request failed (${res.status})` } as T;
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      ...rest,
+      headers,
+      ...(revalidate ? { next: { revalidate } } : { cache: cache ?? "no-store" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok && !("error" in data)) {
+      return { error: `Request failed (${res.status})` } as T;
+    }
+    return data as T;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Failed to fetch from CRM gateway.";
+    return { error: message } as T;
   }
-  return data as T;
 }
 
 export function gatewayGet<T>(path: string, opts: FetchOptions = {}) {

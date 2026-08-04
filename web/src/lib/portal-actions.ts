@@ -16,7 +16,7 @@ export type PortalData = {
  * and returns the customer's data in the same call, so there is no separate "check
  * session, then fetch data" step to keep in sync. */
 export async function getCustomerPortalData(): Promise<PortalData | null> {
-  const token = cookies().get(CUSTOMER_COOKIE)?.value;
+  const token = (await cookies()).get(CUSTOMER_COOKIE)?.value;
   if (!token) return null;
   const res = await gatewayGet<PortalData & { error?: string }>("/api/gateway/v1/customer/portal", { auth: true });
   if (!res || "error" in res) return null;
@@ -24,9 +24,9 @@ export async function getCustomerPortalData(): Promise<PortalData | null> {
 }
 
 export async function portalLogout() {
-  const token = cookies().get(CUSTOMER_COOKIE)?.value;
+  const token = (await cookies()).get(CUSTOMER_COOKIE)?.value;
   if (token) await gatewayPost("/api/gateway/v1/customer/otp", { op: "logout", token });
-  cookies().set(CUSTOMER_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
+  (await cookies()).set(CUSTOMER_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
   revalidatePath("/customer", "layout");
   return { ok: true };
 }

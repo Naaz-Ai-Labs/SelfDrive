@@ -8,7 +8,8 @@ import { formatINR, waLink } from "@/lib/utils";
 import { businessInfo } from "@/lib/settings";
 import { Reveal } from "@/components/ui/Reveal";
 
-export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
+export async function generateMetadata(props: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const params = await props.params;
   const vehicle = await getVehicle(params.slug);
   if (!vehicle) return { title: "Vehicle not found" };
   return {
@@ -41,7 +42,11 @@ function SpecIcon({ d }: { d: string }) {
   );
 }
 
-export default async function VehicleDetailPage({ params, searchParams }: { params: { slug: string }; searchParams: { pickup?: string; return?: string } }) {
+export default async function VehicleDetailPage(
+  props: { params: Promise<{ slug: string }>; searchParams: Promise<{ pickup?: string; return?: string }> }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const vehicle = await getVehicle(params.slug);
   if (!vehicle) notFound();
   const [similarAll, terms, info] = await Promise.all([
@@ -56,11 +61,12 @@ export default async function VehicleDetailPage({ params, searchParams }: { para
   const specs: Array<[string, string | number, string]> = [
     ["Brand / model", `${vehicle.brand} ${vehicle.model}`, SPEC_ICONS.brand],
     ["Year", vehicle.year ?? "—", SPEC_ICONS.year],
+    ["Fleet count", `${vehicle.total_units ?? 1} available`, SPEC_ICONS.brand],
     ["Fuel", vehicle.fuel_type, SPEC_ICONS.fuel],
     ["Transmission", vehicle.transmission, SPEC_ICONS.transmission],
     ["Seats", vehicle.seats, SPEC_ICONS.seats],
     ["Mileage", vehicle.mileage ?? "—", SPEC_ICONS.mileage],
-    ["Included km/day", `${vehicle.included_km} km`, SPEC_ICONS.km],
+    ["Included km/day", vehicle.included_km >= 999 ? "Unlimited KM" : `${vehicle.included_km} km`, SPEC_ICONS.km],
     ["Extra km rate", formatINR(vehicle.extra_km_rate), SPEC_ICONS.extraKm],
     ["Security deposit", formatINR(vehicle.deposit), SPEC_ICONS.deposit],
   ];
@@ -111,7 +117,10 @@ export default async function VehicleDetailPage({ params, searchParams }: { para
             <div className="relative aspect-[4/3] overflow-hidden rounded-3xl bg-ink-100 shadow-soft">
               {vehicle.primary_photo && <Image src={vehicle.primary_photo} alt={vehicle.name} fill priority className="object-contain p-6" sizes="(max-width:1024px) 100vw, 60vw" />}
               <span className="absolute left-4 top-4 badge bg-white/95 text-ink-800 shadow-sm">{vehicle.category_name}</span>
-              <span className="absolute right-4 top-4 badge bg-ink-950/85 text-brand-300 shadow-sm">{vehicle.status === "available" ? "Available now" : vehicle.status}</span>
+              <span className={`absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black shadow-md ${vehicle.total_units <= 2 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-md"}`}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                {vehicle.total_units ?? 1} Left
+              </span>
             </div>
             {vehicle.photos.length > 1 && (
               <div className="mt-3 grid grid-cols-4 gap-3">
@@ -168,12 +177,13 @@ export default async function VehicleDetailPage({ params, searchParams }: { para
               </div>
               {vehicle.rate_12h > 0 && <p className="mt-1 text-sm text-ink-500">{formatINR(vehicle.rate_12h)} for up to 12 hours</p>}
               <ul className="mt-4 space-y-2 border-t border-ink-100 pt-4 text-sm text-ink-600">
-                <li className="flex justify-between"><span>Included km</span><span className="font-medium text-ink-800">{vehicle.included_km} km</span></li>
+                <li className="flex justify-between font-semibold text-brand-700"><span>Fleet stock</span><span>{vehicle.total_units ?? 1} available</span></li>
+                <li className="flex justify-between"><span>Included km</span><span className="font-medium text-ink-800">{vehicle.included_km >= 999 ? "Unlimited KM" : `${vehicle.included_km} km/day`}</span></li>
                 <li className="flex justify-between"><span>Extra km rate</span><span className="font-medium text-ink-800">{formatINR(vehicle.extra_km_rate)}/km</span></li>
                 <li className="flex justify-between"><span>Security deposit</span><span className="font-medium text-ink-800">{formatINR(vehicle.deposit)}</span></li>
                 <li className="flex justify-between"><span>Late fee</span><span className="font-medium text-ink-800">{formatINR(vehicle.late_fee_per_hour)}/hr after grace period</span></li>
               </ul>
-              <p className="mt-4 text-xs text-ink-500">Fixed rental — no bargaining. Vehicle rented without fuel; return with the same fuel level. GST added at checkout.</p>
+              <p className="mt-4 text-xs text-ink-500">Fixed rental — no bargaining. Vehicle rented without fuel; return with the same fuel level. GST (6%) added at checkout.</p>
               <Link href={bookingHref} className="btn-shine mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
                 Book this vehicle
               </Link>

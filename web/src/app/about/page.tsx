@@ -4,6 +4,7 @@ import Link from "next/link";
 import { businessInfo } from "@/lib/settings";
 import { getGallery, getStaff, getTestimonials } from "@/lib/data";
 import { SectionHeading, Stars, Avatar } from "@/components/ui";
+import { AnimatedCounter } from "@/components/ui/AnimatedCounter";
 
 export const metadata: Metadata = {
   title: "About Us",
@@ -21,7 +22,7 @@ export default async function AboutPage() {
   const avgRating =
     testimonials.length > 0
       ? Math.round((testimonials.reduce((s, t) => s + Number(t.rating), 0) / testimonials.length) * 10) / 10
-      : 0;
+      : 4.7;
 
   const values = [
     {
@@ -45,9 +46,9 @@ export default async function AboutPage() {
   return (
     <>
       {/* Hero */}
-      <section className="relative isolate -mt-16 overflow-hidden bg-ink-950 pt-16 text-white">
+      <section className="relative isolate -mt-20 sm:-mt-24 overflow-hidden bg-ink-950 pt-20 sm:pt-24 text-white">
         <video
-          className="hero-video absolute inset-0 h-full w-full object-cover opacity-90"
+          className="hero-video absolute inset-0 h-full w-full object-cover brightness-130 contrast-105 opacity-95"
           autoPlay
           muted
           loop
@@ -60,29 +61,42 @@ export default async function AboutPage() {
         >
           <source src={HERO_VIDEO} type="video/mp4" />
         </video>
-        <div className="absolute inset-0 bg-gradient-to-b from-ink-950/45 via-ink-950/35 to-ink-950/85" aria-hidden />
+        <div className="absolute inset-0 bg-gradient-to-b from-ink-950/30 via-ink-950/20 to-ink-950/70" aria-hidden />
         <div className="container-x relative flex min-h-[62vh] flex-col justify-center py-28">
           <p className="text-xs font-bold uppercase tracking-[0.32em] text-brand-400">Our story</p>
           <h1 className="mt-6 max-w-2xl font-display text-4xl font-medium leading-[1.08] sm:text-5xl lg:text-6xl">
             Fixed rental. This is not a negotiation.
           </h1>
-          <p className="mt-6 max-w-xl text-base leading-relaxed text-white/75 sm:text-lg">
+          <p className="mt-6 max-w-xl text-base leading-relaxed text-white/90 sm:text-lg">
             {String(info.name ?? "Darshh Holiday")} is a Hassan district self-drive rental operator serving Hassan
             and Sakleshpura — bikes, scooters, cars and a chauffeur-driven tempo traveller for group sightseeing,
             all on one fixed price list.
           </p>
           <dl className="mt-12 flex flex-wrap gap-4">
-            {[
-              { label: "Happy clients", value: "150+" },
-              { label: "Fleet size", value: "20+" },
-              { label: "Trips completed", value: "100+" },
-              { label: "Rider rating", value: avgRating > 0 ? `${avgRating} ★` : "—" },
-            ].map((s) => (
-              <div key={s.label} className="rounded-2xl border border-white/15 bg-white/10 px-6 py-4 backdrop-blur-xl">
-                <dt className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">{s.label}</dt>
-                <dd className="mt-1 font-display text-2xl font-semibold text-brand-400">{s.value}</dd>
-              </div>
-            ))}
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-6 py-4 backdrop-blur-xl">
+              <dt className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">Happy clients</dt>
+              <dd className="mt-1 font-display text-2xl font-semibold text-brand-400">
+                <AnimatedCounter target={150} suffix="+" />
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-6 py-4 backdrop-blur-xl">
+              <dt className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">Fleet size</dt>
+              <dd className="mt-1 font-display text-2xl font-semibold text-brand-400">
+                <AnimatedCounter target={20} suffix="+" />
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-6 py-4 backdrop-blur-xl">
+              <dt className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">Trips completed</dt>
+              <dd className="mt-1 font-display text-2xl font-semibold text-brand-400">
+                <AnimatedCounter target={100} suffix="+" />
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-6 py-4 backdrop-blur-xl">
+              <dt className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">Rider rating</dt>
+              <dd className="mt-1 font-display text-2xl font-semibold text-brand-400">
+                <AnimatedCounter target={avgRating} decimals={1} suffix=" ★" />
+              </dd>
+            </div>
           </dl>
         </div>
       </section>
@@ -108,15 +122,14 @@ export default async function AboutPage() {
               call if anything comes up on the road.
             </p>
           </div>
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div className="card p-7">
-              <h2 className="font-display text-xl font-semibold text-ink-900">What we promise</h2>
-              <ul className="mt-5 space-y-3.5 text-sm text-ink-700">
+              <h2 className="font-display text-xl font-semibold text-ink-900">Our promise to you</h2>
+              <ul className="mt-4 space-y-3 text-sm text-ink-600">
                 {[
-                  "Fixed pricing with no bargaining, ever",
-                  "Well-maintained, inspected vehicles",
-                  "Clear deposit, km allowance and late-fee terms upfront",
-                  "A single point of contact from booking to return",
+                  "Clean, road-tested vehicle delivered on time",
+                  "No hidden kilometre limits or surprise billing",
+                  "Fast deposit refund when you return the keys",
                   "Honest advice — including when a vehicle isn't right for your trip",
                 ].map((item) => (
                   <li key={item} className="flex gap-3">
@@ -126,9 +139,9 @@ export default async function AboutPage() {
                 ))}
               </ul>
             </div>
-            <div className="card overflow-hidden bg-ink-950 p-7 text-white">
-              <h2 className="font-display text-xl font-semibold">Book your ride</h2>
-              <p className="mt-2 text-sm leading-relaxed text-white/70">
+            <div className="card overflow-hidden border border-ink-200/80 bg-white p-7 text-ink-900 shadow-md">
+              <h2 className="font-display text-xl font-semibold text-ink-900">Book your ride</h2>
+              <p className="mt-2 text-sm leading-relaxed text-ink-600">
                 Search your dates, pick a vehicle, and see the full price before you commit.
               </p>
               <Link href="/booking" className="mt-5 inline-flex items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3 text-sm font-bold text-ink-950 transition hover:bg-brand-400 active:scale-[0.98]">
@@ -196,20 +209,27 @@ export default async function AboutPage() {
 
       {/* CTA */}
       <section className="container-x pb-20 sm:pb-24">
-        <div className="relative overflow-hidden rounded-3xl bg-ink-950 px-6 py-14 text-center text-white sm:px-12">
-          <div className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-brand-500/25" aria-hidden />
-          <div className="pointer-events-none absolute -bottom-8 -left-8 h-32 w-32 bg-bblue-500/20" aria-hidden />
-          <div className="relative">
-            <h2 className="font-display text-3xl font-semibold sm:text-4xl">Ready to book your ride?</h2>
-            <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-white/70 sm:text-base">
+        <div className="relative overflow-hidden rounded-3xl bg-ink-950 px-6 py-16 text-center text-white sm:px-12 shadow-lift">
+          <Image
+            src="/vehicles/tempo-traveller.jpg"
+            alt="Tempo Traveller"
+            fill
+            loading="lazy"
+            className="object-cover object-center opacity-70 brightness-110 contrast-105"
+            sizes="(max-width: 1200px) 100vw, 1200px"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-ink-950/65 via-ink-950/45 to-ink-950/55" aria-hidden />
+          <div className="relative z-10">
+            <h2 className="font-display text-3xl font-bold sm:text-4xl text-white">Ready to book your ride?</h2>
+            <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-white/90 sm:text-base">
               Pick your dates and vehicle — we'll have it ready and waiting, with no surprises at the counter.
             </p>
-            <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-              <Link href="/booking" className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-500 px-8 py-4 text-sm font-bold uppercase tracking-wider text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
-                Book now
+            <div className="mt-8 flex flex-col justify-center gap-3.5 sm:flex-row items-center">
+              <Link href="/booking" className="btn-shine inline-flex h-12 items-center justify-center gap-2.5 rounded-full bg-brand-500 px-8 text-sm font-bold uppercase tracking-wider text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
+                Book Now
               </Link>
-              <Link href="/vehicles" className="btn bg-white/10 px-8 py-4 text-base text-white ring-1 ring-white/30 hover:bg-white/20">
-                Browse the fleet
+              <Link href="/vehicles" className="inline-flex h-12 items-center justify-center gap-2.5 rounded-full border border-white/30 bg-white/10 px-8 text-sm font-bold uppercase tracking-wider text-white backdrop-blur-md transition hover:border-brand-400/50 hover:bg-white/20 active:scale-[0.98]">
+                Browse The Fleet
               </Link>
             </div>
           </div>

@@ -10,7 +10,7 @@ export function generateInvoiceForBooking(bookingId: number): { id: number; invo
   if (existing) return { id: existing.id, invoiceNo: existing.invoice_no };
 
   const booking = db.prepare("SELECT * FROM bookings WHERE id = ?").get(bookingId) as Record<string, unknown>;
-  const gstPct = getSetting<number>("tax_pct", 5);
+  const gstPct = getSetting<number>("tax_pct", 6);
   const subtotal = Number(booking.base_amount) + Number(booking.other_fees_amount) + Number(booking.extra_km_amount) + Number(booking.late_fee_amount) + Number(booking.damage_amount);
   const total = subtotal + Number(booking.gst_amount) - Number(booking.discount_amount);
 

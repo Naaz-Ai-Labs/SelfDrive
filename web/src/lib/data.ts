@@ -12,7 +12,7 @@ export type Vehicle = {
   branch_id: number | null; branch_name: string | null; registration_no: string | null; cc: number | null;
   fuel_type: string; transmission: string; seats: number; mileage: string | null; included_km: number;
   extra_km_rate: number; rate_12h: number; rate_24h: number; hourly_rate: number; weekend_rate_24h: number | null;
-  deposit: number; late_fee_per_hour: number; description: string | null; terms: string | null; status: string;
+  deposit: number; late_fee_per_hour: number; total_units: number; description: string | null; terms: string | null; status: string;
   active: number; photos: string[]; primary_photo: string | null;
 };
 

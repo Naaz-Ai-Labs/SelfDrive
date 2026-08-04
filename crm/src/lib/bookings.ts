@@ -25,8 +25,8 @@ function findOrCreateCustomer(contact: BookingPayload["customer"]): number {
     .get(phone, email) as { id: number } | undefined;
   if (existing) {
     db.prepare(
-      "UPDATE customers SET name = ?, whatsapp = COALESCE(?, whatsapp), email = COALESCE(?, email), address = COALESCE(?, address), date_of_birth = COALESCE(?, date_of_birth), emergency_contact = COALESCE(?, emergency_contact), updated_at = datetime('now') WHERE id = ?"
-    ).run(contact.name, phone, email || null, contact.address ?? null, contact.dob ?? null, contact.emergencyContact ?? null, existing.id);
+      "UPDATE customers SET name = ?, phone = COALESCE(?, phone), whatsapp = COALESCE(?, whatsapp), email = COALESCE(?, email), address = COALESCE(?, address), date_of_birth = COALESCE(?, date_of_birth), emergency_contact = COALESCE(?, emergency_contact), updated_at = datetime('now') WHERE id = ?"
+    ).run(contact.name, phone, phone, email || null, contact.address ?? null, contact.dob ?? null, contact.emergencyContact ?? null, existing.id);
     return existing.id;
   }
   const result = db

@@ -20,9 +20,9 @@ const CATEGORIES: Category[] = [
     kind: "car",
     icon: "M5 17h14M5 17a2 2 0 104 0M5 17V9l2-4h10l2 4v8M15 17a2 2 0 104 0",
     image: "/vehicles/mahindra-thar.avif",
-    short_desc: "Self-drive hatchbacks, sedans, SUVs and 7-seaters — fixed daily pricing, 300 km included.",
+    short_desc: "Self-drive hatchbacks, sedans, SUVs and 7-seaters — fixed daily pricing, 100 km included.",
     description:
-      "Our self-drive car fleet is well maintained and inspected before every handover. Every car comes with a 300 km/day allowance, a refundable security deposit and fixed pricing — no bargaining, no hidden charges.",
+      "Our self-drive car fleet is well maintained and inspected before every handover. Every car comes with a 100 km/day allowance, a refundable security deposit and fixed pricing — no bargaining, no hidden charges.",
     sort: 1,
   },
   {
@@ -60,16 +60,14 @@ type VehicleSeed = {
   model: string;
   year: number;
   category: string;
-  cc?: number;
+  cc: number;
   fuel_type: string;
   transmission: string;
   seats: number;
-  mileage?: string;
+  mileage: string;
   included_km: number;
   extra_km_rate: number;
-  /** Standard weekday (Mon–Fri) rate for one 8AM→8AM rental day. */
   rate_24h: number;
-  /** Weekend (Sat–Sun) rate for one rental day — undefined means same as weekday (cars). */
   weekend_rate_24h?: number;
   deposit: number;
   late_fee_per_hour: number;
@@ -77,83 +75,80 @@ type VehicleSeed = {
   image: string;
 };
 
-// Real fleet + pricing from the Darshh Bike Rental and Darshh Car Rental price-list flyers
-// (Sakleshpura). Bikes/scooters have separate weekday and weekend rates; cars are a single
-// flat daily rate on the flyer. Deposit and extra-km rate are flat per vehicle class.
 const VEHICLES: VehicleSeed[] = [
-  // ---- Scooters (automatic) ----
+  // ---- Scooters ----
   {
     name: "Honda Dio", brand: "Honda", model: "Dio", year: 2023, category: "Scooters",
     cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "45 km/l",
-    included_km: 100, extra_km_rate: 4, rate_24h: 900, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100,
+    included_km: 100, extra_km_rate: 8, rate_24h: 900, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100,
     description: "Light, easy-to-ride scooter — the simplest way to get around Sakleshpura.",
     image: "/vehicles/honda-dio.avif",
   },
   {
     name: "Honda Activa", brand: "Honda", model: "Activa 6G", year: 2023, category: "Scooters",
     cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "50 km/l",
-    included_km: 100, extra_km_rate: 4, rate_24h: 900, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100,
+    included_km: 100, extra_km_rate: 8, rate_24h: 900, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100,
     description: "The most popular scooter on Indian roads — automatic, light and simple to ride.",
     image: "/vehicles/honda-activa.webp",
   },
   {
     name: "TVS Jupiter", brand: "TVS", model: "Jupiter", year: 2023, category: "Scooters",
     cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "48 km/l",
-    included_km: 100, extra_km_rate: 4, rate_24h: 900, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100,
+    included_km: 100, extra_km_rate: 8, rate_24h: 900, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100,
     description: "Comfortable commuter scooter with a smooth ride and good boot space.",
     image: "/vehicles/tvs-jupiter.webp",
   },
   {
     name: "Yamaha RayZR", brand: "Yamaha", model: "RayZR", year: 2023, category: "Scooters",
     cc: 125, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "46 km/l",
-    included_km: 100, extra_km_rate: 4, rate_24h: 1000, weekend_rate_24h: 1100, deposit: 1000, late_fee_per_hour: 100,
+    included_km: 100, extra_km_rate: 8, rate_24h: 1000, weekend_rate_24h: 1100, deposit: 1000, late_fee_per_hour: 100,
     description: "Sportier styling with a punchier 125cc engine — still automatic and easy to ride.",
     image: "/vehicles/yamaha-rayzr.avif",
   },
   {
     name: "TVS NTorq", brand: "TVS", model: "NTorq 125", year: 2023, category: "Scooters",
     cc: 125, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "44 km/l",
-    included_km: 120, extra_km_rate: 4, rate_24h: 1100, weekend_rate_24h: 1200, deposit: 1000, late_fee_per_hour: 100,
-    description: "Sportiest scooter in the fleet, with a slightly higher km allowance.",
-    image: "/vehicles/tvs-ntorq.webp",
+    included_km: 100, extra_km_rate: 8, rate_24h: 1100, weekend_rate_24h: 1200, deposit: 1000, late_fee_per_hour: 100,
+    description: "Sportiest scooter in the fleet, simple to handle on hill roads.",
+    image: "/vehicles/tvs-ntorq.png",
   },
   // ---- Bikes ----
   {
     name: "TVS Radar", brand: "TVS", model: "Radar", year: 2023, category: "Bikes",
     cc: 160, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "40 km/l",
-    included_km: 160, extra_km_rate: 4, rate_24h: 1400, weekend_rate_24h: 1500, deposit: 1000, late_fee_per_hour: 100,
+    included_km: 100, extra_km_rate: 8, rate_24h: 1400, weekend_rate_24h: 1500, deposit: 1000, late_fee_per_hour: 100,
     description: "Modern neo-retro commuter bike with a confident, upright riding position.",
     image: "/vehicles/tvs-radar.avif",
   },
   {
     name: "Bajaj Pulsar NS", brand: "Bajaj", model: "Pulsar NS200", year: 2023, category: "Bikes",
     cc: 200, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "35 km/l",
-    included_km: 160, extra_km_rate: 4, rate_24h: 1300, weekend_rate_24h: 1400, deposit: 1000, late_fee_per_hour: 100,
+    included_km: 100, extra_km_rate: 8, rate_24h: 1300, weekend_rate_24h: 1400, deposit: 1000, late_fee_per_hour: 100,
     description: "Naked street bike with real power for the Sakleshpura–Chikmagalur ghat roads.",
     image: "/vehicles/bajaj-pulsar-ns.png",
   },
   {
     name: "TVS Ronin", brand: "TVS", model: "Ronin", year: 2023, category: "Bikes",
     cc: 225, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "35 km/l",
-    included_km: 200, extra_km_rate: 4, rate_24h: 1800, weekend_rate_24h: 1800, deposit: 1000, late_fee_per_hour: 120,
-    description: "Modern cruiser styling with a bigger km allowance for longer day trips.",
+    included_km: 100, extra_km_rate: 8, rate_24h: 1800, weekend_rate_24h: 1800, deposit: 1000, late_fee_per_hour: 120,
+    description: "Modern cruiser styling, comfortable for day trips around the Western Ghats.",
     image: "/vehicles/tvs-ronin.avif",
   },
   {
     name: "Honda CB200X", brand: "Honda", model: "CB200X", year: 2023, category: "Bikes",
     cc: 184, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "38 km/l",
-    included_km: 200, extra_km_rate: 4, rate_24h: 1800, weekend_rate_24h: 1800, deposit: 1000, late_fee_per_hour: 120,
+    included_km: 100, extra_km_rate: 8, rate_24h: 1800, weekend_rate_24h: 1800, deposit: 1000, late_fee_per_hour: 120,
     description: "Adventure-styled bike with a taller stance — built for the ghat road curves.",
     image: "/vehicles/honda-cb200x.jpg",
   },
   {
     name: "Honda Shine", brand: "Honda", model: "Shine", year: 2022, category: "Bikes",
     cc: 125, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "50 km/l",
-    included_km: 100, extra_km_rate: 4, rate_24h: 1000, weekend_rate_24h: 1000, deposit: 1000, late_fee_per_hour: 100,
+    included_km: 100, extra_km_rate: 8, rate_24h: 1000, weekend_rate_24h: 1000, deposit: 1000, late_fee_per_hour: 100,
     description: "Reliable, fuel-efficient commuter bike — the easiest bike in the fleet to ride.",
     image: "/vehicles/honda-shine.avif",
   },
-  // ---- Cars (flat daily rate — no weekend markup on the price list) ----
+  // ---- Cars (flat daily rate) ----
   {
     name: "Maruti Baleno Manual", brand: "Maruti Suzuki", model: "Baleno", year: 2023, category: "Cars",
     cc: 1197, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "21 km/l",
@@ -234,8 +229,8 @@ const TEMPLATES = [
 const FAQS = [
   { question: "What documents do I need to rent a vehicle?", answer: "A valid driving licence, a government photo ID (Aadhaar/passport/voter ID) and a refundable security deposit. For two-wheelers, a valid licence with the correct vehicle class is required." },
   { question: "Is fuel included in the rental?", answer: "No — all our vehicles are rented without fuel. Please return the vehicle with the same fuel level you received it at." },
-  { question: "What is the kilometre limit?", answer: "Cars include 300 km per rental day; bikes and scooters include 100-150 km per day. Extra kilometres are charged at a fixed per-km rate shown on each vehicle." },
-  { question: "What is your rental timing?", answer: "Standard rental runs for 24 hours — pickup at 8:00 AM, return by 8:00 AM the next day. A 30-minute grace period applies before late fees." },
+  { question: "What is the kilometre limit?", answer: "All vehicles include 100 km per rental day. Extra kilometres driven beyond this limit are charged at ₹500/km." },
+  { question: "What is your rental timing?", answer: "Standard rental day is 8:00 AM to 8:00 AM (24 hours complete cycle). Pickup before 8:00 AM or drop after 8:00 AM incurs an extra ₹250 fee." },
   { question: "Is the deposit refundable?", answer: "Yes, the security deposit is fully refundable after the vehicle is returned and inspected, minus any approved deductions for damage, late return or extra kilometres." },
   { question: "Do you negotiate on price?", answer: "No — we run a fixed, no-bargaining pricing policy so every customer gets the same transparent rate." },
   { question: "Can I book in advance?", answer: "Yes, we only accept pre-bookings. Please book at least a few hours ahead so we can prepare and inspect your vehicle." },

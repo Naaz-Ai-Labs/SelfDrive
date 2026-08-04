@@ -6,10 +6,10 @@ import { SectionHeading, Stars } from "@/components/ui";
 import { BookingBar } from "@/components/BookingBar";
 import { Reveal } from "@/components/ui/Reveal";
 import { Marquee } from "@/components/ui/Marquee";
+import { OurStories } from "@/components/OurStories";
 
-const HERO_IMG =
-  "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=2400&q=80";
-const HERO_VIDEO = "https://videos.pexels.com/video-files/12098100/12098100-hd_1280_720_30fps.mp4";
+const HERO_IMG = "/hero-poster.jpg";
+const HERO_VIDEO = "/hero-background.mp4";
 
 const SPEC_ICONS: Record<string, string> = {
   transmission: "M4 12h4l2-4 4 8 2-4h4",
@@ -61,10 +61,10 @@ export default async function HomePage() {
           to a video. A static poster paints instantly; the video swaps in
           once it can play, and never loads at all if the visitor has
           prefers-reduced-motion set. */}
-      <section className="relative -mt-16 overflow-hidden bg-ink-950 pt-16 text-white">
+      <section className="relative flex min-h-screen flex-col justify-between overflow-hidden bg-ink-950 -mt-20 sm:-mt-24 pt-20 sm:pt-24 text-white">
         <Image src={HERO_IMG} alt="" aria-hidden fill priority className="object-cover" sizes="100vw" />
         <video
-          className="hero-video absolute inset-0 h-full w-full object-cover"
+          className="hero-video absolute inset-0 h-full w-full object-cover brightness-125 contrast-105"
           autoPlay
           muted
           loop
@@ -78,15 +78,15 @@ export default async function HomePage() {
         >
           <source src={HERO_VIDEO} type="video/mp4" />
         </video>
-        <div className="absolute inset-0 bg-ink-950/78" aria-hidden />
+        <div className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/40 to-ink-950/25" aria-hidden />
 
-        <div className="container-x relative overflow-x-hidden py-14 sm:py-20">
-          <div className="max-w-2xl">
-            <span className="inline-flex items-center gap-2 rounded-full border border-brand-400/30 bg-brand-500/10 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.28em] text-brand-300">
+        <div className="container-x relative z-10 flex flex-1 flex-col justify-center items-center text-center py-12 sm:py-16">
+          <div className="max-w-3xl mx-auto flex flex-col items-center">
+            <span className="inline-flex items-center gap-2 rounded-full border border-brand-400/40 bg-brand-500/15 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.28em] text-brand-300 backdrop-blur-md">
               <span className="h-1.5 w-1.5 rounded-full bg-brand-400" aria-hidden />
               Fixed pricing · No bargaining
             </span>
-            <h1 className="mt-5 font-display text-4xl font-black leading-[1.05] tracking-tight sm:text-5xl lg:text-[3.2rem]">
+            <h1 className="mt-5 font-display text-4xl font-black leading-[1.05] tracking-tight sm:text-5xl lg:text-[3.5rem]">
               Rent the{" "}
               <span className="relative inline-block text-brand-400">
                 Right Ride
@@ -96,36 +96,51 @@ export default async function HomePage() {
               </span>{" "}
               for Every Journey
             </h1>
-            <p className="mt-4 max-w-lg text-base leading-relaxed text-white/80 sm:text-lg">
+            <p className="mt-5 max-w-xl mx-auto text-base leading-relaxed text-white/90 sm:text-lg sm:leading-relaxed">
               Bikes, scooters and cars for the Hassan–Sakleshpura–Chikmagalur stretch — one price list,
               no haggling at the counter, and a vehicle that's actually been checked before you get the keys.
             </p>
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-              <Link href="/booking" className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-500 px-8 py-4 text-sm font-bold uppercase tracking-wider text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
-                Search available vehicles
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row sm:-translate-x-5">
+              <Link
+                href="/booking"
+                className="btn-shine inline-flex h-12 items-center justify-center gap-2.5 rounded-full bg-brand-500 px-7 text-sm font-bold leading-none text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.5-3.5" />
+                </svg>
+                <span>Search Available Vehicles</span>
               </Link>
-              <Link href="/vehicles" className="inline-flex items-center justify-center gap-2 rounded-full border border-white/30 bg-white/10 px-8 py-4 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/20">
-                Browse the fleet
+              <Link
+                href="/vehicles"
+                className="inline-flex h-12 items-center justify-center gap-2.5 rounded-full border border-white/25 bg-white/10 px-7 text-sm font-bold leading-none text-white backdrop-blur-md transition hover:border-brand-400/50 hover:bg-white/20 active:scale-[0.98]"
+              >
+                <span>Browse Our Fleet</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
+                  <path d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
               </Link>
             </div>
 
             {avgRating > 0 && (
-              <div className="mt-6 inline-flex items-center gap-3 rounded-2xl border border-white/15 bg-white/5 px-4 py-3 backdrop-blur-xl">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-500 font-display text-base font-black text-ink-950">{avgRating}</div>
-                <div>
+              <div className="mt-6 inline-flex items-center gap-3 rounded-full border border-white/20 bg-ink-950/60 px-5 py-2.5 shadow-soft backdrop-blur-xl">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-500 font-display text-xs font-black text-ink-950 shadow-sm">
+                  {avgRating}
+                </div>
+                <div className="text-left">
                   <Stars rating={Math.round(avgRating)} />
-                  <p className="mt-0.5 text-xs text-white/60">{testimonials.length}+ rider reviews</p>
+                  <p className="text-[11px] font-medium text-white/80">{testimonials.length}+ verified rider reviews</p>
                 </div>
               </div>
             )}
           </div>
         </div>
+      </section>
 
-        <div className="relative z-20 pb-8 sm:pb-10">
-          <div className="container-x">
-            <BookingBar categories={categories} />
-          </div>
+      {/* Booking Bar Section (Positioned Cleanly Below Video) */}
+      <section className="relative z-30 mt-4 sm:mt-6 mb-10">
+        <div className="container-x">
+          <BookingBar categories={categories} />
         </div>
       </section>
 
@@ -196,6 +211,10 @@ export default async function HomePage() {
                   {v.primary_photo && (
                     <div className="relative -mx-6 -mt-6 mb-5 h-36 overflow-hidden bg-white/95">
                       <Image src={v.primary_photo} alt={v.name} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-105" sizes="(max-width: 768px) 100vw, 33vw" />
+                      <span className={`absolute left-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${v.total_units <= 2 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                        {v.total_units ?? 1} Left
+                      </span>
                     </div>
                   )}
                   <p className="text-xs font-bold uppercase tracking-wider text-brand-400/90">{v.category_name}</p>
@@ -204,7 +223,7 @@ export default async function HomePage() {
                     <span className="flex items-center gap-1.5"><SpecIcon d={SPEC_ICONS.transmission} />{v.transmission}</span>
                     <span className="flex items-center gap-1.5"><SpecIcon d={SPEC_ICONS.fuel} />{v.fuel_type}</span>
                     <span className="flex items-center gap-1.5"><SpecIcon d={SPEC_ICONS.seats} />{v.seats} seats</span>
-                    <span className="flex items-center gap-1.5"><SpecIcon d={SPEC_ICONS.km} />{v.included_km} km/day</span>
+                    <span className="flex items-center gap-1.5"><SpecIcon d={SPEC_ICONS.km} />{v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day`}</span>
                   </div>
                   <div className="mt-6 flex flex-1 items-end justify-between border-t border-white/10 pt-4">
                     <p className="text-sm text-ink-200/70">
@@ -221,6 +240,9 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* About Us & Rider Stories Section */}
+      <OurStories />
 
       {/* Why choose us — bento layout */}
       <section className="container-x py-20 sm:py-24">

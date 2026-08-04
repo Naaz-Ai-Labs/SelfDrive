@@ -15,7 +15,8 @@ type InvoiceResponse = {
   error?: string;
 };
 
-export default async function InvoicePage({ params }: { params: { bookingNo: string } }) {
+export default async function InvoicePage(props: { params: Promise<{ bookingNo: string }> }) {
+  const params = await props.params;
   const res = await gatewayGet<InvoiceResponse>(`/api/gateway/v1/customer/invoice/${encodeURIComponent(params.bookingNo)}`, { auth: true });
   if (!res || res.error === "Not found.") notFound();
   if (!res || res.error) redirect("/customer/login");

@@ -11,3 +11,6 @@ next-env.d.ts
 # "data/*.db" alone would only match a root-level data/ folder, missing
 # web/data and crm/data — ** makes it match at any depth.
 **/data/
+
+# Large media files (exceeding GitHub's 100MB limit)
+*.mp4

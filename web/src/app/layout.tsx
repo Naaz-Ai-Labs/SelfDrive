@@ -92,7 +92,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="flex min-h-screen flex-col">
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
         <Header info={info} />
-        <main className="flex-1">{children}</main>
+        <main className="flex-1 pt-20 sm:pt-24">{children}</main>
         <Footer info={info} />
       </body>
     </html>

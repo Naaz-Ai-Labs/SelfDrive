@@ -39,9 +39,11 @@ export default async function TermsPage() {
         <section>
           <h2 className="font-display text-lg font-semibold text-ink-900">3. Rental period, fuel &amp; kilometres</h2>
           <ul className="mt-3 list-disc space-y-2 pl-5">
-            <li>The standard rental period is 24 hours from your pickup time, pickup at {String(rules.standard_pickup_time ?? "08:00")} and return by the same time the next day, unless a shorter package is selected.</li>
+            <li>Standard vehicle renting and drop-off is from 8:00 AM to 8:00 AM (24 hours complete cycle), which is considered to be 1 rental day.</li>
+            <li>Picking up the vehicle at 7:59 AM or earlier (before 8:00 AM) incurs an extra fee of ₹250.</li>
+            <li>Dropping off or returning the vehicle after 8:00 AM (next cycle) incurs an extra fee of ₹250.</li>
             <li>Vehicles are rented without fuel — please return the vehicle with the same fuel level you received it at.</li>
-            <li>Each vehicle includes a fixed kilometre allowance per rental day; kilometres beyond this are charged at the rate shown on the vehicle listing.</li>
+            <li>Each vehicle includes a limit of 100 km per day. Driving beyond this limit incurs an excess charge of ₹500 per KM.</li>
           </ul>
         </section>
         <section>

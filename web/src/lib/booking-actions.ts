@@ -65,7 +65,13 @@ export async function getAvailableVehicles(kind: string | null, pickupAt: string
   if (pickupAt) qs.set("pickupAt", pickupAt);
   if (returnAt) qs.set("returnAt", returnAt);
   const res = await gatewayGet<{ vehicles: Vehicle[] }>(`/api/gateway/v1/booking/available?${qs.toString()}`);
-  return res?.vehicles ?? [];
+  if (res && Array.isArray(res.vehicles) && res.vehicles.length > 0) {
+    return res.vehicles;
+  }
+  // Fallback to static/cached fleet data if gateway fails or returns empty
+  const { getVehicles } = await import("@/lib/data");
+  const all = await getVehicles();
+  return kind ? all.filter((v) => v.category_kind === kind) : all;
 }
 
 export async function getQuoteEstimate(vehicleId: number, pickupAt: string, returnAt: string): Promise<Quote | null> {
@@ -75,5 +81,8 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
 
 export async function getVehicleById(id: number): Promise<Vehicle | null> {
   const res = await gatewayGet<{ vehicle: Vehicle | null }>(`/api/gateway/v1/booking/vehicle?id=${id}`);
-  return res?.vehicle ?? null;
+  if (res && res.vehicle) return res.vehicle;
+  const { getVehicles } = await import("@/lib/data");
+  const all = await getVehicles();
+  return all.find((v) => Number(v.id) === Number(id)) ?? null;
 }

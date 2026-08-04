@@ -28,7 +28,22 @@ export function formatDateTime(value: string | null | undefined): string {
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
   });
+}
+
+export function formatTimeLabel(timeStr?: string | null): string {
+  if (!timeStr) return "";
+  if (/am|pm/i.test(timeStr)) return timeStr;
+  const parts = timeStr.split(":");
+  if (parts.length < 2) return timeStr;
+  let hours = parseInt(parts[0], 10);
+  const minutes = parts[1];
+  if (Number.isNaN(hours)) return timeStr;
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:${minutes} ${ampm}`;
 }
 
 export function timeAgo(value: string | null | undefined): string {

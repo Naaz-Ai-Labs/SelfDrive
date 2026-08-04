@@ -40,6 +40,7 @@ export type Vehicle = {
   weekend_rate_24h: number | null;
   deposit: number;
   late_fee_per_hour: number;
+  total_units: number;
   description: string | null;
   terms: string | null;
   status: string;

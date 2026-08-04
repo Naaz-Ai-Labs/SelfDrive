@@ -10,7 +10,7 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
     email: "hello@darshhrentals.in",
     address: "Sakleshpura & Hassan, Hassan District, Karnataka",
     city: "Hassan",
-    hours: "Pre-booking only · Mon–Sun, 8:00 AM – 8:00 PM",
+    hours: "Pre-booking only · Mon–Sun, 8:00 AM – 8:00 AM",
     social: {
       instagram: "https://www.instagram.com/hassan_sakleshpura_bike_rental",
       facebook: "",
@@ -22,31 +22,27 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
   fuel_policy: "Vehicles are rented without fuel — return with the same fuel level you received it at.",
   no_bargain_policy: true,
   rental_rules: {
-    // Fixed rental cycle: every booking is a whole number of 8AM -> 8AM days (confirmed
-    // against the printed price-list flyers, which show one continuous 24h cycle rather
-    // than separate overnight/day slots).
-    standard_period_hours: 24,
+    standard_period_hours: 12,
     standard_pickup_time: "08:00",
-    standard_return_time: "08:00",
-    after_hours_cutoff: "20:00",
-    // Requesting a pickup time other than 08:00 (but still before the after-hours cutoff)
-    // carries a fixed off-schedule convenience charge — editable/waivable in admin.
+    standard_return_time: "20:00",
+    operating_hours: "08:00 AM - 08:00 AM",
+    early_pickup_cutoff: "07:59",
+    early_pickup_fee: 250,
+    late_drop_cutoff: "20:00",
+    late_drop_fee: 250,
     off_schedule_pickup_fee: 250,
-    // A booking that starts on a Saturday or Sunday must be at least this many days.
     weekend_min_days: 2,
-    // Late return: grace period, then a tiered fee, escalating to a full extra day.
     grace_period_minutes: 15,
     late_fee_tier1: 250,
     late_fee_tier1_max_minutes: 30,
     late_fee_per_hour: 150,
     late_fee_full_day_after_hours: 6,
+    advance_pct: 100,
+    min_hours_advance: 2,
     default_extra_km_rate: 8,
-    default_deposit: 2000,
-    // Payment gateway fee: absorbed by the business by default; set true to pass it on
-    // to the customer as a visible invoice line instead.
+    default_included_km: 100,
     gateway_fee_pass_through: false,
     gateway_fee_pct: 2,
-    // Cancellation refund slabs, keyed off hours-before-pickup at the time of request.
     cancel_full_refund_hours: 24,
     cancel_partial_refund_hours: 6,
     cancel_partial_refund_pct: 50,

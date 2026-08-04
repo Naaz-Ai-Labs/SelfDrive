@@ -96,13 +96,14 @@ CREATE TABLE IF NOT EXISTS vehicles (
   seats INTEGER NOT NULL DEFAULT 2,
   mileage TEXT,
   included_km INTEGER NOT NULL DEFAULT 100,
-  extra_km_rate REAL NOT NULL DEFAULT 5,
+  extra_km_rate REAL NOT NULL DEFAULT 8,
   rate_12h REAL NOT NULL DEFAULT 0,
   rate_24h REAL NOT NULL DEFAULT 0,
   hourly_rate REAL NOT NULL DEFAULT 0,
   weekend_rate_24h REAL,
   deposit REAL NOT NULL DEFAULT 0,
   late_fee_per_hour REAL NOT NULL DEFAULT 0,
+  total_units INTEGER NOT NULL DEFAULT 1,
   description TEXT,
   terms TEXT,
   status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','booked','maintenance','archived')),
@@ -543,6 +544,49 @@ CREATE TABLE IF NOT EXISTS settings (
 
 function applySchema(database: DatabaseSync) {
   database.exec(SCHEMA);
+  try {
+    try { database.exec("ALTER TABLE vehicles ADD COLUMN total_units INTEGER NOT NULL DEFAULT 1;"); } catch {}
+    database.exec("UPDATE vehicles SET included_km = 300 WHERE category_id = 1;");
+    database.exec("UPDATE vehicles SET included_km = 999 WHERE category_id = 4;");
+    database.exec("UPDATE vehicles SET included_km = 100 WHERE category_id IN (2, 3);");
+    database.exec("UPDATE settings SET value = '6' WHERE key = 'tax_pct';");
+    database.exec("UPDATE settings SET value = 'Pre-booking only · Mon–Sun, 8:00 AM – 8:00 AM' WHERE key = 'hours';");
+    database.exec("UPDATE settings SET value = '08:00 AM - 08:00 AM' WHERE key = 'operating_hours';");
+    database.exec("UPDATE vehicles SET total_units = 4 WHERE id = 1;"); // Honda Dio
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 2;"); // Honda Activa
+    database.exec("UPDATE vehicles SET total_units = 6 WHERE id = 3;"); // TVS Jupiter
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 4;"); // Yamaha RayZR
+    database.exec("UPDATE vehicles SET total_units = 3 WHERE id = 5;"); // TVS NTorq
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 6;"); // TVS Radar
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 7;"); // Pulsar NS
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 8;"); // TVS Ronin
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 9;"); // Honda CB200X
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 10;"); // Honda Shine
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 11;"); // Baleno Manual
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 12;"); // Baleno Automatic
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 13;"); // Dzire
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 14;"); // Ciaz
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 15;"); // Ertiga
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 16;"); // Thar
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 17 OR id = 18;"); // Tempo Traveller
+    database.exec(`
+      UPDATE terms_versions SET content = '${JSON.stringify([
+        "A valid driving licence and government photo ID are required at pickup.",
+        "Minimum customer age: 21 years for two-wheelers, 23 years for cars.",
+        "Security deposit is fully refundable after inspection, minus approved deductions.",
+        "Vehicles are rented without fuel — return with the same fuel level received.",
+        "Standard rental day is 8:00 AM to 8:00 AM (24 hours cycle).",
+        "Included drive limit is 100 km per day. Driving beyond this limit is charged at ₹8 per KM.",
+        "The customer is responsible for traffic fines, tolls and challans incurred during the rental.",
+        "This is a fixed-price rental — no bargaining on listed rates.",
+        "Sub-letting the vehicle to a third party is strictly prohibited.",
+        "Cancellations made more than 24 hours before pickup are eligible for a full refund minus a small processing fee.",
+        "In case of breakdown or accident, contact us immediately — do not attempt repairs without approval."
+      ])}' WHERE active = 1;
+    `);
+  } catch {
+    // Ignore migration error if initializing
+  }
 }
 
 export function runNow<T = void>(fn: (database: DatabaseSync) => T): T {

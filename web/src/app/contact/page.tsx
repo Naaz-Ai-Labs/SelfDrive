@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "Reach Darshan Tour and Travels — phone, WhatsApp, email or the contact form. We reply within one business day.",
 };
 
-const HERO_VIDEO = "https://videos.pexels.com/video-files/8045158/8045158-hd_1920_1080_25fps.mp4";
+const HERO_VIDEO = "/Sequence 01_1.mp4";
 
 const ICONS: Record<string, React.ReactNode> = {
   Phone: (
@@ -38,9 +38,9 @@ export default async function ContactPage() {
   ];
   return (
     <>
-      <section className="relative -mt-16 overflow-hidden bg-ink-950 pt-16 text-white">
+      <section className="relative flex min-h-screen flex-col justify-center overflow-hidden bg-ink-950 -mt-20 sm:-mt-24 pt-20 sm:pt-24 text-white">
         <video
-          className="hero-video absolute inset-0 h-full w-full object-cover opacity-90"
+          className="hero-video absolute inset-0 h-full w-full object-cover brightness-125 contrast-105 opacity-95"
           autoPlay
           muted
           loop
@@ -53,13 +53,13 @@ export default async function ContactPage() {
         >
           <source src={HERO_VIDEO} type="video/mp4" />
         </video>
-        <div className="absolute inset-0 bg-gradient-to-r from-ink-950/85 via-ink-950/55 to-ink-950/40" aria-hidden />
-        <div className="container-x relative py-20 sm:py-24">
+        <div className="absolute inset-0 bg-gradient-to-r from-ink-950/75 via-ink-950/45 to-ink-950/20" aria-hidden />
+        <div className="container-x relative z-10 my-auto py-20 sm:py-24">
           <p className="text-xs font-bold uppercase tracking-[0.32em] text-gold-300">Contact</p>
-          <h1 className="mt-5 max-w-xl font-display text-4xl font-medium leading-[1.08] sm:text-5xl">
+          <h1 className="mt-5 max-w-xl font-display text-4xl font-black leading-[1.08] sm:text-5xl lg:text-6xl">
             Talk to a real human
           </h1>
-          <p className="mt-5 max-w-lg text-base leading-relaxed text-white/75">
+          <p className="mt-5 max-w-lg text-base leading-relaxed text-white/90 sm:text-lg">
             Call, WhatsApp, email or drop us a message below — a member of our tour desk replies within one
             business day, usually much sooner.
           </p>

@@ -21,12 +21,22 @@ async function main() {
 
   // ---- 1. Customer booking journey (real code path) ----
   const phone = "+91 98765 10001";
+  const email = "smoke.ramesh@example.com";
   const pickupAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16);
   const returnAt = new Date(Date.now() + 48 * 3600 * 1000).toISOString().slice(0, 16);
 
+  // Clean up any previous test runs so the test is idempotent
+  db.prepare("DELETE FROM availability_blocks WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id IN (SELECT id FROM customers WHERE email LIKE '%smoke%' OR phone LIKE '%98765%'))").run();
+  db.prepare("DELETE FROM booking_history WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id IN (SELECT id FROM customers WHERE email LIKE '%smoke%' OR phone LIKE '%98765%'))").run();
+  db.prepare("DELETE FROM customer_documents WHERE customer_id IN (SELECT id FROM customers WHERE email LIKE '%smoke%' OR phone LIKE '%98765%')").run();
+  db.prepare("DELETE FROM messages WHERE to_address LIKE '%98765%'").run();
+  db.prepare("DELETE FROM bookings WHERE customer_id IN (SELECT id FROM customers WHERE email LIKE '%smoke%' OR phone LIKE '%98765%')").run();
+  db.prepare("DELETE FROM enquiries WHERE phone LIKE '%98765%' OR email LIKE '%smoke%' OR data LIKE '%smoke%'").run();
+  db.prepare("DELETE FROM customers WHERE email LIKE '%smoke%' OR phone LIKE '%98765%'").run();
+
   const token = (await saveBookingDraft({
     categoryId: null, vehicleId: vehicle.id, pickupAt, returnAt, location: "Sakleshpura branch", passengers: 2, step: 3,
-    contact: { name: "Ramesh Kumar", phone, email: "ramesh.kumar@example.com" },
+    contact: { name: "Ramesh Kumar", phone, email },
   })).token;
   check("draft token format", /^[a-f0-9]{32,64}$/.test(token), token.slice(0, 10));
 
@@ -35,9 +45,13 @@ async function main() {
 
   const res = await submitBooking({
     token, vehicleId: vehicle.id, pickupAt, returnAt, location: "Sakleshpura branch", passengers: 2,
-    contact: { name: "Ramesh Kumar", phone, email: "ramesh.kumar@example.com" }, termsAccepted: true,
+    contact: { name: "Ramesh Kumar", phone, email }, termsAccepted: true,
+    documents: [
+      { kind: "licence", url: "/uploads/licence.jpg" },
+      { kind: "govt_id", url: "/uploads/govt_id.jpg" },
+    ],
   });
-  check("submit booking", res.ok === true, `bookingNo=${res.bookingNo}`);
+  check("submit booking", res.ok === true, `bookingNo=${res.bookingNo} error=${res.error}`);
 
   const booking = db.prepare("SELECT * FROM bookings WHERE booking_no = ?").get(res.bookingNo!) as Record<string, unknown>;
   check("booking created", !!booking, booking ? `status=${String(booking.status)}` : "");

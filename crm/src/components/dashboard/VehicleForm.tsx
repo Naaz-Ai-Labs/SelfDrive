@@ -18,7 +18,7 @@ export function VehicleForm({ categories, branches, vehicle }: {
     categoryId: vehicle?.category_id ? String(vehicle.category_id) : "", branchId: vehicle?.branch_id ? String(vehicle.branch_id) : "",
     registrationNo: vehicle?.registration_no ?? "", cc: vehicle?.cc ? String(vehicle.cc) : "", fuelType: vehicle?.fuel_type ?? "Petrol",
     transmission: vehicle?.transmission ?? "Manual", seats: vehicle ? String(vehicle.seats) : "5", mileage: vehicle?.mileage ?? "",
-    includedKm: vehicle ? String(vehicle.included_km) : "100", extraKmRate: vehicle ? String(vehicle.extra_km_rate) : "5",
+    includedKm: vehicle ? String(vehicle.included_km) : "100", extraKmRate: vehicle ? String(vehicle.extra_km_rate) : "8",
     rate12h: vehicle ? String(vehicle.rate_12h) : "", rate24h: vehicle ? String(vehicle.rate_24h) : "", hourlyRate: vehicle ? String(vehicle.hourly_rate) : "",
     deposit: vehicle ? String(vehicle.deposit) : "2000", lateFeePerHour: vehicle ? String(vehicle.late_fee_per_hour) : "150",
     description: vehicle?.description ?? "", status: vehicle?.status ?? "available",
