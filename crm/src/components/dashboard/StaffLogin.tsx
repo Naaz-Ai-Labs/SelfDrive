@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 export function StaffLogin() {
   const router = useRouter();
@@ -14,21 +15,38 @@ export function StaffLogin() {
     e.preventDefault();
     setError("");
     setBusy(true);
+
     try {
+      // 1. Authenticate with Supabase Auth if client is available
+      if (supabase) {
+        const { error: sbError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (sbError && !sbError.message.includes("Invalid login credentials")) {
+          console.warn("Supabase Auth sign-in note:", sbError.message);
+        }
+      }
+
+      // 2. Call CRM auth endpoint to establish local session cookie
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
+
       const data = await res.json();
+
       if (!res.ok) {
         setError(data.error ?? "Login failed.");
         setBusy(false);
         return;
       }
+
       router.push("/dashboard");
       router.refresh();
-    } catch {
+    } catch (err: any) {
       setError("Network error. Please try again.");
       setBusy(false);
     }
@@ -37,15 +55,39 @@ export function StaffLogin() {
   return (
     <form onSubmit={submit} noValidate className="mt-6 space-y-4">
       <div>
-        <label className="label" htmlFor="sl-email">Email</label>
-        <input id="sl-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+        <label className="label" htmlFor="sl-email">
+          Email
+        </label>
+        <input
+          id="sl-email"
+          className="input"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="email"
+        />
       </div>
       <div>
-        <label className="label" htmlFor="sl-password">Password</label>
-        <input id="sl-password" className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+        <label className="label" htmlFor="sl-password">
+          Password
+        </label>
+        <input
+          id="sl-password"
+          className="input"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
+        />
       </div>
-      {error && <p className="field-error" role="alert">{error}</p>}
-      <button type="submit" disabled={busy} className="btn-primary w-full">{busy ? "Signing in…" : "Sign in"}</button>
+      {error && (
+        <p className="field-error" role="alert">
+          {error}
+        </p>
+      )}
+      <button type="submit" disabled={busy} className="btn-primary w-full">
+        {busy ? "Signing in with Supabase…" : "Sign in with Supabase"}
+      </button>
     </form>
   );
 }

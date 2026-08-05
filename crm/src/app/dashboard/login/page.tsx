@@ -5,8 +5,8 @@ import { StaffLogin } from "@/components/dashboard/StaffLogin";
 
 export const metadata: Metadata = { title: "Staff Login", robots: { index: false, follow: false } };
 
-export default function DashboardLoginPage() {
-  const user = getCurrentUser();
+export default async function DashboardLoginPage() {
+  const user = await getCurrentUser();
   if (user) redirect("/dashboard");
   return (
     <div className="container-x flex max-w-md flex-col items-center py-16">

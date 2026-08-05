@@ -28,8 +28,19 @@ CREATE TABLE IF NOT EXISTS users (
   branch TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  last_login TEXT
+  last_login TEXT,
+  left_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS staff_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  staff_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  performed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  detail TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_staff_history_staff ON staff_history(staff_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
@@ -546,6 +557,7 @@ function applySchema(database: DatabaseSync) {
   database.exec(SCHEMA);
   try {
     try { database.exec("ALTER TABLE vehicles ADD COLUMN total_units INTEGER NOT NULL DEFAULT 1;"); } catch {}
+    try { database.exec("ALTER TABLE users ADD COLUMN left_at TEXT;"); } catch {}
     database.exec("UPDATE vehicles SET included_km = 300 WHERE category_id = 1;");
     database.exec("UPDATE vehicles SET included_km = 999 WHERE category_id = 4;");
     database.exec("UPDATE vehicles SET included_km = 100 WHERE category_id IN (2, 3);");

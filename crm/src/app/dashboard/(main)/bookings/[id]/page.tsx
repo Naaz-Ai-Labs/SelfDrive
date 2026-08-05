@@ -10,14 +10,16 @@ import {
   BookingStatusSelect, BookingManagerSelect, AfterHoursApproval, InspectionForm,
   ManualAdjustmentForm, DamageReportForm, PaymentForm, MarkPaidButton,
 } from "@/components/dashboard/forms";
+import { DocumentVerifier } from "@/components/dashboard/DocumentVerifier";
 
 export const metadata: Metadata = { title: "Booking detail", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function BookingDetailPage({ params }: { params: { id: string } }) {
+export default async function BookingDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id: paramId } = await params;
   const db = getDb();
-  const id = Number(params.id);
-  const booking = db
+  const id = Number(paramId);
+  const rawBooking = db
     .prepare(
       `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
               v.name AS vehicle_name, v.registration_no, v.deposit AS vehicle_deposit
@@ -27,17 +29,18 @@ export default function BookingDetailPage({ params }: { params: { id: string } }
        WHERE b.id = ?`
     )
     .get(id) as Record<string, unknown> | undefined;
-  if (!booking) notFound();
+  if (!rawBooking) notFound();
+  const booking = { ...rawBooking };
 
   const statuses = getSetting<string[]>("booking_statuses", []);
   const staff = getStaff();
-  const history = db.prepare("SELECT h.*, u.name AS user_name FROM booking_history h LEFT JOIN users u ON u.id = h.user_id WHERE h.booking_id = ? ORDER BY h.created_at DESC").all(id) as Array<Record<string, unknown>>;
-  const inspections = db.prepare("SELECT * FROM inspections WHERE booking_id = ? ORDER BY created_at").all(id) as Array<Record<string, unknown>>;
-  const inspectionPhotos = db.prepare("SELECT * FROM inspection_photos WHERE inspection_id IN (SELECT id FROM inspections WHERE booking_id = ?)").all(id) as Array<Record<string, unknown>>;
-  const damages = db.prepare("SELECT * FROM damage_reports WHERE booking_id = ?").all(id) as Array<Record<string, unknown>>;
-  const adjustments = db.prepare("SELECT a.*, u.name AS employee_name FROM manual_adjustments a LEFT JOIN users u ON u.id = a.employee_id WHERE a.booking_id = ?").all(id) as Array<Record<string, unknown>>;
-  const payments = db.prepare("SELECT * FROM payments WHERE booking_id = ? ORDER BY created_at DESC").all(id) as Array<Record<string, unknown>>;
-  const documents = db.prepare("SELECT * FROM customer_documents WHERE booking_id = ? OR customer_id = ?").all(id, booking.customer_id as number | null) as Array<Record<string, unknown>>;
+  const history = (db.prepare("SELECT h.*, u.name AS user_name FROM booking_history h LEFT JOIN users u ON u.id = h.user_id WHERE h.booking_id = ? ORDER BY h.created_at DESC").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const inspections = (db.prepare("SELECT * FROM inspections WHERE booking_id = ? ORDER BY created_at").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const inspectionPhotos = (db.prepare("SELECT * FROM inspection_photos WHERE inspection_id IN (SELECT id FROM inspections WHERE booking_id = ?)").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const damages = (db.prepare("SELECT * FROM damage_reports WHERE booking_id = ?").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const adjustments = (db.prepare("SELECT a.*, u.name AS employee_name FROM manual_adjustments a LEFT JOIN users u ON u.id = a.employee_id WHERE a.booking_id = ?").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const payments = (db.prepare("SELECT * FROM payments WHERE booking_id = ? ORDER BY created_at DESC").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const documents = (db.prepare("SELECT * FROM customer_documents WHERE booking_id = ? OR customer_id = ?").all(id, booking.customer_id as number | null) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
 
   const hasHandover = inspections.some((i) => i.kind === "handover");
   const hasReturn = inspections.some((i) => i.kind === "return");
@@ -159,18 +162,7 @@ export default function BookingDetailPage({ params }: { params: { id: string } }
             <div className="mt-4 border-t border-ink-100 pt-4"><PaymentForm bookingId={id} /></div>
           </div>
 
-          {documents.length > 0 && (
-            <div className="card p-5">
-              <h2 className="font-display text-lg font-semibold text-ink-900">Customer documents</h2>
-              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {documents.map((d) => (
-                  <a key={Number(d.id)} href={String(d.file_path)} target="_blank" rel="noreferrer" className="rounded-xl border border-ink-100 p-3 text-center text-xs capitalize text-ink-600 hover:border-brand-500">
-                    {String(d.kind).replace("_", " ")} {d.verified ? "✓" : ""}
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
+          <DocumentVerifier documents={documents} />
 
           <div className="card p-5">
             <h2 className="font-display text-lg font-semibold text-ink-900">History</h2>

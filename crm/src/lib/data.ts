@@ -41,6 +41,7 @@ export type Vehicle = {
   deposit: number;
   late_fee_per_hour: number;
   total_units: number;
+  available_units: number;
   description: string | null;
   terms: string | null;
   status: string;
@@ -52,11 +53,28 @@ export type Vehicle = {
 export type Branch = { id: number; name: string; city: string | null; address: string | null; phone: string | null; active: number };
 
 function attachPhotos(vehicle: Record<string, unknown>): Vehicle {
-  const photos = getDb()
+  const db = getDb();
+  const photos = db
     .prepare("SELECT url FROM vehicle_photos WHERE vehicle_id = ? ORDER BY is_primary DESC, sort")
     .all(vehicle.id as number) as Array<{ url: string }>;
+
+  const booked = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM bookings
+       WHERE vehicle_id = ?
+         AND status IN ('Confirmed', 'Vehicle handed over', 'Active rental', 'Pending verification', 'Enquiry', 'Draft')
+         AND datetime(return_at) >= datetime('now')`
+    )
+    .get(vehicle.id as number) as { c: number } | undefined;
+
+  const totalUnits = Number(vehicle.total_units ?? 1);
+  const bookedCount = booked?.c ?? 0;
+  const availableUnits = Math.max(0, totalUnits - bookedCount);
+
   return {
     ...(vehicle as unknown as Vehicle),
+    total_units: totalUnits,
+    available_units: availableUnits,
     photos: photos.map((p) => p.url),
     primary_photo: photos[0]?.url ?? null,
   };

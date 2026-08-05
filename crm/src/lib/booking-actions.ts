@@ -1,5 +1,4 @@
-"use server";
-
+import { revalidatePath } from "next/cache";
 import { getDb } from "./db";
 import { randomToken, parseJSON, normalizePhone } from "./utils";
 import { createBooking, checkVehicleAvailable } from "./bookings";
@@ -123,6 +122,11 @@ export async function submitBooking(input: {
         );
       }
     }
+
+    try {
+      revalidatePath("/dashboard", "layout");
+      revalidatePath("/dashboard/bookings", "page");
+    } catch {}
 
     return { ok: true, bookingNo, bookingId, customerId };
   } catch (e) {

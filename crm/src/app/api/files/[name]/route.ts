@@ -13,14 +13,14 @@ const MIME: Record<string, string> = {
 // Uploaded files (licence scans, ID proofs, inspection photos) can contain personal or
 // government ID data, so this route is never publicly listable and always requires an
 // active staff or customer session before streaming a file back.
-export async function GET(req: NextRequest, { params }: { params: { name: string } }) {
-  const staff = getCurrentUser();
+export async function GET(req: NextRequest, { params }: { params: Promise<{ name: string }> }) {
+  const staff = await getCurrentUser();
   const portal = staff ? null : await getPortalSession();
   if (!staff && !portal) {
     return NextResponse.json({ error: "Not authorised." }, { status: 401 });
   }
 
-  const name = params.name;
+  const { name } = await params;
   if (!/^[a-f0-9]{16,64}\.[a-z]{3,4}$/i.test(name)) {
     return NextResponse.json({ error: "Invalid file name." }, { status: 400 });
   }

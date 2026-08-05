@@ -38,5 +38,35 @@ export async function POST(req: NextRequest) {
   const buf = Buffer.from(await file.arrayBuffer());
   fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
 
-  return NextResponse.json({ ok: true, path: `/api/files/${name}` });
+  let supabasePublicUrl: string | null = null;
+  const { supabaseAdmin } = await import("@/lib/supabase");
+
+  if (supabaseAdmin) {
+    try {
+      // Ensure storage bucket exists
+      const bucketName = "vehicle-photos";
+      const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+      if (!buckets?.some((b) => b.name === bucketName)) {
+        await supabaseAdmin.storage.createBucket(bucketName, { public: true });
+      }
+
+      // Upload file to Supabase Storage
+      const { data: uploadData, error: uploadErr } = await supabaseAdmin.storage
+        .from(bucketName)
+        .upload(name, buf, { contentType: file.type, upsert: true });
+
+      if (!uploadErr && uploadData) {
+        const { data: pubUrl } = supabaseAdmin.storage.from(bucketName).getPublicUrl(name);
+        if (pubUrl?.publicUrl) {
+          supabasePublicUrl = pubUrl.publicUrl;
+        }
+      }
+    } catch (err: any) {
+      console.warn("Supabase Storage upload warning:", err?.message || err);
+    }
+  }
+
+  // Return local path and Supabase public URL
+  const finalPath = supabasePublicUrl ?? `/api/files/${name}`;
+  return NextResponse.json({ ok: true, path: finalPath, localPath: `/api/files/${name}`, supabaseUrl: supabasePublicUrl });
 }

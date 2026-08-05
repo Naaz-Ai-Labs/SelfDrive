@@ -34,8 +34,8 @@ export function AreaTrend({ data, height = 220 }: { data: Point[]; height?: numb
         ))}
       </svg>
       <div className="mt-1 flex justify-between text-[11px] text-ink-400" style={{ minWidth: 480 }}>
-        {data.map((d) => (
-          <span key={d.label}>{d.label}</span>
+        {data.map((d, idx) => (
+          <span key={d.label || `trend-${idx}`}>{d.label || `M${idx + 1}`}</span>
         ))}
       </div>
     </div>

@@ -12,7 +12,7 @@ export type Vehicle = {
   branch_id: number | null; branch_name: string | null; registration_no: string | null; cc: number | null;
   fuel_type: string; transmission: string; seats: number; mileage: string | null; included_km: number;
   extra_km_rate: number; rate_12h: number; rate_24h: number; hourly_rate: number; weekend_rate_24h: number | null;
-  deposit: number; late_fee_per_hour: number; total_units: number; description: string | null; terms: string | null; status: string;
+  deposit: number; late_fee_per_hour: number; total_units: number; available_units?: number; description: string | null; terms: string | null; status: string;
   active: number; photos: string[]; primary_photo: string | null;
 };
 
@@ -40,7 +40,7 @@ const EMPTY_CONTENT: Content = {
  * pass) — the CRM gateway returns the whole read-mostly content model in one payload, so
  * a page that needs categories, vehicles and testimonials makes one network round trip. */
 export const getContent = cache(async (): Promise<Content> => {
-  const data = await gatewayGet<Content & { error?: string }>("/api/gateway/v1/content", { revalidate: 60 });
+  const data = await gatewayGet<Content & { error?: string }>("/api/gateway/v1/content", { revalidate: 0 });
   if (!data || "error" in data) return EMPTY_CONTENT;
   return data;
 });

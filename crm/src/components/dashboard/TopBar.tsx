@@ -188,3 +188,23 @@ export function NotificationBell({ initialItems, initialUnread }: { initialItems
     </div>
   );
 }
+
+export function LogoutButton({ compact = false }: { compact?: boolean }) {
+  return (
+    <form action="/api/auth/logout" method="post">
+      <button
+        type="submit"
+        title="Log out of CRM"
+        className={cn(
+          "flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 hover:text-red-800 shadow-sm",
+          compact && "px-2 py-1 text-[11px]"
+        )}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
+        </svg>
+        <span>Logout</span>
+      </button>
+    </form>
+  );
+}

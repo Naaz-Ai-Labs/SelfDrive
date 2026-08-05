@@ -49,9 +49,9 @@ export function destroySession(token: string) {
   getDb().prepare("DELETE FROM sessions WHERE token = ?").run(token);
 }
 
-export function getCurrentUser(): SessionUser | null {
+export async function getCurrentUser(): Promise<SessionUser | null> {
   const db = getDb();
-  const store = cookies();
+  const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
   const row = db
@@ -67,8 +67,8 @@ export function getCurrentUser(): SessionUser | null {
   return row;
 }
 
-export function requireUser(roles?: string[]): SessionUser {
-  const user = getCurrentUser();
+export async function requireUser(roles?: string[]): Promise<SessionUser> {
+  const user = await getCurrentUser();
   if (!user) throw new Error("UNAUTHORIZED");
   if (roles && !roles.includes(user.role)) throw new Error("FORBIDDEN");
   return user;
@@ -84,6 +84,71 @@ export function assertCan(user: SessionUser, minRole: string) {
 
 export function isAdmin(user: SessionUser): boolean {
   return user.role === "admin";
+}
+
+export function isStaff(user: SessionUser): boolean {
+  return user.role === "staff" || user.role === "admin";
+}
+
+export async function requireAdmin(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!isAdmin(user)) throw new Error("FORBIDDEN: Admin access required.");
+  return user;
+}
+
+export function assertAdmin(user: SessionUser) {
+  if (!isAdmin(user)) throw new Error("FORBIDDEN: Admin access required.");
+}
+
+/** Extensible Role-Based Module Access Permissions */
+const MODULE_PERMISSIONS: Record<string, string[]> = {
+  "/dashboard": ["admin", "manager", "staff"],
+  "/dashboard/enquiries": ["admin", "manager", "staff"],
+  "/dashboard/bookings": ["admin", "manager", "staff"],
+  "/dashboard/vehicles": ["admin", "manager", "staff"],
+  "/dashboard/payments": ["admin", "manager", "staff"],
+  "/dashboard/problem-tickets": ["admin", "manager", "staff"],
+  "/dashboard/customers": ["admin", "manager", "staff"],
+  "/dashboard/refunds": ["admin", "manager"],
+  "/dashboard/staff": ["admin"],
+  "/dashboard/settings": ["admin"],
+  "/dashboard/reports": ["admin"],
+};
+
+/** Extensible Role Action Permissions Map */
+const ACTION_PERMISSIONS: Record<string, string[]> = {
+  manage_staff: ["admin"],
+  manage_settings: ["admin"],
+  view_analytics: ["admin"],
+  view_revenue: ["admin"],
+  delete_record: ["admin"],
+  restore_record: ["admin"],
+  configure_pricing: ["admin"],
+  approve_refunds: ["admin"],
+  create_enquiry: ["admin", "manager", "staff"],
+  create_booking: ["admin", "manager", "staff"],
+  edit_booking: ["admin", "manager", "staff"],
+  verify_document: ["admin", "manager", "staff"],
+  assign_vehicle: ["admin", "manager", "staff"],
+  create_ticket: ["admin", "manager", "staff"],
+};
+
+export function canAccessModule(role: string, href: string): boolean {
+  const allowed = MODULE_PERMISSIONS[href];
+  if (!allowed) return true;
+  return allowed.includes(role);
+}
+
+export function hasPermission(role: string, action: string): boolean {
+  const allowed = ACTION_PERMISSIONS[action];
+  if (!allowed) return false;
+  return allowed.includes(role);
+}
+
+export function assertPermission(user: SessionUser, action: string) {
+  if (!hasPermission(user.role, action)) {
+    throw new Error(`FORBIDDEN: ${user.role} role does not have permission to ${action}`);
+  }
 }
 
 export { SESSION_COOKIE };

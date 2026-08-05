@@ -117,9 +117,9 @@ export default async function VehicleDetailPage(
             <div className="relative aspect-[4/3] overflow-hidden rounded-3xl bg-ink-100 shadow-soft">
               {vehicle.primary_photo && <Image src={vehicle.primary_photo} alt={vehicle.name} fill priority className="object-contain p-6" sizes="(max-width:1024px) 100vw, 60vw" />}
               <span className="absolute left-4 top-4 badge bg-white/95 text-ink-800 shadow-sm">{vehicle.category_name}</span>
-              <span className={`absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black shadow-md ${vehicle.total_units <= 2 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-md"}`}>
+              <span className={`absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black shadow-md ${(vehicle.available_units ?? vehicle.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-md"}`}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                {vehicle.total_units ?? 1} Left
+                {(vehicle.available_units ?? vehicle.total_units ?? 1) > 0 ? `${vehicle.available_units ?? vehicle.total_units} Left` : "Pending Approval"}
               </span>
             </div>
             {vehicle.photos.length > 1 && (

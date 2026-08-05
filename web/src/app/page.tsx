@@ -211,9 +211,9 @@ export default async function HomePage() {
                   {v.primary_photo && (
                     <div className="relative -mx-6 -mt-6 mb-5 h-36 overflow-hidden bg-white/95">
                       <Image src={v.primary_photo} alt={v.name} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-105" sizes="(max-width: 768px) 100vw, 33vw" />
-                      <span className={`absolute left-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${v.total_units <= 2 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
+                      <span className={`absolute left-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${(v.available_units ?? v.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                        {v.total_units ?? 1} Left
+                        {(v.available_units ?? v.total_units ?? 1) > 0 ? `${v.available_units ?? v.total_units} Left` : "Pending Approval"}
                       </span>
                     </div>
                   )}

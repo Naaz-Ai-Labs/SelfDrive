@@ -7,6 +7,7 @@ import { formatINR, formatDateTime } from "@/lib/utils";
 import { KpiCard, StatusBadge } from "@/components/ui";
 import { AreaTrend } from "@/components/dashboard/charts/AreaTrend";
 import { BarRows } from "@/components/dashboard/charts/BarRow";
+import { PendingApprovalsInbox } from "@/components/dashboard/PendingApprovalsInbox";
 
 export const metadata: Metadata = { title: "Dashboard", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -26,8 +27,8 @@ const ICON = {
   refund: "M3 10h11a5 5 0 010 10H9M3 10l4-4M3 10l4 4",
 };
 
-export default function DashboardPage() {
-  const user = getCurrentUser();
+export default async function DashboardPage() {
+  const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
   const db = getDb();
 
@@ -61,13 +62,17 @@ export default function DashboardPage() {
         ? { pct: 100, positive: true }
         : undefined;
 
+  const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const monthlyBookings: Array<{ label: string; value: number }> = [];
+  const now = new Date();
   for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = `${MONTH_NAMES[d.getMonth()]}`;
     const row = db
-      .prepare("SELECT COUNT(*) AS c FROM bookings WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', date('now', ?))")
-      .get(`-${i} months`) as { c: number };
-    const label = db.prepare("SELECT strftime('%b', date('now', ?)) AS m").get(`-${i} months`) as { m: string };
-    monthlyBookings.push({ label: label.m, value: row.c });
+      .prepare("SELECT COUNT(*) AS c FROM bookings WHERE strftime('%Y-%m', created_at) = ?")
+      .get(monthStr) as { c: number } | undefined;
+    monthlyBookings.push({ label, value: row?.c ?? 0 });
   }
 
   const enquirySources = db
@@ -99,12 +104,74 @@ export default function DashboardPage() {
     )
     .all() as Array<{ id: number; booking_no: string; vehicle_name: string | null; return_at: string }>;
 
+  const pendingBookings = (
+    db
+      .prepare(
+        `SELECT b.*, v.name AS vehicle_name, c.name AS customer_name, c.phone AS customer_phone
+         FROM bookings b
+         LEFT JOIN vehicles v ON v.id = b.vehicle_id
+         LEFT JOIN customers c ON c.id = b.customer_id
+         WHERE b.status IN ('Pending verification', 'Enquiry', 'Draft')
+         ORDER BY b.created_at DESC`
+      )
+      .all() as Array<Record<string, unknown>>
+  ).map((r) => ({ ...r })) as any[];
+
+  const pendingDocs = (
+    db
+      .prepare(
+        `SELECT d.*, c.name AS customer_name, b.booking_no
+         FROM customer_documents d
+         LEFT JOIN customers c ON c.id = d.customer_id
+         LEFT JOIN bookings b ON b.id = d.booking_id
+         WHERE d.verified = 0
+         ORDER BY d.created_at DESC`
+      )
+      .all() as Array<Record<string, unknown>>
+  ).map((r) => ({ ...r })) as any[];
+
+  const pendingAfterHours = (
+    db
+      .prepare(
+        `SELECT b.*, v.name AS vehicle_name, c.name AS customer_name, c.phone AS customer_phone
+         FROM bookings b
+         LEFT JOIN vehicles v ON v.id = b.vehicle_id
+         LEFT JOIN customers c ON c.id = b.customer_id
+         WHERE b.after_hours = 1 AND b.after_hours_approved_by IS NULL
+         ORDER BY b.created_at DESC`
+      )
+      .all() as Array<Record<string, unknown>>
+  ).map((r) => ({ ...r })) as any[];
+
+  const pendingRefundsData = (
+    db
+      .prepare(
+        `SELECT r.*, c.name AS customer_name, b.booking_no
+         FROM refunds r
+         LEFT JOIN customers c ON c.id = r.customer_id
+         LEFT JOIN bookings b ON b.id = r.booking_id
+         WHERE r.status IN ('Requested', 'Under review')
+         ORDER BY r.requested_at DESC`
+      )
+      .all() as Array<Record<string, unknown>>
+  ).map((r) => ({ ...r })) as any[];
+
+  const isAdmin = user.role === "admin";
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-2xl font-semibold text-ink-900">Good day, {user.name.split(" ")[0]}</h1>
         <p className="mt-1 text-sm text-ink-500">Here is the fleet and bookings status at a glance.</p>
       </div>
+
+      <PendingApprovalsInbox
+        pendingBookings={pendingBookings}
+        pendingDocs={pendingDocs}
+        pendingAfterHours={pendingAfterHours}
+        pendingRefunds={pendingRefundsData}
+        isAdmin={user.role === "admin"}
+      />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KpiCard label="Vehicles" value={String(totalVehicles.c)} hint={`${availableVehicles.c} available`} accent="brand" href="/dashboard/vehicles" icon={ICON.vehicle} />
@@ -118,21 +185,40 @@ export default function DashboardPage() {
         <KpiCard label="New enquiries today" value={String(newEnquiries.c)} accent="ink" href="/dashboard/enquiries" icon={ICON.enquiry} />
         <KpiCard label="Open problem tickets" value={String(openTickets.c)} accent={openTickets.c > 0 ? "red" : "ink"} href="/dashboard/problem-tickets" icon={ICON.alert} />
       </div>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiCard label="Revenue collected" value={formatINR(revenue.t)} accent="emerald" icon={ICON.money} trend={revenueTrend} hint="vs last month" />
-        <KpiCard label="Payments pending" value={formatINR(pendingPayments.t)} accent={pendingPayments.t > 0 ? "amber" : "ink"} href="/dashboard/payments" icon={ICON.card} />
-        <KpiCard label="Deposits held" value={formatINR(pendingDeposits.t)} accent="ink" icon={ICON.shield} />
-        <KpiCard label="Refunds pending" value={String(pendingRefunds.c)} accent={pendingRefunds.c > 0 ? "amber" : "ink"} href="/dashboard/refunds" icon={ICON.refund} />
-      </div>
+      {isAdmin && (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <KpiCard label="Revenue collected" value={formatINR(revenue.t)} accent="emerald" icon={ICON.money} trend={revenueTrend} hint="vs last month" />
+          <KpiCard label="Payments pending" value={formatINR(pendingPayments.t)} accent={pendingPayments.t > 0 ? "amber" : "ink"} href="/dashboard/payments" icon={ICON.card} />
+          <KpiCard label="Deposits held" value={formatINR(pendingDeposits.t)} accent="ink" icon={ICON.shield} />
+          <KpiCard label="Refunds pending" value={String(pendingRefunds.c)} accent={pendingRefunds.c > 0 ? "amber" : "ink"} href="/dashboard/refunds" icon={ICON.refund} />
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="card p-5 lg:col-span-2">
-          <h2 className="font-display text-lg font-semibold text-ink-900">Bookings trend</h2>
-          <p className="text-sm text-ink-500">New bookings created per month.</p>
-          <div className="mt-4" style={{ ["--chart-accent" as string]: "#f2b705" }}>
-            <AreaTrend data={monthlyBookings} />
+        {isAdmin ? (
+          <div className="card p-5 lg:col-span-2">
+            <h2 className="font-display text-lg font-semibold text-ink-900">Bookings trend</h2>
+            <p className="text-sm text-ink-500">New bookings created per month.</p>
+            <div className="mt-4" style={{ ["--chart-accent" as string]: "#f2b705" }}>
+              <AreaTrend data={monthlyBookings} />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="card p-5 lg:col-span-2 bg-brand-50/20 border border-brand-100">
+            <h2 className="font-display text-lg font-semibold text-ink-900">Operations Checklist</h2>
+            <p className="text-sm text-ink-500">Daily operational workflow for vehicle handovers and returns.</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <Link href="/dashboard/bookings" className="rounded-xl border border-ink-200 bg-white p-3 hover:border-brand-500">
+                <p className="font-bold text-sm text-ink-900">📋 Pickup & Handover</p>
+                <p className="text-xs text-ink-500">Verify customer DL, Aadhaar & complete vehicle inspection.</p>
+              </Link>
+              <Link href="/dashboard/bookings" className="rounded-xl border border-ink-200 bg-white p-3 hover:border-brand-500">
+                <p className="font-bold text-sm text-ink-900">🛵 Vehicle Return</p>
+                <p className="text-xs text-ink-500">Check return odometer, fuel level & extra km calculations.</p>
+              </Link>
+            </div>
+          </div>
+        )}
         <div className="card p-5">
           <h2 className="font-display text-lg font-semibold text-ink-900">Enquiry sources</h2>
           <p className="text-sm text-ink-500">Where enquiries come from.</p>

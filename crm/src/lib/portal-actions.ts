@@ -9,15 +9,15 @@ import { pushNotification } from "./activity";
 import { revalidatePath } from "next/cache";
 
 export async function getPortalSession(): Promise<{ customerId: number | null; target: string } | null> {
-  const token = cookies().get("dtt_customer")?.value;
+  const token = (await cookies()).get("dtt_customer")?.value;
   if (!token) return null;
   return getCustomerSession(token);
 }
 
 export async function portalLogout() {
-  const token = cookies().get("dtt_customer")?.value;
+  const token = (await cookies()).get("dtt_customer")?.value;
   if (token) destroyCustomerSession(token);
-  cookies().set("dtt_customer", "", { httpOnly: true, path: "/", maxAge: 0 });
+  (await cookies()).set("dtt_customer", "", { httpOnly: true, path: "/", maxAge: 0 });
   revalidatePath("/customer", "layout");
   return { ok: true };
 }

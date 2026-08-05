@@ -11,9 +11,10 @@ import { EnquiryStageSelect, EnquiryAssignSelect, EnquiryNoteForm } from "@/comp
 export const metadata: Metadata = { title: "Enquiry detail", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function EnquiryDetailPage({ params }: { params: { id: string } }) {
+export default async function EnquiryDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id: paramId } = await params;
   const db = getDb();
-  const id = Number(params.id);
+  const id = Number(paramId);
   const enquiry = db
     .prepare(`SELECT e.*, c.name AS category_name, v.name AS vehicle_name FROM enquiries e
       LEFT JOIN vehicle_categories c ON c.id = e.category_id LEFT JOIN vehicles v ON v.id = e.vehicle_id WHERE e.id = ?`)

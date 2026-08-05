@@ -113,6 +113,49 @@ export function createBooking(payload: BookingPayload): { bookingId: number; boo
     // best-effort
   }
 
+  // Sync booking & availability block to Supabase PostgreSQL
+  import("./supabase").then(({ supabaseAdmin }) => {
+    if (supabaseAdmin) {
+      supabaseAdmin
+        .from("bookings")
+        .upsert(
+          {
+            id: bookingId,
+            booking_no: bookingNo,
+            enquiry_id: payload.enquiryId ?? null,
+            customer_id: customerId,
+            vehicle_id: vehicle.id,
+            branch_id: vehicle.branch_id,
+            pickup_at: payload.pickupAt,
+            return_at: payload.returnAt,
+            after_hours: quote.afterHours ? 1 : 0,
+            status: "Pending verification",
+            base_amount: quote.baseAmount,
+            gst_amount: quote.gstAmount,
+            deposit_amount: quote.depositAmount,
+            other_fees_amount: otherFees,
+            total_amount: quote.totalAmount,
+            included_km: quote.includedKm,
+            terms_version_id: terms?.id ?? null,
+            notes: payload.notes ?? null,
+          },
+          { onConflict: "id" }
+        )
+        .then(() => {});
+
+      supabaseAdmin
+        .from("availability_blocks")
+        .insert({
+          vehicle_id: vehicle.id,
+          starts_at: payload.pickupAt,
+          ends_at: payload.returnAt,
+          reason: "booked",
+          booking_id: bookingId,
+        })
+        .then(() => {});
+    }
+  }).catch(() => {});
+
   return { bookingId, bookingNo, customerId };
 }
 

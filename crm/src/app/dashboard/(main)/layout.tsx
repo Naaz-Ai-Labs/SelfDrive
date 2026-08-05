@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, canAccessModule } from "@/lib/auth";
 import { Avatar } from "@/components/ui";
 import { SidebarNav, MobileNav } from "@/components/dashboard/NavLinks";
-import { SearchBox, NotificationBell } from "@/components/dashboard/TopBar";
+import { SearchBox, NotificationBell, LogoutButton } from "@/components/dashboard/TopBar";
+import { CommandBar } from "@/components/dashboard/CommandBar";
 import { getNotifications } from "@/lib/topbar-actions";
 
 const NAV = [
@@ -15,13 +16,18 @@ const NAV = [
   { href: "/dashboard/refunds", label: "Refunds", icon: "M3 10h11a5 5 0 010 10H9M3 10l4-4M3 10l4 4" },
   { href: "/dashboard/problem-tickets", label: "Problem tickets", icon: "M12 9v4m0 4h.01M10.29 3.86l-8.18 14.14A1.5 1.5 0 003.5 20h17a1.5 1.5 0 001.39-2l-8.18-14.14a1.5 1.5 0 00-2.62 0z" },
   { href: "/dashboard/customers", label: "Customers", icon: "M17 20h5v-2a3 3 0 00-5.36-1.86M9 20H4v-2a3 3 0 015.36-1.86M13 7a3 3 0 11-6 0 3 3 0 016 0zm4 3a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" },
+  { href: "/dashboard/staff", label: "Staff Accounts", icon: "M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" },
+  { href: "/dashboard/reports", label: "Reports & Analytics", icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
   { href: "/dashboard/settings", label: "Settings", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" },
 ];
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
   const { items: notifications, unread } = await getNotifications();
+
+  const isAdmin = user.role === "admin";
+  const navItems = NAV.filter((item) => canAccessModule(user.role, item.href));
 
   return (
     <div className="flex min-h-screen bg-ink-50">
@@ -35,32 +41,30 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </span>
         </Link>
         <div className="flex-1 overflow-y-auto">
-          <SidebarNav items={NAV} />
+          <SidebarNav items={navItems} />
         </div>
         <div className="flex items-center gap-3 border-t border-white/10 px-4 py-4">
           <Avatar name={user.name} size="sm" />
-          <div className="min-w-0 leading-tight">
+          <div className="min-w-0 flex-1 leading-tight">
             <p className="truncate text-sm font-semibold text-white">{user.name}</p>
-            <p className="text-xs capitalize text-ink-500">{user.role}</p>
+            <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${isAdmin ? "bg-amber-500/20 text-amber-300" : "bg-blue-500/20 text-blue-300"}`}>
+              {isAdmin ? "Admin" : "Staff"}
+            </span>
           </div>
-          <form action="/api/auth/logout" method="post" className="ml-auto">
-            <button type="submit" aria-label="Log out" className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-500 transition hover:bg-white/5 hover:text-white">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
-              </svg>
-            </button>
-          </form>
+          <LogoutButton compact />
         </div>
       </aside>
 
       <div className="min-w-0 flex-1">
         <div className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-white/50 bg-white/70 px-4 py-3 backdrop-blur-xl sm:px-6">
-          <MobileNav items={NAV} />
-          <div className="hidden flex-1 lg:block">
+          <MobileNav items={navItems} />
+          <div className="hidden flex-1 lg:flex items-center gap-3">
             <SearchBox />
+            <CommandBar />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <NotificationBell initialItems={notifications} initialUnread={unread} />
+            <LogoutButton />
           </div>
         </div>
         <div className="p-4 sm:p-6">{children}</div>

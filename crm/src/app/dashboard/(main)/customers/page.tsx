@@ -9,11 +9,12 @@ import { Avatar, StatusBadge } from "@/components/ui";
 export const metadata: Metadata = { title: "Customers", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function CustomersPage({ searchParams }: { searchParams: { q?: string } }) {
-  const user = getCurrentUser();
+export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+  const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
   const db = getDb();
-  const q = searchParams.q ?? "";
+  const sp = await searchParams;
+  const q = sp.q ?? "";
 
   let sql = `SELECT c.*,
              (SELECT COUNT(*) FROM enquiries e WHERE e.customer_id = c.id) AS lead_count,

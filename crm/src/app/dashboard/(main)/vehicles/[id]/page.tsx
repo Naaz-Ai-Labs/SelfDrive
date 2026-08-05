@@ -11,8 +11,9 @@ import { PricingRuleForm } from "@/components/dashboard/PricingRuleForm";
 export const metadata: Metadata = { title: "Vehicle detail", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function VehicleAdminDetailPage({ params }: { params: { id: string } }) {
-  const vehicle = getVehicleById(Number(params.id));
+export default async function VehicleAdminDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id: paramId } = await params;
+  const vehicle = getVehicleById(Number(paramId));
   if (!vehicle) notFound();
   const categories = getVehicleCategories(false);
   const branches = getBranches(false);

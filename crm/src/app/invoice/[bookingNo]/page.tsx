@@ -9,10 +9,11 @@ import { formatINR, formatDateTime } from "@/lib/utils";
 export const metadata: Metadata = { title: "Invoice", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default async function InvoicePage({ params }: { params: { bookingNo: string } }) {
-  const staff = getCurrentUser();
+export default async function InvoicePage({ params }: { params: Promise<{ bookingNo: string }> }) {
+  const staff = await getCurrentUser();
   if (!staff) redirect(`/dashboard/login`);
 
+  const { bookingNo } = await params;
   const db = getDb();
   const booking = db
     .prepare(
@@ -21,7 +22,7 @@ export default async function InvoicePage({ params }: { params: { bookingNo: str
        FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id LEFT JOIN vehicles v ON v.id = b.vehicle_id
        WHERE b.booking_no = ?`
     )
-    .get(params.bookingNo) as Record<string, unknown> | undefined;
+    .get(bookingNo) as Record<string, unknown> | undefined;
   if (!booking) notFound();
 
   const invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;

@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { gatewayGet, gatewayPost } from "./gateway";
 import type { Vehicle } from "./data";
 
@@ -56,7 +57,13 @@ export async function submitBooking(input: {
   termsAccepted: boolean;
   documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }>;
 }): Promise<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }> {
-  return gatewayPost("/api/gateway/v1/booking/submit", input);
+  const res = await gatewayPost<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }>("/api/gateway/v1/booking/submit", input);
+  try {
+    revalidatePath("/", "layout");
+    revalidatePath("/vehicles", "page");
+    revalidatePath("/booking", "page");
+  } catch {}
+  return res;
 }
 
 export async function getAvailableVehicles(kind: string | null, pickupAt: string | null, returnAt: string | null): Promise<Vehicle[]> {

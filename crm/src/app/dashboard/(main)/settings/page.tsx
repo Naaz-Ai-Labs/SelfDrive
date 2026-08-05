@@ -23,13 +23,15 @@ const TABS = [
   { id: "staff", label: "Staff & roles" },
 ];
 
-export default function SettingsPage({ searchParams }: { searchParams: { tab?: string } }) {
-  const user = getCurrentUser();
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
-  const isAdmin = user.role === "admin";
+  if (user.role !== "admin") redirect("/dashboard");
+  const isAdmin = true;
   const db = getDb();
 
-  const active = TABS.some((t) => t.id === searchParams.tab) ? searchParams.tab! : "business";
+  const sp = await searchParams;
+  const active = TABS.some((t) => t.id === sp.tab) ? sp.tab! : "business";
   const business = getSetting<Record<string, unknown>>("business", {});
   const taxPct = Number(getSetting("tax_pct", 5));
   const enquiryStages = getSetting<string[]>("enquiry_stages", []);
@@ -44,7 +46,18 @@ export default function SettingsPage({ searchParams }: { searchParams: { tab?: s
   const faqs = (db.prepare("SELECT * FROM faqs ORDER BY sort, id").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
   const posts = (db.prepare("SELECT * FROM blog_posts ORDER BY created_at DESC").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
   const galleryItems = (db.prepare("SELECT * FROM gallery ORDER BY sort, id").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const users = (db.prepare("SELECT * FROM users ORDER BY role, name").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const users = (db.prepare("SELECT * FROM users ORDER BY is_active DESC, role, name").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const staffHistory = (
+    db
+      .prepare(
+        `SELECT h.*, u.name AS staff_name, u.email AS staff_email, p.name AS admin_name
+         FROM staff_history h
+         LEFT JOIN users u ON u.id = h.staff_id
+         LEFT JOIN users p ON p.id = h.performed_by
+         ORDER BY h.created_at DESC LIMIT 50`
+      )
+      .all() as Array<Record<string, unknown>>
+  ).map((r) => ({ ...r }));
 
   return (
     <div className="space-y-6">
@@ -76,7 +89,7 @@ export default function SettingsPage({ searchParams }: { searchParams: { tab?: s
       {active === "categories" && <CategoryEditor items={categories} isAdmin={isAdmin} />}
       {active === "templates" && <TemplateEditor items={templates} isAdmin={isAdmin} />}
       {active === "content" && <ContentEditors testimonials={testimonials} faqs={faqs} posts={posts} gallery={galleryItems} isAdmin={isAdmin} />}
-      {active === "staff" && <StaffEditor users={users} isAdmin={isAdmin} />}
+      {active === "staff" && <StaffEditor users={users} history={staffHistory} isAdmin={isAdmin} />}
     </div>
   );
 }

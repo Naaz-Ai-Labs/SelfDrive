@@ -324,7 +324,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               <div>
                 <label className="label">Pickup time</label>
                 <select className="input" value={pickupTime} onChange={(e) => setPickupTime(e.target.value)}>
-                  {["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"].map((t) => (
+                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => (
                     <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard)" : formatTimeLabel(t)}</option>
                   ))}
                 </select>
@@ -339,7 +339,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               <div>
                 <label className="label">Drop time (Return time)</label>
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
-                  {["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"].map((t) => (
+                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => (
                     <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard 24h)" : formatTimeLabel(t)}</option>
                   ))}
                 </select>
@@ -373,9 +373,9 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 >
                   <div className="flex items-center justify-between">
                     <p className="font-semibold text-ink-900">{v.name}</p>
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${v.total_units <= 2 ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${(v.available_units ?? v.total_units) <= 1 ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                      {v.total_units ?? 1} Left
+                      {(v.available_units ?? v.total_units ?? 1) > 0 ? `${v.available_units ?? v.total_units} Left` : "Pending Approval"}
                     </span>
                   </div>
                   <p className="text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day`}</p>

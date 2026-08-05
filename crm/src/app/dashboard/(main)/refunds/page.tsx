@@ -5,10 +5,17 @@ import { formatDateTime, formatINR } from "@/lib/utils";
 import { StatusBadge, EmptyState } from "@/components/ui";
 import { RefundDecisionForm, CompleteRefundForm } from "@/components/dashboard/forms";
 
+import { getCurrentUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+
 export const metadata: Metadata = { title: "Refunds", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function RefundsPage() {
+export default async function RefundsPage() {
+  const user = await getCurrentUser();
+  if (!user) redirect("/dashboard/login");
+  if (user.role !== "admin") redirect("/dashboard");
+
   const db = getDb();
   const refunds = db
     .prepare(

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getDb } from "./db";
-import { requireUser, assertCan } from "./auth";
+import { requireUser, requireAdmin, assertCan, assertAdmin } from "./auth";
 import { logActivity, pushNotification } from "./activity";
 import { nextNumber, slugify, normalizePhone } from "./utils";
 import { sendTemplate } from "./messaging";
@@ -16,6 +16,10 @@ function refresh(path = "/dashboard") {
 
 export async function staffUser(): Promise<SessionUser> {
   return requireUser();
+}
+
+export async function adminUser(): Promise<SessionUser> {
+  return requireAdmin();
 }
 
 /* -------------------------------- Enquiries -------------------------------- */
@@ -79,42 +83,143 @@ export async function addEnquiryNote(id: number, note: string) {
 /* -------------------------------- Vehicles --------------------------------- */
 
 export async function saveVehicle(input: {
-  id?: number; name: string; brand: string; model: string; year?: number; categoryId?: number | null; branchId?: number | null;
-  registrationNo?: string; cc?: number; fuelType?: string; transmission?: string; seats?: number; mileage?: string;
-  includedKm?: number; extraKmRate?: number; rate12h?: number; rate24h?: number; hourlyRate?: number; deposit?: number;
-  lateFeePerHour?: number; description?: string; terms?: string; status?: string; active?: boolean;
+  id?: number;
+  name: string;
+  brand: string;
+  model: string;
+  year?: number;
+  categoryId?: number | null;
+  branchId?: number | null;
+  registrationNo?: string;
+  cc?: number;
+  fuelType?: string;
+  transmission?: string;
+  seats?: number;
+  mileage?: string;
+  includedKm?: number;
+  extraKmRate?: number;
+  rate12h?: number;
+  rate24h?: number;
+  hourlyRate?: number;
+  deposit?: number;
+  lateFeePerHour?: number;
+  totalUnits?: number;
+  description?: string;
+  terms?: string;
+  status?: string;
+  active?: boolean;
+  photoUrl?: string;
 }) {
   const user = await staffUser();
   assertCan(user, "manager");
   const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
   const slug = `${slugify(input.name)}-${input.id ?? Date.now().toString(36).slice(-4)}`;
-  if (input.id) {
+  let vehicleId = input.id;
+  const activeVal = input.active === false ? 0 : 1;
+  const units = input.totalUnits ?? 1;
+
+  if (vehicleId) {
     db.prepare(
       `UPDATE vehicles SET name=?, brand=?, model=?, year=?, category_id=?, branch_id=?, registration_no=?, cc=?, fuel_type=?, transmission=?, seats=?, mileage=?,
-       included_km=?, extra_km_rate=?, rate_12h=?, rate_24h=?, hourly_rate=?, deposit=?, late_fee_per_hour=?, description=?, terms=?, status=?, active=?, updated_at=datetime('now')
+       included_km=?, extra_km_rate=?, rate_12h=?, rate_24h=?, hourly_rate=?, deposit=?, late_fee_per_hour=?, total_units=?, description=?, terms=?, status=?, active=?, updated_at=datetime('now')
        WHERE id=?`
     ).run(
       input.name, input.brand, input.model, input.year ?? null, input.categoryId ?? null, input.branchId ?? null, input.registrationNo ?? null,
       input.cc ?? null, input.fuelType ?? "Petrol", input.transmission ?? "Manual", input.seats ?? 2, input.mileage ?? null,
       input.includedKm ?? 100, input.extraKmRate ?? 5, input.rate12h ?? 0, input.rate24h ?? 0, input.hourlyRate ?? 0, input.deposit ?? 0,
-      input.lateFeePerHour ?? 0, input.description ?? null, input.terms ?? null, input.status ?? "available", input.active === false ? 0 : 1, input.id
+      input.lateFeePerHour ?? 0, units, input.description ?? null, input.terms ?? null, input.status ?? "available", activeVal, vehicleId
     );
-    logActivity(user.id, "vehicle_updated", "vehicle", input.id, { name: input.name });
+    logActivity(user.id, "vehicle_updated", "vehicle", vehicleId, { name: input.name });
   } else {
     const result = db
       .prepare(
         `INSERT INTO vehicles (slug, name, brand, model, year, category_id, branch_id, registration_no, cc, fuel_type, transmission, seats, mileage,
-         included_km, extra_km_rate, rate_12h, rate_24h, hourly_rate, deposit, late_fee_per_hour, description, terms, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         included_km, extra_km_rate, rate_12h, rate_24h, hourly_rate, deposit, late_fee_per_hour, total_units, description, terms, status, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
       )
       .run(
         slug, input.name, input.brand, input.model, input.year ?? null, input.categoryId ?? null, input.branchId ?? null, input.registrationNo ?? null,
         input.cc ?? null, input.fuelType ?? "Petrol", input.transmission ?? "Manual", input.seats ?? 2, input.mileage ?? null,
         input.includedKm ?? 100, input.extraKmRate ?? 5, input.rate12h ?? 0, input.rate24h ?? 0, input.hourlyRate ?? 0, input.deposit ?? 0,
-        input.lateFeePerHour ?? 0, input.description ?? null, input.terms ?? null, input.status ?? "available"
+        input.lateFeePerHour ?? 0, units, input.description ?? null, input.terms ?? null, input.status ?? "available"
       );
-    logActivity(user.id, "vehicle_created", "vehicle", Number(result.lastInsertRowid), { name: input.name });
+    vehicleId = Number(result.lastInsertRowid);
+    logActivity(user.id, "vehicle_created", "vehicle", vehicleId, { name: input.name });
   }
+
+  if (input.photoUrl) {
+    db.prepare("INSERT INTO vehicle_photos (vehicle_id, url, is_primary) VALUES (?, ?, 1)").run(vehicleId, input.photoUrl);
+  }
+
+  // Sync to Supabase PostgreSQL
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("vehicles").upsert(
+        {
+          id: vehicleId,
+          slug,
+          name: input.name,
+          brand: input.brand,
+          model: input.model,
+          year: input.year ?? null,
+          category_id: input.categoryId ?? null,
+          branch_id: input.branchId ?? null,
+          registration_no: input.registrationNo ?? null,
+          cc: input.cc ?? null,
+          fuel_type: input.fuelType ?? "Petrol",
+          transmission: input.transmission ?? "Manual",
+          seats: input.seats ?? 2,
+          mileage: input.mileage ?? null,
+          included_km: input.includedKm ?? 100,
+          extra_km_rate: input.extraKmRate ?? 5,
+          rate_12h: input.rate12h ?? 0,
+          rate_24h: input.rate24h ?? 0,
+          hourly_rate: input.hourlyRate ?? 0,
+          deposit: input.deposit ?? 0,
+          late_fee_per_hour: input.lateFeePerHour ?? 0,
+          total_units: units,
+          description: input.description ?? null,
+          terms: input.terms ?? null,
+          status: input.status ?? "available",
+          active: activeVal,
+        },
+        { onConflict: "id" }
+      );
+
+      if (input.photoUrl) {
+        await supabaseAdmin.from("vehicle_photos").insert({
+          vehicle_id: vehicleId,
+          url: input.photoUrl,
+          is_primary: 1,
+        });
+      }
+    } catch (err: any) {
+      console.warn("Supabase vehicle sync warning:", err?.message || err);
+    }
+  }
+
+  refresh("/");
+  refresh();
+  return { ok: true, id: vehicleId };
+}
+
+export async function deleteVehicle(id: number) {
+  const user = await staffUser();
+  assertCan(user, "admin");
+  const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
+  db.prepare("UPDATE vehicles SET active = 0, status = 'archived' WHERE id = ?").run(id);
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("vehicles").update({ active: 0, status: "archived" }).eq("id", id);
+    } catch {}
+  }
+
+  logActivity(user.id, "vehicle_archived", "vehicle", id);
   refresh("/");
   refresh();
   return { ok: true };
@@ -124,8 +229,22 @@ export async function addVehiclePhoto(vehicleId: number, url: string, isPrimary 
   const user = await staffUser();
   assertCan(user, "manager");
   const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
   if (isPrimary) db.prepare("UPDATE vehicle_photos SET is_primary = 0 WHERE vehicle_id = ?").run(vehicleId);
-  db.prepare("INSERT INTO vehicle_photos (vehicle_id, url, is_primary) VALUES (?, ?, ?)").run(vehicleId, url, isPrimary ? 1 : 0);
+  const res = db.prepare("INSERT INTO vehicle_photos (vehicle_id, url, is_primary) VALUES (?, ?, ?)").run(vehicleId, url, isPrimary ? 1 : 0);
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("vehicle_photos").insert({
+        id: Number(res.lastInsertRowid),
+        vehicle_id: vehicleId,
+        url,
+        is_primary: isPrimary ? 1 : 0,
+      });
+    } catch {}
+  }
+
   refresh("/");
   refresh();
   return { ok: true };
@@ -134,7 +253,18 @@ export async function addVehiclePhoto(vehicleId: number, url: string, isPrimary 
 export async function removeVehiclePhoto(id: number) {
   const user = await staffUser();
   assertCan(user, "manager");
-  getDb().prepare("DELETE FROM vehicle_photos WHERE id = ?").run(id);
+  const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
+  db.prepare("DELETE FROM vehicle_photos WHERE id = ?").run(id);
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("vehicle_photos").delete().eq("id", id);
+    } catch {}
+  }
+
+  refresh("/");
   refresh();
   return { ok: true };
 }
@@ -460,23 +590,134 @@ export async function saveTestimonial(input: { id?: number; name: string; vehicl
   return { ok: true };
 }
 
-export async function saveUser(input: { id?: number; name: string; email: string; phone?: string; role: string; password?: string; active?: boolean }) {
-  const user = await staffUser();
-  assertCan(user, "admin");
+export async function saveUser(input: {
+  id?: number;
+  name: string;
+  email: string;
+  phone?: string;
+  role: string;
+  branch?: string;
+  password?: string;
+  active?: boolean;
+}) {
+  const admin = await adminUser();
   const db = getDb();
   const { hashPassword } = await import("./auth");
-  if (input.id) {
-    if (input.password) {
-      db.prepare("UPDATE users SET name = ?, email = ?, phone = ?, role = ?, password_hash = ?, is_active = ? WHERE id = ?").run(input.name, input.email.toLowerCase().trim(), input.phone ?? null, input.role, hashPassword(input.password), input.active ? 1 : 0, input.id);
+  const { supabaseAdmin } = await import("./supabase");
+
+  const emailClean = input.email.toLowerCase().trim();
+  const isActive = input.active !== undefined ? (input.active ? 1 : 0) : 1;
+  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+
+  let targetId = input.id;
+  let actionName = "created";
+  let leftAt: string | null = null;
+
+  if (targetId) {
+    // Existing user
+    const existing = db
+      .prepare("SELECT * FROM users WHERE id = ?")
+      .get(targetId) as { is_active: number; left_at: string | null } | undefined;
+
+    if (existing) {
+      if (existing.is_active === 1 && isActive === 0) {
+        // Staff deactivated / left org
+        leftAt = now;
+        actionName = "deactivated";
+      } else if (existing.is_active === 0 && isActive === 1) {
+        // Staff reactivated
+        leftAt = null;
+        actionName = "reactivated";
+      } else {
+        leftAt = existing.left_at ?? null;
+        actionName = "updated";
+      }
+    }
+
+    const passwordHash = input.password ? hashPassword(input.password) : null;
+
+    if (passwordHash) {
+      db.prepare(
+        "UPDATE users SET name = ?, email = ?, phone = ?, role = ?, branch = ?, password_hash = ?, is_active = ?, left_at = ? WHERE id = ?"
+      ).run(input.name, emailClean, input.phone ?? null, input.role, input.branch ?? null, passwordHash, isActive, leftAt, targetId);
     } else {
-      db.prepare("UPDATE users SET name = ?, email = ?, phone = ?, role = ?, is_active = ? WHERE id = ?").run(input.name, input.email.toLowerCase().trim(), input.phone ?? null, input.role, input.active ? 1 : 0, input.id);
+      db.prepare(
+        "UPDATE users SET name = ?, email = ?, phone = ?, role = ?, branch = ?, is_active = ?, left_at = ? WHERE id = ?"
+      ).run(input.name, emailClean, input.phone ?? null, input.role, input.branch ?? null, isActive, leftAt, targetId);
     }
   } else {
-    db.prepare("INSERT INTO users (name, email, phone, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?, 1)").run(input.name, input.email.toLowerCase().trim(), input.phone ?? null, hashPassword(input.password ?? "Change@123"), input.role);
+    // New staff user creation
+    actionName = "created";
+    const passwordHash = hashPassword(input.password ?? "StaffPass123!");
+    const res = db
+      .prepare(
+        "INSERT INTO users (name, email, phone, password_hash, role, branch, is_active, left_at) VALUES (?, ?, ?, ?, ?, ?, 1, NULL)"
+      )
+      .run(input.name, emailClean, input.phone ?? null, passwordHash, input.role, input.branch ?? null);
+    targetId = Number(res.lastInsertRowid);
   }
-  logActivity(user.id, "user_saved", "user", input.id ?? null, { email: input.email });
+
+  // 1. Sync to Supabase PostgreSQL Database Table
+  if (supabaseAdmin) {
+    try {
+      const passwordHash = input.password ? hashPassword(input.password) : undefined;
+      await supabaseAdmin.from("users").upsert(
+        {
+          name: input.name,
+          email: emailClean,
+          phone: input.phone ?? null,
+          role: input.role,
+          branch: input.branch ?? null,
+          is_active: isActive,
+          left_at: leftAt,
+          ...(passwordHash ? { password_hash: passwordHash } : {}),
+        },
+        { onConflict: "email" }
+      );
+
+      // 2. Sync to Supabase Auth
+      if (input.password) {
+        const { data: list } = await supabaseAdmin.auth.admin.listUsers();
+        const existingAuth = list?.users.find((u) => u.email === emailClean);
+        if (existingAuth) {
+          await supabaseAdmin.auth.admin.updateUserById(existingAuth.id, {
+            password: input.password,
+            user_metadata: { name: input.name, role: input.role, branch: input.branch },
+          });
+        } else {
+          await supabaseAdmin.auth.admin.createUser({
+            email: emailClean,
+            password: input.password,
+            email_confirm: true,
+            user_metadata: { name: input.name, role: input.role, branch: input.branch },
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error("Supabase staff sync warning:", err?.message || err);
+    }
+  }
+
+  // 3. Log Audit Record in staff_history
+  db.prepare(
+    "INSERT INTO staff_history (staff_id, action, performed_by, detail) VALUES (?, ?, ?, ?)"
+  ).run(
+    targetId,
+    actionName,
+    admin.id,
+    JSON.stringify({
+      name: input.name,
+      email: emailClean,
+      role: input.role,
+      is_active: isActive,
+      left_at: leftAt,
+      performed_by_name: admin.name,
+    })
+  );
+
+  logActivity(admin.id, `staff_${actionName}`, "user", targetId, { email: emailClean, left_at: leftAt });
   refresh();
-  return { ok: true };
+  return { ok: true, id: targetId };
 }
 
 /* --------------------------- Website content ------------------------------ */
@@ -523,3 +764,118 @@ export async function saveBlogPost(input: { id?: number; title: string; excerpt?
   refresh();
   return { ok: true };
 }
+
+/* -------------------- Customer Document Verification --------------------- */
+
+export async function verifyCustomerDocument(input: { documentId: number; approve: boolean; notes?: string }) {
+  const staff = await staffUser();
+  const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
+  const verifiedVal = input.approve ? 1 : 0;
+  db.prepare(
+    "UPDATE customer_documents SET verified = ?, verified_by = ? WHERE id = ?"
+  ).run(verifiedVal, staff.id, input.documentId);
+
+  const doc = db
+    .prepare("SELECT * FROM customer_documents WHERE id = ?")
+    .get(input.documentId) as { booking_id: number | null; kind: string; customer_id: number | null } | undefined;
+
+  if (doc?.booking_id) {
+    db.prepare(
+      "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, ?, ?)"
+    ).run(
+      doc.booking_id,
+      staff.id,
+      input.approve ? "document_verified" : "document_rejected",
+      JSON.stringify({ kind: doc.kind, staff_name: staff.name, notes: input.notes })
+    );
+  }
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("customer_documents").update({
+        verified: verifiedVal,
+        verified_by: staff.id,
+      }).eq("id", input.documentId);
+    } catch {}
+  }
+
+  logActivity(staff.id, input.approve ? "doc_verified" : "doc_rejected", "customer_documents", input.documentId);
+  refresh();
+  return { ok: true };
+}
+
+export async function quickApproveBooking(input: { bookingId: number; approve: boolean; notes?: string }) {
+  const staff = await staffUser();
+  const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
+  const newStatus = input.approve ? "Confirmed" : "Cancelled";
+  db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(newStatus, input.bookingId);
+
+  db.prepare(
+    "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, ?, ?)"
+  ).run(
+    input.bookingId,
+    staff.id,
+    input.approve ? "quick_approved" : "quick_rejected",
+    JSON.stringify({ staff_name: staff.name, notes: input.notes ?? null, new_status: newStatus })
+  );
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("bookings").update({ status: newStatus }).eq("id", input.bookingId);
+    } catch {}
+  }
+
+  logActivity(staff.id, input.approve ? "booking_approved" : "booking_rejected", "booking", input.bookingId);
+  refresh();
+  return { ok: true };
+}
+
+export async function revertBookingDecision(bookingId: number) {
+  const staff = await staffUser();
+  const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
+  const restoredStatus = "Pending verification";
+  db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(restoredStatus, bookingId);
+
+  db.prepare(
+    "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'decision_reverted', ?)"
+  ).run(
+    bookingId,
+    staff.id,
+    JSON.stringify({ staff_name: staff.name, restored_status: restoredStatus })
+  );
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("bookings").update({ status: restoredStatus }).eq("id", bookingId);
+    } catch {}
+  }
+
+  logActivity(staff.id, "booking_decision_reverted", "booking", bookingId);
+  refresh();
+  return { ok: true };
+}
+
+export async function revertDocumentDecision(documentId: number) {
+  const staff = await staffUser();
+  const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
+  db.prepare("UPDATE customer_documents SET verified = 0, verified_by = NULL WHERE id = ?").run(documentId);
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("customer_documents").update({ verified: 0, verified_by: null }).eq("id", documentId);
+    } catch {}
+  }
+
+  logActivity(staff.id, "doc_decision_reverted", "customer_documents", documentId);
+  refresh();
+  return { ok: true };
+}
+

@@ -8,11 +8,14 @@
     "build": "next build",
     "start": "next start -p 3001",
     "seed": "tsx src/lib/seed.ts",
+    "migrate:supabase": "tsx scripts/migrate_to_supabase.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/server": "^1.4.1",
+    "@supabase/supabase-js": "^2.112.0",
     "bcryptjs": "^2.4.3",
-    "next": "^14.2.35",
+    "next": "^16.3.0",
     "razorpay": "^2.9.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

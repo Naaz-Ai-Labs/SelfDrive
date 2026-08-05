@@ -9,8 +9,8 @@ import { StatusBadge } from "@/components/ui";
 export const metadata: Metadata = { title: "Payments", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function PaymentsPage() {
-  const user = getCurrentUser();
+export default async function PaymentsPage() {
+  const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
   const db = getDb();
 
