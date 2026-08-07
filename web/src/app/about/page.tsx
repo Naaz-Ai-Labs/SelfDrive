@@ -11,7 +11,10 @@ export const metadata: Metadata = {
   description: "Darshh Holiday — a Hassan district self-drive rental operator serving Hassan and Sakleshpura, built on fixed pricing, well-maintained vehicles and no bargaining.",
 };
 
-const HERO_VIDEO = "https://videos.pexels.com/video-files/6981411/6981411-hd_1280_720_25fps.mp4";
+const HERO_VIDEO =
+  process.env.NEXT_PUBLIC_BLOB_ABOUT_VIDEO ||
+  "https://obbnjsertzjfu0v6.public.blob.vercel-storage.com/videos/about.mp4";
+
 
 export default async function AboutPage() {
   const [info, galleryAll, staffAll, testimonials] = await Promise.all([

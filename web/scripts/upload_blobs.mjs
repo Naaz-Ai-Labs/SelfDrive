@@ -10,25 +10,23 @@ const token = process.env.BLOB_READ_WRITE_TOKEN || "vercel_blob_rw_obBnjSeRTzjFU
 
 const videosToUpload = [
   {
-    key: 'home-hero',
-    filename: 'hero-background.mp4',
-    filePath: path.join(__dirname, '../public/hero-background.mp4')
-  },
-  {
-    key: 'gallery-hero',
-    filename: 'gallery.mp4',
-    filePath: path.join(__dirname, '../public/gallery.mp4')
-  },
-  {
-    key: 'contact-hero',
-    filename: 'Sequence 01_1.mp4',
-    filePath: path.join(__dirname, '../public/Sequence 01_1.mp4')
+    key: 'about-hero',
+    filename: 'about.mp4',
+    filePath: path.join(__dirname, '../public/This Is GOA ____ __ _ Stunning Aerial view of Candolim Beach _ 4K Cinematic Drone view _ DJI Mini 5.mp4')
   }
 ];
 
 async function main() {
   console.log("Starting video uploads to Vercel Blob...");
-  const results = {};
+
+  // Load existing blob-urls.json if available
+  let results = {};
+  const jsonPath = path.join(__dirname, '../public/blob-urls.json');
+  if (fs.existsSync(jsonPath)) {
+    try {
+      results = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    } catch (e) {}
+  }
 
   for (const item of videosToUpload) {
     if (!fs.existsSync(item.filePath)) {
@@ -44,7 +42,8 @@ async function main() {
       const blob = await put(`videos/${item.filename}`, fileStream, {
         access: 'public',
         token: token,
-        contentType: 'video/mp4'
+        contentType: 'video/mp4',
+        allowOverwrite: true
       });
       console.log(`✓ Uploaded ${item.filename} -> ${blob.url}`);
       results[item.key] = blob.url;
@@ -56,8 +55,7 @@ async function main() {
   console.log("\nUpload Results:");
   console.log(JSON.stringify(results, null, 2));
 
-  // Also save results to a json file
-  fs.writeFileSync(path.join(__dirname, '../public/blob-urls.json'), JSON.stringify(results, null, 2));
+  fs.writeFileSync(jsonPath, JSON.stringify(results, null, 2));
 }
 
 main();

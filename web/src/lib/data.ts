@@ -49,8 +49,58 @@ const FALLBACK_VEHICLES: Vehicle[] = [
   { id: 7, slug: "tempo-traveller-12", name: "Force Tempo Traveller (12 Seater)", brand: "Force Motors", model: "Traveller", year: 2023, category_id: 4, category_name: "Tempo Traveller", category_kind: "van", category_slug: "tempo-traveller", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-V-1212", cc: 2596, fuel_type: "Diesel", transmission: "Manual", seats: 12, mileage: "12 km/l", included_km: 999, extra_km_rate: 0, rate_12h: 8000, rate_24h: 12000, hourly_rate: 500, weekend_rate_24h: 12000, deposit: 2000, late_fee_per_hour: 250, total_units: 1, available_units: 1, description: "Chauffeur driven 12 seater.", terms: null, status: "available", active: 1, photos: ["/vehicles/tempo-traveller.jpg"], primary_photo: "/vehicles/tempo-traveller.jpg" },
 ];
 
+const FALLBACK_BLOG_POSTS: Array<Record<string, unknown>> = [
+  {
+    id: 1,
+    slug: "sakleshpura-to-chikmagalur-self-drive-guide",
+    title: "Sakleshpura to Chikmagalur: A Self-Drive Road Trip Guide",
+    excerpt: "Ghat roads, coffee estates and waterfalls — what to expect on the drive, and how to plan it well.",
+    author: "Darshh Holiday Team",
+    created_at: "2026-08-01T10:00:00Z",
+    content: `The Sakleshpura–Chikmagalur stretch is one of the most rewarding short drives in the Western Ghats — coffee estates on both sides of the road, mist-covered hills for most of the year, and enough waterfalls and viewpoints to fill a full day without rushing.
+
+Budget half a day for the drive alone if you're stopping along the way, longer if you're planning a proper detour to Mullayanagiri or Baba Budangiri. The ghat sections have sharp curves and sudden weather changes, especially during monsoon (June–September), so a vehicle with good tyres and brakes matters more than horsepower here.
+
+A few practical notes for anyone planning this on a rented vehicle: fuel up before you start, since stations thin out once you're properly into the ghat stretches. Carry your driving licence and ID with you at all times — these routes do see checkpoints. And if you're on a two-wheeler, start early; the light through the estates is best in the first few hours after sunrise, and afternoon fog can roll in fast during the wetter months.
+
+Whether you need a nimble scooter for winding roads or a proper SUV for the whole family, book with a fixed price upfront and know exactly what your kilometre allowance covers before you leave — no surprises at the end of the trip.`
+  },
+  {
+    id: 2,
+    slug: "hassan-district-weekend-getaways",
+    title: "Hassan District Weekend Getaways You Can Reach in a Day",
+    excerpt: "Belur, Halebidu, Shravanabelagola and the Sakleshpura ghats — a practical weekend circuit.",
+    author: "Darshh Holiday Team",
+    created_at: "2026-08-03T10:00:00Z",
+    content: `Hassan district packs an unusual amount into a small area — centuries-old temple towns, a hilltop Jain monolith, and some of the greenest ghat roads in Karnataka, all within a couple of hours of each other.
+
+Belur and Halebidu are the classic pairing — Hoysala-era temple architecture, roughly 40 minutes apart, both worth a couple of unhurried hours each. Shravanabelagola, home to the Gommateshwara statue, adds another hour or so of driving but is a genuinely different kind of stop — expect some walking (and stairs) once you arrive.
+
+If you'd rather trade temples for hills, Sakleshpura and the road toward Chikmagalur cover the other end of the district's character — coffee country, waterfalls, and long stretches where the road itself is the reason for the trip.
+
+Either circuit works comfortably as a single day out and back, or a relaxed overnight if you want to split the driving. A compact car or scooter is enough for the temple circuit; if the ghat roads are part of your plan, a vehicle with a bit more ground clearance makes for a smoother ride.`
+  },
+  {
+    id: 3,
+    slug: "documents-needed-self-drive-rental-karnataka",
+    title: "What Documents Do You Need to Rent a Self-Drive Vehicle?",
+    excerpt: "A quick, practical checklist so pickup takes five minutes, not fifty.",
+    author: "Darshh Holiday Team",
+    created_at: "2026-08-05T10:00:00Z",
+    content: `Nothing slows down a pickup more than missing paperwork, so here's the short version of what to carry.
+
+You'll need a valid driving licence appropriate to the vehicle class — a two-wheeler licence for bikes and scooters, a valid car licence for four-wheelers. Learner's licences aren't accepted. Alongside that, bring one government-issued photo ID: Aadhaar, passport or voter ID all work.
+
+A refundable security deposit is collected at pickup and returned after the vehicle is inspected on return, minus any deductions for damage, late return or excess kilometres — each of which is itemised, never guessed at.
+
+A couple of things that trip people up: make sure the name on your licence matches your ID exactly, and if you're booking for someone else, the person picking up the vehicle needs to be the one whose documents are on file. Bring physical copies where possible — a photo on your phone works in a pinch, but a printed or physical ID makes verification faster.
+
+Get this sorted before you arrive and pickup genuinely takes a few minutes — inspect the vehicle together, sign, and you're on the road.`
+  }
+];
+
 const EMPTY_CONTENT: Content = {
-  business: {}, rentalRules: {}, categories: FALLBACK_CATEGORIES, vehicles: FALLBACK_VEHICLES, testimonials: [], gallery: [], faqs: [], staff: [], terms: null, blogPosts: [], branches: [],
+  business: {}, rentalRules: {}, categories: FALLBACK_CATEGORIES, vehicles: FALLBACK_VEHICLES, testimonials: [], gallery: [], faqs: [], staff: [], terms: null, blogPosts: FALLBACK_BLOG_POSTS, branches: [],
 };
 
 /** Fetched once per request (React cache dedupes repeated calls within the same render
@@ -59,9 +109,18 @@ const EMPTY_CONTENT: Content = {
 export const getContent = cache(async (): Promise<Content> => {
   const data = await gatewayGet<Content & { error?: string }>("/api/gateway/v1/content", { revalidate: 0 });
   if (!data || "error" in data || !Array.isArray(data.vehicles) || data.vehicles.length === 0) {
-    return { ...EMPTY_CONTENT, ...(data && !("error" in data) ? data : {}), categories: data?.categories?.length ? data.categories : FALLBACK_CATEGORIES, vehicles: data?.vehicles?.length ? data.vehicles : FALLBACK_VEHICLES };
+    return {
+      ...EMPTY_CONTENT,
+      ...(data && !("error" in data) ? data : {}),
+      categories: data?.categories?.length ? data.categories : FALLBACK_CATEGORIES,
+      vehicles: data?.vehicles?.length ? data.vehicles : FALLBACK_VEHICLES,
+      blogPosts: data?.blogPosts?.length ? data.blogPosts : FALLBACK_BLOG_POSTS,
+    };
   }
-  return data;
+  return {
+    ...data,
+    blogPosts: data.blogPosts?.length ? data.blogPosts : FALLBACK_BLOG_POSTS,
+  };
 });
 
 export async function getVehicleCategories(): Promise<VehicleCategory[]> {
@@ -117,5 +176,7 @@ export async function getBlogPosts() {
 
 export async function getBlogPost(slug: string): Promise<Record<string, unknown> | null> {
   const res = await gatewayPost<{ post: Record<string, unknown> | null }>("/api/gateway/v1/content", { op: "blogPost", slug });
-  return res?.post ?? null;
+  if (res?.post) return res.post;
+  return FALLBACK_BLOG_POSTS.find((p) => p.slug === slug) ?? null;
 }
+
