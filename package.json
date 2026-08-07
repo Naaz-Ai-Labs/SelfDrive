@@ -1,0 +1,13 @@
+{
+  "name": "darshan-tours",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "crm",
+    "web"
+  ],
+  "scripts": {
+    "build:crm": "npm run build --prefix crm",
+    "build:web": "npm run build --prefix web"
+  }
+}
