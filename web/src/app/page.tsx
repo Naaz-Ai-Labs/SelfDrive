@@ -9,7 +9,10 @@ import { Marquee } from "@/components/ui/Marquee";
 import { OurStories } from "@/components/OurStories";
 
 const HERO_IMG = "/hero-poster.jpg";
-const HERO_VIDEO = "/hero-background.mp4";
+const HERO_VIDEO =
+  process.env.NEXT_PUBLIC_BLOB_HERO_VIDEO ||
+  "https://obbnjsertzjfu0v6.public.blob.vercel-storage.com/videos/hero-background.mp4";
+
 
 const SPEC_ICONS: Record<string, string> = {
   transmission: "M4 12h4l2-4 4 8 2-4h4",

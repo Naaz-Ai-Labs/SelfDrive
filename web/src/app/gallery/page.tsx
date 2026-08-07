@@ -12,7 +12,10 @@ export const metadata: Metadata = {
 };
 
 const HERO_IMG = "/hero-poster.jpg";
-const HERO_VIDEO = "/gallery.mp4";
+const HERO_VIDEO =
+  process.env.NEXT_PUBLIC_BLOB_GALLERY_VIDEO ||
+  "https://obbnjsertzjfu0v6.public.blob.vercel-storage.com/videos/gallery.mp4";
+
 const FALLBACK =
   "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80";
 

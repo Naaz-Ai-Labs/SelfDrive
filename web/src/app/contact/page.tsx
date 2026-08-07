@@ -7,7 +7,10 @@ export const metadata: Metadata = {
   description: "Reach Darshan Tour and Travels — phone, WhatsApp, email or the contact form. We reply within one business day.",
 };
 
-const HERO_VIDEO = "/Sequence 01_1.mp4";
+const HERO_VIDEO =
+  process.env.NEXT_PUBLIC_BLOB_CONTACT_VIDEO ||
+  "https://obbnjsertzjfu0v6.public.blob.vercel-storage.com/videos/Sequence%2001_1.mp4";
+
 
 const ICONS: Record<string, React.ReactNode> = {
   Phone: (
