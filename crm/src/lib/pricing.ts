@@ -103,22 +103,13 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
   const effectiveWeekendMin = seasonalRule?.min_days && seasonalRule.min_days > 1 ? seasonalRule.min_days : weekendMinDays;
   const belowWeekendMinimum = bookingStartsWeekend && days < effectiveWeekendMin;
 
-  const pickupHM = pickupTimeHM ?? `${String(pickupAt.getHours()).padStart(2, "0")}:${String(pickupAt.getMinutes()).padStart(2, "0")}`;
-  const returnHM = returnTimeHM ?? `${String(returnAt.getHours()).padStart(2, "0")}:${String(returnAt.getMinutes()).padStart(2, "0")}`;
-
-  // Early pickup fee: picking up at 7:59 AM or earlier (< 08:00) adds 250 INR
-  const isEarlyPickup = pickupHM < "08:00";
-  const earlyPickupAmount = isEarlyPickup ? earlyPickupFee : 0;
-
-  // Late drop / return fee: returning after 8:00 PM (> 20:00) or pickup after 8:00 PM adds 250 INR
-  const isLateDrop = returnHM > "20:00" || pickupHM > "20:00";
-  const lateDropAmount = isLateDrop ? lateDropFee : 0;
-
-  const timingFeeAmount = earlyPickupAmount + lateDropAmount;
+  // Timing fees are handled manually by staff at pickup if necessary; customer is not charged directly during booking.
+  const timingFeeAmount = 0;
 
   const rawKm = seasonalRule?.included_km ?? vehicle.included_km ?? 100;
   const includedKm = rawKm >= 999 ? 999999 : rawKm * days;
-  const extraKmRate = seasonalRule?.extra_km_rate ?? vehicle.extra_km_rate ?? 8;
+  const defaultKmRate = (vehicle.category_kind === "bike" || vehicle.category_kind === "scooter") ? 4 : 8;
+  const extraKmRate = seasonalRule?.extra_km_rate ?? vehicle.extra_km_rate ?? defaultKmRate;
   const deposit = seasonalRule?.deposit ?? vehicle.deposit;
 
   const taxableAmount = baseAmount + timingFeeAmount;
@@ -130,7 +121,7 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
     days,
     dayBreakdown,
     baseAmount,
-    offSchedulePickupFee: timingFeeAmount,
+    offSchedulePickupFee: 0,
     gstAmount,
     gstPct,
     gatewayFeeAmount,
@@ -138,8 +129,8 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
     depositAmount: deposit,
     includedKm,
     extraKmRate,
-    afterHours: isLateDrop,
-    offSchedulePickup: isEarlyPickup || isLateDrop,
+    afterHours: false,
+    offSchedulePickup: false,
     weekendMinDays: effectiveWeekendMin,
     belowWeekendMinimum,
     appliedRuleName: seasonalRule?.name ?? null,

@@ -76,13 +76,6 @@ export default async function GalleryPage() {
         </div>
       </section>
 
-      {/* 2. Search & Booking Bar Section (Positioned Below Video) */}
-      <section className="relative z-30 -mt-10 sm:-mt-14 mb-8">
-        <div className="container-x">
-          <BookingBar categories={categories} />
-        </div>
-      </section>
-
       {/* 2. Our Stories & About Us Section (Light Theme) */}
       <OurStories variant="light" />
 

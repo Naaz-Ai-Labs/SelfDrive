@@ -158,12 +158,12 @@ export default async function HomePage() {
         </Reveal>
         <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4" id="categories-heading">
           {categories.map((cat, i) => (
-            <Reveal key={cat.id} delay={i * 80}>
+            <Reveal key={cat.id} delay={i * 80} className="h-full">
               <Link
                 href={`/vehicles?kind=${cat.kind}`}
-                className="group card block overflow-hidden transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lift"
+                className="group card flex h-full flex-col overflow-hidden transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lift"
               >
-                <div className="relative h-40 overflow-hidden">
+                <div className="relative h-40 shrink-0 overflow-hidden">
                   <Image
                     src={cat.image ?? HERO_IMG}
                     alt={cat.name}
@@ -178,7 +178,7 @@ export default async function HomePage() {
                   </span>
                   <h3 className="absolute bottom-4 left-5 font-display text-lg font-semibold text-white">{cat.name}</h3>
                 </div>
-                <div className="p-5">
+                <div className="flex flex-1 flex-col justify-between p-5">
                   <p className="text-sm leading-relaxed text-ink-600">{cat.short_desc}</p>
                   <p className="mt-4 flex items-center gap-1.5 text-sm font-semibold text-brand-600 transition group-hover:gap-2.5">
                     View {cat.name.toLowerCase()}

@@ -179,9 +179,8 @@ export default async function VehicleDetailPage(
               <ul className="mt-4 space-y-2 border-t border-ink-100 pt-4 text-sm text-ink-600">
                 <li className="flex justify-between font-semibold text-brand-700"><span>Fleet stock</span><span>{vehicle.total_units ?? 1} available</span></li>
                 <li className="flex justify-between"><span>Included km</span><span className="font-medium text-ink-800">{vehicle.included_km >= 999 ? "Unlimited KM" : `${vehicle.included_km} km/day`}</span></li>
-                <li className="flex justify-between"><span>Extra km rate</span><span className="font-medium text-ink-800">{formatINR(vehicle.extra_km_rate)}/km</span></li>
+                <li className="flex justify-between"><span>Extra km rate</span><span className="font-medium text-ink-800">{formatINR((vehicle.category_kind === "bike" || vehicle.category_kind === "scooter") ? 4 : vehicle.extra_km_rate ?? 8)}/km</span></li>
                 <li className="flex justify-between"><span>Security deposit</span><span className="font-medium text-ink-800">{formatINR(vehicle.deposit)}</span></li>
-                <li className="flex justify-between"><span>Late fee</span><span className="font-medium text-ink-800">{formatINR(vehicle.late_fee_per_hour)}/hr after grace period</span></li>
               </ul>
               <p className="mt-4 text-xs text-ink-500">Fixed rental — no bargaining. Vehicle rented without fuel; return with the same fuel level. GST (6%) added at checkout.</p>
               <Link href={bookingHref} className="btn-shine mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">

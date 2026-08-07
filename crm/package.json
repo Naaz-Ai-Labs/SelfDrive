@@ -4,7 +4,7 @@
   "private": true,
   "description": "Darshh Holiday — staff CRM, database owner and API gateway backend",
   "scripts": {
-    "dev": "next dev -p 3001",
+    "dev": "next dev -H 0.0.0.0 -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
     "seed": "tsx src/lib/seed.ts",

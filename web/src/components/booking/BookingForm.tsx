@@ -25,6 +25,32 @@ function combineIso(dateStr: string, timeStr: string) {
   return `${dateStr}T${timeStr}`;
 }
 
+function computeAutoReturnDate(pickupDateStr: string): string {
+  if (!pickupDateStr) return pickupDateStr;
+  const parts = pickupDateStr.split("-").map(Number);
+  if (parts.length !== 3) return pickupDateStr;
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  const dayOfWeek = d.getDay();
+  const daysToAdd = dayOfWeek === 6 ? 2 : 1;
+  d.setDate(d.getDate() + daysToAdd);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function maxDobISO() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatDlNumber(val: string): string {
+  const clean = val.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (clean.length <= 4) return clean;
+  return `${clean.slice(0, 4)} ${clean.slice(4, 15)}`;
+}
+
 export function BookingForm({ categories, businessWhatsapp, terms }: { categories: Category[]; businessWhatsapp: string; terms: string[] }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -40,7 +66,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   const [location, setLocation] = useState("");
   const [pickupDate, setPickupDate] = useState(search.get("pickup") ?? todayISO());
   const [pickupTime, setPickupTime] = useState(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
-  const [returnDate, setReturnDate] = useState(search.get("return") ?? todayISO());
+  const [returnDate, setReturnDate] = useState(search.get("return") ?? computeAutoReturnDate(search.get("pickup") ?? todayISO()));
   const [returnTime, setReturnTime] = useState(search.get("returnTime") ?? STANDARD_PICKUP_TIME);
   const [passengers, setPassengers] = useState("");
 
@@ -70,6 +96,16 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ bookingId: number; bookingNo: string } | null>(null);
   const [paid, setPaid] = useState(false);
+
+  const handlePickupDateChange = (newDate: string) => {
+    setPickupDate(newDate);
+    setReturnDate(computeAutoReturnDate(newDate));
+  };
+
+  const handlePickupTimeChange = (newTime: string) => {
+    setPickupTime(newTime);
+    setReturnTime(newTime);
+  };
 
   // Resume from a draft token in the URL, or restore from localStorage.
   useEffect(() => {
@@ -167,7 +203,13 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     () => availableVehicles.find((v) => v.id === vehicleId) ?? (fetchedVehicle?.id === vehicleId ? fetchedVehicle : undefined),
     [availableVehicles, vehicleId, fetchedVehicle]
   );
-  const kycComplete = Boolean(documents.licence?.url && documents.govt_id?.url);
+  const kycComplete = Boolean(
+    (documents.licence?.url || documents.driver_licence?.url) &&
+    (documents.govt_id?.url || documents.driver_govt_id?.url) &&
+    documents.driver_photo?.url &&
+    documents.pillion_id?.url &&
+    documents.pillion_photo?.url
+  );
 
   function validateStep(n: number): boolean {
     const e: Record<string, string> = {};
@@ -181,7 +223,23 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
       if (contact.name.trim().length < 2) e.name = "Enter your full name.";
       if (!/^[+\d][\d\s-]{8,15}$/.test(contact.phone.trim())) e.phone = "Enter a valid mobile number.";
     }
-    if (n === 4 && !kycComplete) e.documents = "Please upload your driving licence and a government ID — this is required before we can hand over a vehicle.";
+    if (n === 4) {
+      if (!kycComplete) {
+        e.documents = "Please upload Driver Licence, Driver Govt ID, Driver Passport Photo, Pillion ID Proof, and Pillion Passport Photo before proceeding.";
+      }
+      const dlNum = documents.licence?.number?.trim() ?? "";
+      if (!dlNum) {
+        e.licenceNumber = "Please enter your driver licence number.";
+      } else if (!/^[A-Z]{2}\d{2} \d{11}$/.test(dlNum)) {
+        e.licenceNumber = "Driver licence number must be in format: XX00 00000000000 (e.g. KA04 12345678901 — 2 capital letters, 2 digits, space, 11 digits).";
+      }
+      const dlExpiry = documents.licence?.expiry ?? "";
+      if (!dlExpiry) {
+        e.licenceExpiry = "Please enter your driver licence expiry date.";
+      } else if (dlExpiry < returnDate) {
+        e.licenceExpiry = "Your driver's licence expires before or during your return date. A licence valid throughout the rental duration is required.";
+      }
+    }
     if (n === 5 && !termsAccepted) e.terms = "Please accept the terms and conditions to continue.";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -277,8 +335,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
         )}
       </div>
 
-      {/* Persistent reminder of what's being booked, once past vehicle selection —
-          so the form fields never feel disconnected from the actual bike/car. */}
+      {/* Persistent reminder of what's being booked */}
       {step >= 3 && selectedVehicle && (
         <div className="mb-4 flex items-center gap-3 rounded-xl border border-ink-100 bg-white p-3 shadow-sm">
           <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-ink-100">
@@ -302,7 +359,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
         {step === 1 && (
           <div className="space-y-4">
             <h2 className="font-display text-xl font-semibold text-ink-900">When and what do you need?</h2>
-            <p className="text-sm text-ink-500">Standard rental day is 8:00 AM to 8:00 AM (24 hours complete cycle). Included drive limit is 100 km per day. Exceeding the limit costs ₹8 per extra KM. Early pickup (&le;7:59 AM) or late drop (&gt;8:00 PM) incurs an extra ₹250 fee.</p>
+            <p className="text-sm text-ink-500">Pick up at any time and return within 24 hours (or 48 hours for Saturday bookings). Included drive limit is 100 km/day (Bikes &amp; Scooters) / 300 km/day (Cars). Extra KM fee is ₹4/km for bikes &amp; scooters / ₹8/km for cars.</p>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="label">Vehicle type</label>
@@ -318,17 +375,16 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
               <div>
                 <label className="label">Pickup date *</label>
-                <input className="input" type="date" min={todayISO()} value={pickupDate} onChange={(e) => setPickupDate(e.target.value)} aria-invalid={!!errors.pickupDate} />
+                <input className="input" type="date" min={todayISO()} value={pickupDate} onChange={(e) => handlePickupDateChange(e.target.value)} aria-invalid={!!errors.pickupDate} />
                 {errors.pickupDate && <p className="field-error">{errors.pickupDate}</p>}
               </div>
               <div>
                 <label className="label">Pickup time</label>
-                <select className="input" value={pickupTime} onChange={(e) => setPickupTime(e.target.value)}>
+                <select className="input" value={pickupTime} onChange={(e) => handlePickupTimeChange(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => (
                     <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard)" : formatTimeLabel(t)}</option>
                   ))}
                 </select>
-                {pickupTime <= "07:59" && <p className="mt-1 text-xs font-medium text-amber-700">Early pickup (7:59 AM or earlier) incurs an extra ₹250 fee.</p>}
               </div>
 
               <div>
@@ -340,10 +396,9 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 <label className="label">Drop time (Return time)</label>
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => (
-                    <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard 24h)" : formatTimeLabel(t)}</option>
+                    <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard)" : formatTimeLabel(t)}</option>
                   ))}
                 </select>
-                {returnTime > "08:00" && <p className="mt-1 text-xs font-medium text-amber-700">Late drop-off (after 8:00 AM) incurs an extra ₹250 fee.</p>}
               </div>
 
               <div>
@@ -352,7 +407,10 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               </div>
             </div>
             <p className="text-xs text-ink-500 font-medium">
-              Calculated Duration: {days} day{days > 1 ? "s" : ""} · Standard Daily Limit: 100 km/day (Bikes) / 300 km/day (Cars) / Unlimited (Tempo) · Extra KM: ₹8/km
+              Calculated Duration: {days} day{days > 1 ? "s" : ""} · Standard Daily Limit: 100 km/day (Bikes/Scooters) / 300 km/day (Cars) / Unlimited (Tempo) · Extra KM: ₹4/km (Bikes &amp; Scooters) / ₹8/km (Cars)
+            </p>
+            <p className="mt-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900 shadow-xs">
+              <strong>NOTE:</strong> Upon the pickup of the vehicle there will be an extra charge of ₹250. Upon late drop-off, even by 1 minute, you will be charged for 1 full extra day.
             </p>
           </div>
         )}
@@ -378,7 +436,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                       {(v.available_units ?? v.total_units ?? 1) > 0 ? `${v.available_units ?? v.total_units} Left` : "Pending Approval"}
                     </span>
                   </div>
-                  <p className="text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day`}</p>
+                  <p className="text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day (Extra KM: ₹${(v.category_kind === "bike" || v.category_kind === "scooter") ? 4 : v.extra_km_rate ?? 8}/km)`}</p>
                   <p className="mt-2 font-display text-lg font-semibold text-ink-900">
                     {formatINR(v.rate_24h)}<span className="text-xs font-normal text-ink-500">/day weekday</span>
                   </p>
@@ -394,14 +452,12 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 <p className="font-semibold text-ink-900">Estimated total: {formatINR(quote.totalAmount)}</p>
                 <p className="text-ink-600">
                   {quote.days} day{quote.days > 1 ? "s" : ""} ({formatINR(quote.baseAmount)}) + GST {formatINR(quote.gstAmount)}
-                  {quote.offSchedulePickupFee > 0 && <> + off-schedule pickup fee {formatINR(quote.offSchedulePickupFee)}</>}
                   {quote.gatewayFeeAmount > 0 && <> + gateway fee {formatINR(quote.gatewayFeeAmount)}</>}
                   {quote.depositAmount > 0 && <> + refundable security deposit {formatINR(quote.depositAmount)}</>}.
                 </p>
                 {quote.belowWeekendMinimum && (
                   <p className="mt-2 font-medium text-red-700">Weekend bookings need a minimum of {quote.weekendMinDays} days for this vehicle — please add more days on the previous step.</p>
                 )}
-                {quote.afterHours && <p className="mt-1 font-medium text-amber-700">This is an after-hours pickup — our team will confirm any applicable surcharge.</p>}
               </div>
             )}
           </div>
@@ -428,7 +484,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               </div>
               <div>
                 <label className="label">Date of birth</label>
-                <input className="input" type="date" value={contact.dob} onChange={(e) => setContact({ ...contact, dob: e.target.value })} />
+                <input className="input" type="date" max={maxDobISO()} value={contact.dob} onChange={(e) => setContact({ ...contact, dob: e.target.value })} />
               </div>
               <div className="sm:col-span-2">
                 <label className="label">Address</label>
@@ -445,10 +501,16 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
         {step === 4 && (
           <div className="space-y-4">
             <h2 className="font-display text-xl font-semibold text-ink-900">Driving licence &amp; documents</h2>
-            <p className="text-sm text-ink-500">Your driving licence and a government ID are required to confirm this booking — we verify them before handover.</p>
+            <p className="text-sm text-ink-500">Upload documents for both the driver and pillion — mandatory for handover verification.</p>
             <div className="grid gap-4 sm:grid-cols-2">
-              {[["licence", "Driving licence photo *"], ["govt_id", "Government ID (Aadhaar/passport) *"], ["address_proof", "Address proof"], ["photo", "Your photo"]].map(([kind, label]) => (
-                <label key={kind} className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-6 text-center text-sm text-ink-500 hover:border-brand-500">
+              {[
+                ["licence", "Driver Driving licence photo *"],
+                ["driver_govt_id", "Driver Government ID (Aadhaar/Passport) *"],
+                ["driver_photo", "Driver Passport Size Photo *"],
+                ["pillion_id", "Pillion ID Proof (Aadhaar/Passport) *"],
+                ["pillion_photo", "Pillion Passport Size Photo *"],
+              ].map(([kind, label]) => (
+                <label key={kind} className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-5 text-center text-sm text-ink-500 hover:border-brand-500">
                   {documents[kind]?.url ? <span className="font-semibold text-emerald-700">✓ {label.replace(" *", "")} uploaded</span> : <span>{uploading === kind ? "Uploading…" : `Upload ${label}`}</span>}
                   <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && upload(kind, e.target.files[0])} />
                 </label>
@@ -456,12 +518,32 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="label">Licence number</label>
-                <input className="input" value={documents.licence?.number ?? ""} onChange={(e) => setDocuments((d) => ({ ...d, licence: { ...d.licence, url: d.licence?.url ?? "", number: e.target.value } }))} />
+                <label className="label">Driver Licence number *</label>
+                <input
+                  className="input font-mono uppercase"
+                  placeholder="e.g. KA04 12345678901"
+                  maxLength={16}
+                  value={documents.licence?.number ?? ""}
+                  onChange={(e) => {
+                    const val = formatDlNumber(e.target.value);
+                    setDocuments((d) => ({ ...d, licence: { ...d.licence, url: d.licence?.url ?? "", number: val } }));
+                  }}
+                  aria-invalid={!!errors.licenceNumber}
+                />
+                <p className="mt-1 text-xs text-ink-400">Format: 2 letters, 2 digits, space, 11 digits (e.g. KA04 12345678901)</p>
+                {errors.licenceNumber && <p className="field-error">{errors.licenceNumber}</p>}
               </div>
               <div>
-                <label className="label">Licence expiry</label>
-                <input className="input" type="date" value={documents.licence?.expiry ?? ""} onChange={(e) => setDocuments((d) => ({ ...d, licence: { ...d.licence, url: d.licence?.url ?? "", expiry: e.target.value } }))} />
+                <label className="label">Driver Licence expiry date *</label>
+                <input
+                  className="input"
+                  type="date"
+                  min={todayISO()}
+                  value={documents.licence?.expiry ?? ""}
+                  onChange={(e) => setDocuments((d) => ({ ...d, licence: { ...d.licence, url: d.licence?.url ?? "", expiry: e.target.value } }))}
+                  aria-invalid={!!errors.licenceExpiry}
+                />
+                {errors.licenceExpiry && <p className="field-error">{errors.licenceExpiry}</p>}
               </div>
             </div>
             {errors.documents && <p className="field-error">{errors.documents}</p>}
@@ -479,7 +561,6 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               {quote && (
                 <>
                   <div className="flex justify-between"><span className="text-ink-500">Base rental ({quote.days} day{quote.days > 1 ? "s" : ""})</span><span>{formatINR(quote.baseAmount)}</span></div>
-                  {quote.offSchedulePickupFee > 0 && <div className="flex justify-between"><span className="text-ink-500">Off-schedule pickup fee</span><span>{formatINR(quote.offSchedulePickupFee)}</span></div>}
                   <div className="flex justify-between"><span className="text-ink-500">GST ({quote.gstPct}%)</span><span>{formatINR(quote.gstAmount)}</span></div>
                   {quote.gatewayFeeAmount > 0 && <div className="flex justify-between"><span className="text-ink-500">Payment gateway fee ({quote.gatewayFeePct}%)</span><span>{formatINR(quote.gatewayFeeAmount)}</span></div>}
                   <div className="flex justify-between"><span className="text-ink-500">Security deposit (refundable)</span><span>{formatINR(quote.depositAmount)}</span></div>
@@ -491,12 +572,16 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             <div className="rounded-xl border border-ink-100 bg-ink-50 p-4 text-sm text-ink-600">
               <p className="font-semibold text-ink-900">Terms & conditions</p>
               <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto pr-2">
-                {terms.map((t) => <li key={t} className="flex gap-2"><span aria-hidden>•</span>{t}</li>)}
+                {terms
+                  .filter((t) => !t.toLowerCase().includes("cancellation"))
+                  .map((t) => (
+                    <li key={t} className="flex gap-2"><span aria-hidden>•</span>{t}</li>
+                  ))}
               </ul>
             </div>
             <label className="flex items-start gap-2 text-sm text-ink-700">
               <input type="checkbox" checked={termsAccepted} onChange={(e) => setTermsAccepted(e.target.checked)} className="mt-0.5 h-4 w-4 accent-brand-600" />
-              I have read and accept the terms and conditions, cancellation policy and fuel policy.
+              I have read and accept the terms and conditions and fuel policy.
             </label>
             {errors.terms && <p className="field-error">{errors.terms}</p>}
 
