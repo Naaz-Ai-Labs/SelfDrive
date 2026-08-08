@@ -10,6 +10,7 @@ import {
   issueRazorpayRefund,
 } from "../src/lib/razorpay";
 import { createBookingPaymentOrder, verifyBookingPayment } from "../src/lib/payment-actions";
+import { toPaise, toRupees, recordPaymentEvent } from "../src/lib/supabase-sync";
 
 let failures = 0;
 
@@ -19,7 +20,11 @@ function check(label: string, ok: boolean, extra = "") {
 }
 
 async function runTests() {
-  console.log("=== RAZORPAY INTEGRATION SUITE ===\n");
+  console.log("=== RAZORPAY & SUPABASE LEDGER SUITE ===\n");
+
+  // Minor Unit Precision Helpers Test
+  check("toPaise converts ₹1,500 to 150,000 paise integer minor units", toPaise(1500) === 150000);
+  check("toRupees converts 150,000 paise back to ₹1,500 float", toRupees(150000) === 1500);
 
   const testKeyId = process.env.RAZORPAY_KEY_ID ?? "rzp_test_TNGC5KHCkEBPbQ";
   const testKeySecret = process.env.RAZORPAY_KEY_SECRET ?? "yQmb3HXRIWxnmKmVP93hufsY";
@@ -45,7 +50,7 @@ async function runTests() {
     verifyRazorpaySignature(orderId, paymentId, "invalid_signature_hex") === false
   );
 
-  // 2. Webhook Signature Verification Tests
+  // 2. Webhook Signature & Event Idempotency Tests
   const rawPayload = JSON.stringify({ event: "payment.captured", payload: { payment: { entity: { id: paymentId, order_id: orderId } } } });
   const validWebhookSig = crypto.createHmac("sha256", webhookSecret).update(rawPayload).digest("hex");
 
@@ -58,6 +63,14 @@ async function runTests() {
     "verifyRazorpayWebhookSignature rejects tampered payload",
     verifyRazorpayWebhookSignature(rawPayload + "tampered", validWebhookSig) === false
   );
+
+  // Webhook Event Audit Trail Idempotency
+  const testEventId = `evt_test_${Date.now()}`;
+  const ev1 = await recordPaymentEvent({ eventId: testEventId, eventType: "payment.captured", payload: rawPayload, signatureVerified: true });
+  check("recordPaymentEvent records initial webhook event", ev1.duplicate === false);
+  const ev2 = await recordPaymentEvent({ eventId: testEventId, eventType: "payment.captured", payload: rawPayload, signatureVerified: true });
+  check("recordPaymentEvent rejects duplicate event_id with duplicate=true", ev2.duplicate === true);
+
 
   // 3. Database Idempotency & Booking Fulfillment Tests
   const db = getDb();

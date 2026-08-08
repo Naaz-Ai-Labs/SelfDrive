@@ -6,6 +6,7 @@ import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { createRazorpayOrder, verifyRazorpaySignature, razorpayConfigured, razorpayKeyId } from "./razorpay";
 import { generateInvoiceForBooking } from "./invoices";
+import { toPaise, syncPaymentToSupabase } from "./supabase-sync";
 
 /**
  * Creates (or reuses) a Pending payment record for the full outstanding amount on a
@@ -27,22 +28,28 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
   const due = Number(booking.total_amount) + Number(booking.deposit_amount) - Number(booking.paid_amount);
   if (due <= 0) return { ok: false, error: "This booking is already fully paid." };
 
+  const duePaise = toPaise(due);
+
   let payment = db
     .prepare("SELECT * FROM payments WHERE booking_id = ? AND status = 'Pending' AND kind = 'full' ORDER BY id DESC LIMIT 1")
-    .get(bookingId) as { id: number; payment_no: string; amount: number } | undefined;
+    .get(bookingId) as { id: number; payment_no: string; amount: number; amount_paise: number } | undefined;
 
   if (!payment) {
     const paymentNo = nextNumber("PY", null);
     const result = db
-      .prepare("INSERT INTO payments (payment_no, booking_id, customer_id, amount, kind, status, notes) VALUES (?, ?, ?, ?, 'full', 'Pending', 'Rental total + deposit')")
-      .run(paymentNo, bookingId, booking.customer_id as number | null, due);
-    payment = { id: Number(result.lastInsertRowid), payment_no: paymentNo, amount: due };
+      .prepare("INSERT INTO payments (payment_no, booking_id, customer_id, amount, amount_paise, kind, status, notes) VALUES (?, ?, ?, ?, ?, 'full', 'Pending', 'Rental total + deposit')")
+      .run(paymentNo, bookingId, booking.customer_id as number | null, due, duePaise);
+    payment = { id: Number(result.lastInsertRowid), payment_no: paymentNo, amount: due, amount_paise: duePaise };
   }
 
   const order = await createRazorpayOrder({ amountInRupees: payment.amount, receipt: payment.payment_no, notes: { booking_no: String(booking.booking_no), payment_no: payment.payment_no } });
   if (!order.ok) return { ok: false, error: order.error };
 
-  db.prepare("UPDATE payments SET gateway_ref = ? WHERE id = ?").run(order.orderId, payment.id);
+  db.prepare("UPDATE payments SET gateway_ref = ?, razorpay_order_id = ?, amount_paise = ? WHERE id = ?").run(order.orderId, order.orderId, duePaise, payment.id);
+
+  // Sync transaction to Supabase
+  syncPaymentToSupabase(payment.id).catch(() => {});
+
 
   return {
     ok: true,
@@ -82,9 +89,20 @@ export async function verifyBookingPayment(input: {
   }
 
   const receiptNo = nextNumber("RC", null);
-  db.prepare("UPDATE payments SET status = 'Paid', paid_at = datetime('now'), notes = ?, receipt_no = ? WHERE id = ?").run(
-    `Razorpay payment ID: ${input.razorpayPaymentId}`, receiptNo, payment.id
+  db.prepare(
+    "UPDATE payments SET status = 'Paid', paid_at = datetime('now'), notes = ?, receipt_no = ?, razorpay_order_id = ?, razorpay_payment_id = ?, razorpay_signature = ? WHERE id = ?"
+  ).run(
+    `Razorpay payment ID: ${input.razorpayPaymentId}`,
+    receiptNo,
+    input.razorpayOrderId,
+    input.razorpayPaymentId,
+    input.razorpaySignature,
+    payment.id
   );
+
+  // Sync to Supabase ledger
+  syncPaymentToSupabase(payment.id).catch(() => {});
+
   // Payment verified -> booking auto-confirms. This is the one moment the CRM should treat
   // as ground truth for "paid": we only ever get here after the Razorpay signature check above.
   db.prepare("UPDATE bookings SET paid_amount = paid_amount + ?, status = 'Confirmed', updated_at = datetime('now') WHERE id = ?").run(

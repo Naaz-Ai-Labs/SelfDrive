@@ -3,6 +3,7 @@ import { verifyRazorpayWebhookSignature } from "@/lib/razorpay";
 import { verifyBookingPayment } from "@/lib/payment-actions";
 import { getDb } from "@/lib/db";
 import { logActivity } from "@/lib/activity";
+import { recordPaymentEvent, markPaymentEventProcessed, syncPaymentToSupabase } from "@/lib/supabase-sync";
 
 /**
  * Server-to-server webhook handler for Razorpay asynchronous notifications
@@ -20,15 +21,44 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid webhook signature." }, { status: 400 });
   }
 
-  let event: { event?: string; payload?: Record<string, any> };
+  let event: { event?: string; payload?: Record<string, any>; event_id?: string };
   try {
     event = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const eventType = event.event;
-  const payload = event.payload;
+  const eventType = event.event ?? "unknown";
+  const payload = event.payload ?? {};
+  const eventId = (event as any).event_id ?? (event as any).id ?? null;
+
+  const entity = payload?.payment?.entity ?? payload?.order?.entity ?? payload?.refund?.entity;
+  const orderId = entity?.order_id ?? entity?.id ?? null;
+  const paymentId = entity?.id ?? entity?.payment_id ?? null;
+
+  const db = getDb();
+  let transactionId: number | null = null;
+  if (orderId) {
+    const paymentRow = db.prepare("SELECT id FROM payments WHERE gateway_ref = ? OR razorpay_order_id = ?").get(orderId, orderId) as { id: number } | undefined;
+    if (paymentRow) transactionId = paymentRow.id;
+  }
+
+  const { eventDbId, duplicate } = await recordPaymentEvent({
+    eventId,
+    eventType,
+    razorpayOrderId: orderId,
+    razorpayPaymentId: paymentId,
+    payload: rawBody,
+    signatureVerified: true,
+    transactionId,
+  });
+
+  if (duplicate) {
+    return NextResponse.json({ status: "ok", message: "Duplicate event skipped." });
+  }
+
+  let processingError: string | null = null;
+
 
   if (eventType === "payment.captured" || eventType === "order.paid") {
     const entity = payload?.payment?.entity ?? payload?.order?.entity;
@@ -74,5 +104,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  await markPaymentEventProcessed(eventDbId, processingError);
   return NextResponse.json({ status: "ok" });
 }
+

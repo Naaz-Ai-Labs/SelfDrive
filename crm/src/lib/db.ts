@@ -351,9 +351,14 @@ CREATE TABLE IF NOT EXISTS payments (
   booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
   customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
   amount REAL NOT NULL,
+  amount_paise INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'INR',
   kind TEXT NOT NULL DEFAULT 'advance' CHECK (kind IN ('advance','full','deposit','extra_charge')),
   method TEXT,
   gateway_ref TEXT,
+  razorpay_order_id TEXT UNIQUE,
+  razorpay_payment_id TEXT UNIQUE,
+  razorpay_signature TEXT,
   due_date TEXT,
   paid_at TEXT,
   status TEXT NOT NULL DEFAULT 'Pending',
@@ -362,6 +367,25 @@ CREATE TABLE IF NOT EXISTS payments (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_payments_booking ON payments(booking_id);
+CREATE INDEX IF NOT EXISTS idx_payments_rzp_order ON payments(razorpay_order_id);
+CREATE INDEX IF NOT EXISTS idx_payments_rzp_payment ON payments(razorpay_payment_id);
+
+CREATE TABLE IF NOT EXISTS payment_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  transaction_id INTEGER REFERENCES payments(id) ON DELETE SET NULL,
+  event_id TEXT UNIQUE,
+  event_type TEXT NOT NULL,
+  razorpay_order_id TEXT,
+  razorpay_payment_id TEXT,
+  payload TEXT NOT NULL,
+  signature_verified INTEGER NOT NULL DEFAULT 1,
+  processed INTEGER NOT NULL DEFAULT 0,
+  processing_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_payment_events_event_id ON payment_events(event_id);
+
 
 CREATE TABLE IF NOT EXISTS refunds (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -577,10 +601,19 @@ CREATE TABLE IF NOT EXISTS settings (
 `;
 
 function applySchema(database: DatabaseSync) {
+  try { database.exec("ALTER TABLE vehicles ADD COLUMN total_units INTEGER NOT NULL DEFAULT 1;"); } catch {}
+  try { database.exec("ALTER TABLE users ADD COLUMN left_at TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN amount_paise INTEGER NOT NULL DEFAULT 0;"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR';"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN razorpay_order_id TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN razorpay_payment_id TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN razorpay_signature TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payment_events ADD COLUMN razorpay_order_id TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payment_events ADD COLUMN razorpay_payment_id TEXT;"); } catch {}
+
   database.exec(SCHEMA);
+
   try {
-    try { database.exec("ALTER TABLE vehicles ADD COLUMN total_units INTEGER NOT NULL DEFAULT 1;"); } catch {}
-    try { database.exec("ALTER TABLE users ADD COLUMN left_at TEXT;"); } catch {}
     database.exec("UPDATE vehicles SET included_km = 300 WHERE category_id = 1;");
     database.exec("UPDATE vehicles SET included_km = 999 WHERE category_id = 4;");
     database.exec("UPDATE vehicles SET included_km = 100 WHERE category_id IN (2, 3);");
