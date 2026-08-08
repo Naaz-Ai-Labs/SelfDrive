@@ -9,6 +9,7 @@ import { sendTemplate } from "./messaging";
 import { getSetting, setSetting } from "./settings";
 import { calculateLateFee, calculateExtraKm } from "./pricing";
 import type { SessionUser } from "./auth";
+import { issueRazorpayRefund } from "./razorpay";
 
 function refresh(path = "/dashboard") {
   revalidatePath(path, "layout");
@@ -509,6 +510,48 @@ export async function completeRefund(id: number, method: string, transactionRef:
   refresh();
   return { ok: true };
 }
+
+export async function processOnlineRazorpayRefund(refundId: number): Promise<{ ok: true; refundId: string } | { ok: false; error: string }> {
+  const user = await staffUser();
+  assertCan(user, "finance");
+  const db = getDb();
+
+  const refund = db
+    .prepare(
+      `SELECT r.*, p.notes AS payment_notes FROM refunds r
+       LEFT JOIN payments p ON p.booking_id = r.booking_id
+       WHERE r.id = ? AND p.status = 'Paid' AND p.notes LIKE 'Razorpay payment ID:%'
+       ORDER BY p.id DESC LIMIT 1`
+    )
+    .get(refundId) as { id: number; booking_id: number; approved_amount: number | null; requested_amount: number; payment_notes: string; customer_id: number | null } | undefined;
+
+  if (!refund) {
+    return { ok: false, error: "No paid Razorpay transaction found for this booking refund." };
+  }
+
+  const razorpayPaymentId = refund.payment_notes.replace("Razorpay payment ID: ", "").trim();
+  const amountToRefund = refund.approved_amount ?? refund.requested_amount;
+
+  const result = await issueRazorpayRefund({
+    razorpayPaymentId,
+    amountInRupees: amountToRefund,
+    notes: { refund_id: String(refund.id), booking_id: String(refund.booking_id) },
+  });
+
+  if (!result.ok) {
+    return { ok: false, error: result.error };
+  }
+
+  db.prepare("UPDATE refunds SET status = 'Completed', method = 'Razorpay', transaction_ref = ?, completed_at = datetime('now') WHERE id = ?").run(
+    result.refundId,
+    refundId
+  );
+
+  logActivity(user.id, "razorpay_refund_processed", "refund", refundId, { refundId: result.refundId, amount: amountToRefund });
+  refresh();
+  return { ok: true, refundId: result.refundId };
+}
+
 
 /* ------------------------------ Problem tickets ------------------------------ */
 

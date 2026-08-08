@@ -5,7 +5,7 @@ export function razorpayConfigured(): boolean {
 }
 
 export function razorpayKeyId(): string | null {
-  return process.env.RAZORPAY_KEY_ID ?? null;
+  return process.env.RAZORPAY_KEY_ID ?? process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ?? null;
 }
 
 /**
@@ -53,3 +53,47 @@ export function verifyRazorpaySignature(orderId: string, paymentId: string, sign
     return false;
   }
 }
+
+/** Verifies the X-Razorpay-Signature header sent with Razorpay webhook POST requests against RAZORPAY_WEBHOOK_SECRET. */
+export function verifyRazorpayWebhookSignature(rawBody: string, signature: string): boolean {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!secret || !signature) return false;
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  } catch {
+    return false;
+  }
+}
+
+/** Triggers a direct refund via Razorpay REST API for a captured payment. */
+export async function issueRazorpayRefund(input: {
+  razorpayPaymentId: string;
+  amountInRupees: number;
+  notes?: Record<string, string>;
+}): Promise<{ ok: true; refundId: string } | { ok: false; error: string }> {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) {
+    return { ok: false, error: "Razorpay API credentials not configured." };
+  }
+
+  const amountPaise = Math.round(input.amountInRupees * 100);
+  const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+
+  try {
+    const res = await fetch(`https://api.razorpay.com/v1/payments/${input.razorpayPaymentId}/refund`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
+      body: JSON.stringify({ amount: amountPaise, notes: input.notes ?? {} }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: data?.error?.description ?? "Refund processing failed." };
+    }
+    return { ok: true, refundId: data.id };
+  } catch {
+    return { ok: false, error: "Could not reach Razorpay API for refund." };
+  }
+}
+
