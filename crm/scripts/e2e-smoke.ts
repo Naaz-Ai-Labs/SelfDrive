@@ -23,7 +23,7 @@ async function main() {
   const phone = "+91 98765 10001";
   const email = "smoke.ramesh@example.com";
   const pickupAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16);
-  const returnAt = new Date(Date.now() + 48 * 3600 * 1000).toISOString().slice(0, 16);
+  const returnAt = new Date(Date.now() + 96 * 3600 * 1000).toISOString().slice(0, 16);
 
   // Clean up any previous test runs so the test is idempotent
   db.prepare("DELETE FROM availability_blocks WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id IN (SELECT id FROM customers WHERE email LIKE '%smoke%' OR phone LIKE '%98765%'))").run();
