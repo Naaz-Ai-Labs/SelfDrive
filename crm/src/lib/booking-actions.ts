@@ -73,6 +73,26 @@ const submitSchema = z.object({
   termsAccepted: z.literal(true, { errorMap: () => ({ message: "Please accept the terms and conditions to continue." }) }),
 });
 
+function normalizeDocKind(kind: string): string {
+  switch (kind) {
+    case "licence":
+    case "driver_licence":
+      return "licence";
+    case "driver_govt_id":
+    case "pillion_id":
+    case "govt_id":
+      return "govt_id";
+    case "driver_photo":
+    case "pillion_photo":
+    case "photo":
+      return "photo";
+    case "address_proof":
+      return "address_proof";
+    default:
+      return "other";
+  }
+}
+
 export async function submitBooking(input: {
   token: string;
   vehicleId: number;
@@ -90,8 +110,8 @@ export async function submitBooking(input: {
     return { ok: false, error: first };
   }
   const docs = input.documents ?? [];
-  const hasLicence = docs.some((d) => d.kind === "licence" && d.url);
-  const hasGovtId = docs.some((d) => d.kind === "govt_id" && d.url);
+  const hasLicence = docs.some((d) => (d.kind === "licence" || d.kind === "driver_licence") && d.url);
+  const hasGovtId = docs.some((d) => (d.kind === "govt_id" || d.kind === "driver_govt_id") && d.url);
   if (!hasLicence || !hasGovtId) {
     return { ok: false, error: "Please upload your driving licence and a government ID before confirming — this is required to hand over the vehicle." };
   }
@@ -118,7 +138,7 @@ export async function submitBooking(input: {
     if (input.documents && input.documents.length > 0) {
       for (const d of input.documents) {
         db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
-          customerId, bookingId, d.kind, d.number ?? null, d.expiry ?? null, d.url
+          customerId, bookingId, normalizeDocKind(d.kind), d.number ?? null, d.expiry ?? null, d.url
         );
       }
     }
@@ -144,11 +164,12 @@ export async function attachCustomerDocuments(customerId: number, bookingId: num
   const db = getDb();
   for (const d of docs) {
     db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
-      customerId, bookingId, d.kind, d.number ?? null, d.expiry ?? null, d.url
+      customerId, bookingId, normalizeDocKind(d.kind), d.number ?? null, d.expiry ?? null, d.url
     );
   }
   return { ok: true };
 }
+
 
 export async function getQuoteEstimate(vehicleId: number, pickupAt: string, returnAt: string) {
   const vehicle = getVehicleById(vehicleId);
