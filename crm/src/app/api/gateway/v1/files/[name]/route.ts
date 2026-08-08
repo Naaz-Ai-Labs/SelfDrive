@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { requireGatewayKey, bearerCustomer } from "@/lib/gateway-auth";
-import { getDb } from "@/lib/db";
+import { getDb, getWritableUploadsDir } from "@/lib/db";
 
-const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
 const MIME: Record<string, string> = { jpeg: "image/jpeg", jpg: "image/jpeg", png: "image/png", webp: "image/webp", pdf: "application/pdf" };
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ name: string }> }) {
@@ -21,8 +20,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ name
     .get(customer.customerId, `/api/files/${name}`);
   if (!owns) return NextResponse.json({ error: "Not authorised." }, { status: 403 });
 
-  const filePath = path.join(UPLOAD_DIR, name);
-  if (!filePath.startsWith(UPLOAD_DIR) || !fs.existsSync(filePath)) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  const uploadDir = getWritableUploadsDir();
+  const filePath = path.join(/*turbopackIgnore: true*/ uploadDir, name);
+  if (!filePath.startsWith(uploadDir) || !fs.existsSync(filePath)) return NextResponse.json({ error: "Not found." }, { status: 404 });
   const ext = name.split(".").pop() ?? "";
   const buf = fs.readFileSync(filePath);
   return new NextResponse(buf, { headers: { "Content-Type": MIME[ext] ?? "application/octet-stream" } });

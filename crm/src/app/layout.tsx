@@ -18,6 +18,8 @@ const sans = Jost({
   display: "swap",
 });
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: { default: "Darshh Holiday — CRM", template: "%s | Darshh Holiday CRM" },
   robots: { index: false, follow: false },

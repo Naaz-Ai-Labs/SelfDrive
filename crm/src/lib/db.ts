@@ -1,16 +1,39 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "darshan.db");
+export function getWritableDataDir(): string {
+  if (process.env.VERCEL) {
+    const tmpDir = path.join(os.tmpdir(), "darshan-crm-data");
+    fs.mkdirSync(tmpDir, { recursive: true });
+    return tmpDir;
+  }
+  try {
+    const localDir = path.join(process.cwd(), "data");
+    fs.mkdirSync(localDir, { recursive: true });
+    fs.accessSync(localDir, fs.constants.W_OK);
+    return localDir;
+  } catch {
+    const tmpDir = path.join(os.tmpdir(), "darshan-crm-data");
+    fs.mkdirSync(tmpDir, { recursive: true });
+    return tmpDir;
+  }
+}
+
+export function getWritableUploadsDir(): string {
+  const uploadsDir = path.join(getWritableDataDir(), "uploads");
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  return uploadsDir;
+}
 
 let db: DatabaseSync | null = null;
 
 export function getDb(): DatabaseSync {
   if (db) return db;
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  db = new DatabaseSync(DB_PATH);
+  const dataDir = getWritableDataDir();
+  const dbPath = path.join(dataDir, "darshan.db");
+  db = new DatabaseSync(dbPath);
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
   applySchema(db);

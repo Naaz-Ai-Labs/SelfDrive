@@ -4,8 +4,8 @@ import path from "node:path";
 import { randomToken } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/auth";
 import { getPortalSession } from "@/lib/portal-actions";
+import { getWritableUploadsDir } from "@/lib/db";
 
-const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const MAX_BYTES = 8 * 1024 * 1024;
 
@@ -32,11 +32,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "File is too large (max 8MB)." }, { status: 400 });
   }
 
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  const uploadDir = getWritableUploadsDir();
   const ext = file.type === "application/pdf" ? "pdf" : file.type.split("/")[1];
   const name = `${randomToken(16)}.${ext}`;
   const buf = Buffer.from(await file.arrayBuffer());
-  fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
+  fs.writeFileSync(path.join(/*turbopackIgnore: true*/ uploadDir, name), buf);
 
   let supabasePublicUrl: string | null = null;
   const { supabaseAdmin } = await import("@/lib/supabase");
