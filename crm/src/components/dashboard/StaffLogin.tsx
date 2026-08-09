@@ -1,11 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 
 export function StaffLogin() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -17,19 +14,7 @@ export function StaffLogin() {
     setBusy(true);
 
     try {
-      // 1. Authenticate with Supabase Auth if client is available
-      if (supabase) {
-        const { error: sbError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (sbError && !sbError.message.includes("Invalid login credentials")) {
-          console.warn("Supabase Auth sign-in note:", sbError.message);
-        }
-      }
-
-      // 2. Call CRM auth endpoint to establish local session cookie
+      // Call CRM auth endpoint to establish local session cookie
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -44,8 +29,7 @@ export function StaffLogin() {
         return;
       }
 
-      router.push("/dashboard");
-      router.refresh();
+      window.location.href = "/dashboard";
     } catch (err: any) {
       setError("Network error. Please try again.");
       setBusy(false);

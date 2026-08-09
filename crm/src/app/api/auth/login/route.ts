@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { verifyPassword, hashPassword, createSession, SESSION_COOKIE } from "@/lib/auth";
@@ -118,6 +119,15 @@ export async function POST(req: NextRequest) {
   const token = createSession(user.id, ip);
   db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
   logActivity(user.id, "login", "user", user.id);
+
+  const cookieStore = await cookies();
+  cookieStore.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 7 * 24 * 3600,
+  });
 
   const res = NextResponse.json({
     user: { id: user.id, name: user.name, email: user.email, role: user.role },

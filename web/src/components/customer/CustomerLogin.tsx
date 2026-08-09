@@ -61,8 +61,7 @@ export function CustomerLogin() {
         setError(data.error ?? "Verification failed.");
         return;
       }
-      router.push("/customer/portal");
-      router.refresh();
+      window.location.href = "/customer/portal";
     } catch {
       setError("Network error. Please try again.");
     }
