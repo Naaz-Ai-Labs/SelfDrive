@@ -8,6 +8,7 @@ import { formatINR, formatDate, formatTimeLabel, waLink } from "@/lib/utils";
 import { saveBookingDraft, getDraft, submitBooking, getAvailableVehicles, getQuoteEstimate, getVehicleById } from "@/lib/booking-actions";
 import { RazorpayCheckout } from "./RazorpayCheckout";
 import type { Vehicle } from "@/lib/data";
+import { compressImageFile } from "@/lib/image-compression";
 
 type Category = { id: number; name: string; kind: string; icon: string | null };
 type Quote = Awaited<ReturnType<typeof getQuoteEstimate>>;
@@ -253,8 +254,9 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
   async function upload(kind: string, file: File) {
     setUploading(kind);
+    const compressed = await compressImageFile(file, 1600, 0.8);
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", compressed);
     const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json()).catch(() => null);
     setUploading(null);
     if (res?.path) setDocuments((d) => ({ ...d, [kind]: { ...d[kind], url: res.path } }));

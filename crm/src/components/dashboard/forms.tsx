@@ -8,6 +8,7 @@ import {
   recordInspection, addDamageReport, addPayment, markPaymentPaid,
   decideRefund, completeRefund, updateProblemTicket,
 } from "@/lib/actions";
+import { compressImageFile } from "@/lib/image-compression";
 
 function useAction() {
   const router = useRouter();
@@ -190,8 +191,9 @@ export function InspectionForm({ bookingId, kind }: { bookingId: number; kind: "
 
   async function upload(side: string, file: File) {
     setUploading(side);
+    const compressed = await compressImageFile(file, 1600, 0.8);
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", compressed);
     const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json()).catch(() => null);
     setUploading(null);
     if (res?.path) setPhotos((p) => ({ ...p, [side]: res.path }));

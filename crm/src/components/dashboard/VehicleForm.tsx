@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveVehicle, addVehiclePhoto, deleteVehicle } from "@/lib/actions";
 import type { Vehicle } from "@/lib/data";
+import { compressImageFile } from "@/lib/image-compression";
 
 export function VehicleForm({
   categories,
@@ -102,8 +103,9 @@ export function VehicleForm({
     setUploading(true);
     setError("");
     try {
+      const compressed = await compressImageFile(file, 1600, 0.8);
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", compressed);
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await res.json();
       if (data.ok && data.path) {
