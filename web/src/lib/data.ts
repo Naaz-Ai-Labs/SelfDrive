@@ -131,19 +131,36 @@ export async function getVehicleCategory(slug: string): Promise<VehicleCategory 
   return (await getContent()).categories.find((c) => c.slug === slug) ?? null;
 }
 
+import { getDynamicRate24h } from "./pricing";
+
 export type VehicleFilters = { categorySlug?: string; kind?: string };
 
 export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle[]> {
   const { vehicles } = await getContent();
-  return vehicles.filter((v) => (!filters.kind || v.category_kind === filters.kind) && (!filters.categorySlug || v.category_slug === filters.categorySlug));
+  return vehicles
+    .filter((v) => (!filters.kind || v.category_kind === filters.kind) && (!filters.categorySlug || v.category_slug === filters.categorySlug))
+    .map((v) => ({
+      ...v,
+      rate_24h: getDynamicRate24h(v.rate_24h),
+    }));
 }
 
 export async function getVehicle(slug: string): Promise<Vehicle | null> {
-  return (await getContent()).vehicles.find((v) => v.slug === slug) ?? null;
+  const v = (await getContent()).vehicles.find((v) => v.slug === slug) ?? null;
+  if (!v) return null;
+  return {
+    ...v,
+    rate_24h: getDynamicRate24h(v.rate_24h),
+  };
 }
 
 export async function getVehicleById(id: number): Promise<Vehicle | null> {
-  return (await getContent()).vehicles.find((v) => v.id === id) ?? null;
+  const v = (await getContent()).vehicles.find((v) => v.id === id) ?? null;
+  if (!v) return null;
+  return {
+    ...v,
+    rate_24h: getDynamicRate24h(v.rate_24h),
+  };
 }
 
 export async function getTestimonials() {

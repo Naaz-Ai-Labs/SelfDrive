@@ -7,6 +7,7 @@ import { getActiveTermsVersion } from "@/lib/data";
 import { formatINR, waLink } from "@/lib/utils";
 import { businessInfo } from "@/lib/settings";
 import { Reveal } from "@/components/ui/Reveal";
+import { isWeekend } from "@/lib/pricing";
 
 export async function generateMetadata(props: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const params = await props.params;
@@ -57,6 +58,9 @@ export default async function VehicleDetailPage(
   const similar = similarAll.filter((v) => v.id !== vehicle.id).slice(0, 3);
 
   const bookingHref = `/booking?vehicle=${vehicle.id}${searchParams.pickup ? `&pickup=${searchParams.pickup}` : ""}${searchParams.return ? `&return=${searchParams.return}` : ""}`;
+
+  const isOutOfStock = (vehicle.available_units ?? vehicle.total_units ?? 0) <= 0;
+  const weekendActive = isWeekend();
 
   const specs: Array<[string, string | number, string]> = [
     ["Brand / model", `${vehicle.brand} ${vehicle.model}`, SPEC_ICONS.brand],
@@ -117,9 +121,9 @@ export default async function VehicleDetailPage(
             <div className="relative aspect-[4/3] overflow-hidden rounded-3xl bg-ink-100 shadow-soft">
               {vehicle.primary_photo && <Image src={vehicle.primary_photo} alt={vehicle.name} fill priority className="object-contain p-6" sizes="(max-width:1024px) 100vw, 60vw" />}
               <span className="absolute left-4 top-4 badge bg-white/95 text-ink-800 shadow-sm">{vehicle.category_name}</span>
-              <span className={`absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black shadow-md ${(vehicle.available_units ?? vehicle.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-md"}`}>
+              <span className={`absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black shadow-md ${isOutOfStock ? "bg-rose-600 text-white" : (vehicle.available_units ?? vehicle.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-md"}`}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                {(vehicle.available_units ?? vehicle.total_units ?? 1) > 0 ? `${vehicle.available_units ?? vehicle.total_units} Left` : "Pending Approval"}
+                {isOutOfStock ? "Out of Stock" : `${vehicle.available_units ?? vehicle.total_units} Left`}
               </span>
             </div>
             {vehicle.photos.length > 1 && (
@@ -133,30 +137,27 @@ export default async function VehicleDetailPage(
             )}
 
             <div className="mt-8">
-              <p className="text-xs font-bold uppercase tracking-wider text-brand-600">{vehicle.category_name}</p>
-              <h1 className="mt-2 font-display text-3xl font-black text-ink-900 sm:text-4xl">{vehicle.name}</h1>
-              <p className="mt-3 text-base leading-relaxed text-ink-600">{vehicle.description}</p>
+              <h1 className="font-display text-2xl font-bold text-ink-900 sm:text-3xl">{vehicle.name}</h1>
+              <p className="mt-2 leading-relaxed text-ink-600">{vehicle.description || `Rent the ${vehicle.name} for local sightseeing or roadtrips.`}</p>
 
-              <dl className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {specs.map(([label, value, icon]) => (
-                  <div key={String(label)} className="card flex flex-col items-center gap-1.5 p-4 text-center transition hover:border-brand-300">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500/10 text-brand-600"><SpecIcon d={icon} /></span>
-                    <dt className="text-[10px] font-bold uppercase tracking-wider text-ink-400">{label}</dt>
-                    <dd className="text-sm font-semibold text-ink-900">{value}</dd>
-                  </div>
-                ))}
-              </dl>
-
-              {vehicle.terms && (
-                <div className="mt-8 card p-5">
-                  <h2 className="font-display text-base font-semibold text-ink-900">Vehicle terms</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-ink-600">{vehicle.terms}</p>
+              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="flex items-center gap-2.5 rounded-xl border border-ink-100 bg-white p-3 text-xs">
+                  <span className="text-brand-600"><SpecIcon d={SPEC_ICONS.fuel} /></span>
+                  <div><span className="block font-semibold text-ink-900">{vehicle.fuel_type}</span><span className="text-[10px] text-ink-400">Fuel</span></div>
                 </div>
-              )}
+                <div className="flex items-center gap-2.5 rounded-xl border border-ink-100 bg-white p-3 text-xs">
+                  <span className="text-brand-600"><SpecIcon d={SPEC_ICONS.seats} /></span>
+                  <div><span className="block font-semibold text-ink-900">{vehicle.seats} seats</span><span className="text-[10px] text-ink-400">Seating</span></div>
+                </div>
+                <div className="flex items-center gap-2.5 rounded-xl border border-ink-100 bg-white p-3 text-xs">
+                  <span className="text-brand-600"><SpecIcon d={SPEC_ICONS.transmission} /></span>
+                  <div><span className="block font-semibold text-ink-900">{vehicle.transmission}</span><span className="text-[10px] text-ink-400">Gearbox</span></div>
+                </div>
+              </div>
 
-              {terms && (
-                <div className="mt-4 card p-5">
-                  <h2 className="font-display text-base font-semibold text-ink-900">Required documents &amp; policy</h2>
+              {terms?.content && terms.content.length > 0 && (
+                <div className="mt-8 rounded-2xl border border-ink-100 bg-ink-50/50 p-5">
+                  <h3 className="font-display text-sm font-semibold text-ink-900">Rental Terms & Rules</h3>
                   <ul className="mt-2 space-y-1.5 text-sm text-ink-600">
                     {terms.content.slice(0, 6).map((t) => (
                       <li key={t} className="flex gap-2"><span className="text-brand-600" aria-hidden>✓</span>{t}</li>
@@ -170,22 +171,41 @@ export default async function VehicleDetailPage(
           <aside className="lg:sticky lg:top-24 lg:h-fit">
             <div className="card relative overflow-hidden p-6">
               <div className="absolute inset-x-0 top-0 h-2 bg-brand-500" aria-hidden />
-              <p className="text-xs font-bold uppercase tracking-wider text-ink-400">Pricing</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-wider text-ink-400">Pricing</p>
+                {weekendActive && (
+                  <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
+                    +₹50 Weekend Rate
+                  </span>
+                )}
+              </div>
               <div className="mt-2 flex items-end gap-2">
                 <span className="font-display text-3xl font-black text-ink-900">{formatINR(vehicle.rate_24h)}</span>
                 <span className="pb-1 text-sm text-ink-500">/ 24 hours</span>
               </div>
               {vehicle.rate_12h > 0 && <p className="mt-1 text-sm text-ink-500">{formatINR(vehicle.rate_12h)} for up to 12 hours</p>}
               <ul className="mt-4 space-y-2 border-t border-ink-100 pt-4 text-sm text-ink-600">
-                <li className="flex justify-between font-semibold text-brand-700"><span>Fleet stock</span><span>{vehicle.total_units ?? 1} available</span></li>
+                <li className="flex justify-between font-semibold text-brand-700">
+                  <span>Fleet stock</span>
+                  <span className={isOutOfStock ? "text-rose-600 font-bold" : ""}>
+                    {isOutOfStock ? "Out of Stock" : `${vehicle.available_units ?? vehicle.total_units} available`}
+                  </span>
+                </li>
                 <li className="flex justify-between"><span>Included km</span><span className="font-medium text-ink-800">{vehicle.included_km >= 999 ? "Unlimited KM" : `${vehicle.included_km} km/day`}</span></li>
                 <li className="flex justify-between"><span>Extra km rate</span><span className="font-medium text-ink-800">{formatINR((vehicle.category_kind === "bike" || vehicle.category_kind === "scooter") ? 4 : vehicle.extra_km_rate ?? 8)}/km</span></li>
                 <li className="flex justify-between"><span>Security deposit</span><span className="font-medium text-ink-800">{formatINR(vehicle.deposit)}</span></li>
               </ul>
               <p className="mt-4 text-xs text-ink-500">Fixed rental — no bargaining. Vehicle rented without fuel; return with the same fuel level. GST (6%) added at checkout.</p>
-              <Link href={bookingHref} className="btn-shine mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
-                Book this vehicle
-              </Link>
+
+              {isOutOfStock ? (
+                <div className="mt-5 w-full rounded-full bg-rose-100 py-3.5 text-center text-xs font-bold uppercase tracking-wide text-rose-700">
+                  Currently Out of Stock
+                </div>
+              ) : (
+                <Link href={bookingHref} className="btn-shine mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
+                  Book this vehicle
+                </Link>
+              )}
               <a href={waLink(String(info.whatsapp ?? ""), `Hi, I'd like to enquire about the ${vehicle.name}`)} target="_blank" rel="noopener noreferrer" className="btn-secondary mt-2 w-full">
                 WhatsApp enquiry
               </a>

@@ -41,9 +41,14 @@ export type Quote = {
   payableNow: number;
 };
 
-function isWeekend(date: Date): boolean {
+export function isWeekend(date: Date = new Date()): boolean {
   const day = date.getDay();
   return day === 0 || day === 6; // Sunday=0, Saturday=6
+}
+
+export function getDynamicRate24h(baseRate: number, date: Date = new Date()): number {
+  if (!baseRate || isNaN(baseRate)) return 0;
+  return isWeekend(date) ? baseRate + 50 : baseRate;
 }
 
 /** A seasonal/festival/long-weekend override that applies to the whole booking period, taking priority over standard weekday/weekend rates. */
@@ -93,7 +98,7 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
     const rate = seasonalRule
       ? Number(seasonalRule.rate_24h ?? vehicle.rate_24h)
       : weekend
-        ? Number(vehicle.weekend_rate_24h ?? vehicle.rate_24h)
+        ? Number(vehicle.weekend_rate_24h ?? (vehicle.rate_24h + 50))
         : Number(vehicle.rate_24h);
     dayBreakdown.push({ date: day.toISOString().slice(0, 10), dayType: weekend ? "weekend" : "weekday", rate });
     baseAmount += rate;

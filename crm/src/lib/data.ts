@@ -1,4 +1,5 @@
 import { getDb } from "./db";
+import { getDynamicRate24h } from "./pricing";
 
 export type VehicleCategory = {
   id: number;
@@ -71,8 +72,12 @@ function attachPhotos(vehicle: Record<string, unknown>): Vehicle {
   const bookedCount = booked?.c ?? 0;
   const availableUnits = Math.max(0, totalUnits - bookedCount);
 
+  const baseRate24h = Number(vehicle.rate_24h ?? 0);
+  const liveRate24h = getDynamicRate24h(baseRate24h);
+
   return {
     ...(vehicle as unknown as Vehicle),
+    rate_24h: liveRate24h,
     total_units: totalUnits,
     available_units: availableUnits,
     photos: photos.map((p) => p.url),

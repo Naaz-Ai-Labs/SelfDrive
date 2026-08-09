@@ -5,6 +5,7 @@ import { getVehicles, getVehicleCategories } from "@/lib/data";
 import { formatINR } from "@/lib/utils";
 import { EmptyState } from "@/components/ui";
 import { Reveal } from "@/components/ui/Reveal";
+import { isWeekend } from "@/lib/pricing";
 
 export const metadata: Metadata = {
   title: "Browse Vehicles",
@@ -67,39 +68,51 @@ export default async function VehiclesPage(
           <div className="mt-8"><EmptyState title="No vehicles found" body="Try a different vehicle type." /></div>
         ) : (
           <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {vehicles.map((v, i) => (
-              <Reveal key={v.id} delay={(i % 6) * 60}>
-                <Link href={`/vehicles/${v.slug}${searchParams.pickup ? `?pickup=${searchParams.pickup}&return=${searchParams.return ?? ""}` : ""}`} className="group card block overflow-hidden transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lift">
-                  <div className="relative h-44 overflow-hidden bg-ink-100">
-                    {v.primary_photo && <Image src={v.primary_photo} alt={v.name} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-110" sizes="(max-width:768px) 100vw, 33vw" />}
-                    <div className="absolute inset-0 bg-gradient-to-t from-ink-950/50 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" aria-hidden />
-                    <span className="absolute left-3 top-3 badge bg-white/95 text-ink-800 shadow-sm">{v.category_name}</span>
-                    <span className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${(v.available_units ?? v.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                      {(v.available_units ?? v.total_units ?? 1) > 0 ? `${v.available_units ?? v.total_units} Left` : "Pending Approval"}
-                    </span>
-                  </div>
-                  <div className="p-5">
-                    <h3 className="font-display text-lg font-semibold text-ink-900">{v.name}</h3>
-                    <p className="mt-1 text-xs text-ink-500">{v.fuel_type} · {v.seats} seats · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day`}</p>
-                    <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-700">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
-                      {formatINR(v.deposit)} refundable deposit
-                    </p>
-                    <div className="mt-4 flex items-end justify-between border-t border-ink-100 pt-4">
-                      <p className="text-sm text-ink-500">
-                        <span className="font-display text-xl font-semibold text-ink-900">{formatINR(v.rate_24h)}</span>
-                        <span className="text-xs">/24h</span>
-                      </p>
-                      <span className="flex items-center gap-1 text-sm font-semibold text-brand-700 transition group-hover:gap-2">
-                        View
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            {vehicles.map((v, i) => {
+              const isOutOfStock = (v.available_units ?? v.total_units ?? 0) <= 0;
+              const weekendActive = isWeekend();
+
+              return (
+                <Reveal key={v.id} delay={(i % 6) * 60}>
+                  <Link href={`/vehicles/${v.slug}${searchParams.pickup ? `?pickup=${searchParams.pickup}&return=${searchParams.return ?? ""}` : ""}`} className={`group card block overflow-hidden transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lift ${isOutOfStock ? "opacity-85" : ""}`}>
+                    <div className="relative h-44 overflow-hidden bg-ink-100">
+                      {v.primary_photo && <Image src={v.primary_photo} alt={v.name} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-110" sizes="(max-width:768px) 100vw, 33vw" />}
+                      <div className="absolute inset-0 bg-gradient-to-t from-ink-950/50 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" aria-hidden />
+                      <span className="absolute left-3 top-3 badge bg-white/95 text-ink-800 shadow-sm">{v.category_name}</span>
+                      <span className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${isOutOfStock ? "bg-rose-600 text-white" : (v.available_units ?? v.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                        {isOutOfStock ? "Out of Stock" : `${v.available_units ?? v.total_units} Left`}
                       </span>
                     </div>
-                  </div>
-                </Link>
-              </Reveal>
-            ))}
+                    <div className="p-5">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-display text-lg font-semibold text-ink-900">{v.name}</h3>
+                        {weekendActive && (
+                          <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
+                            +₹50 Weekend
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-ink-500">{v.fuel_type} · {v.seats} seats · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day`}</p>
+                      <p className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-700">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
+                        {formatINR(v.deposit)} refundable deposit
+                      </p>
+                      <div className="mt-4 flex items-end justify-between border-t border-ink-100 pt-4">
+                        <p className="text-sm text-ink-500">
+                          <span className="font-display text-xl font-semibold text-ink-900">{formatINR(v.rate_24h)}</span>
+                          <span className="text-xs">/24h</span>
+                        </p>
+                        <span className={`flex items-center gap-1 text-sm font-semibold transition group-hover:gap-2 ${isOutOfStock ? "text-rose-600" : "text-brand-700"}`}>
+                          {isOutOfStock ? "Out of Stock" : "View"}
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                        </span>
+                      </div>
+                    </div>
+                  </Link>
+                </Reveal>
+              );
+            })}
           </div>
         )}
       </section>
