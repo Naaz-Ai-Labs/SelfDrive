@@ -69,23 +69,57 @@ export function getDb(): any {
 
   try {
     const vehCount = db.prepare("SELECT COUNT(*) AS c FROM vehicles").get() as { c: number } | undefined;
-    if ((!vehCount || vehCount.c === 0) && !isHydrating) {
-      isHydrating = true;
-      import("./hydrate-db")
-        .then(({ hydrateSQLiteFromSupabase }) => {
-          hydrateSQLiteFromSupabase(db)
-            .then((success) => {
-              if (!success) {
-                import("./seed").then(({ seed }) => seed()).catch(() => {});
-              }
-            })
-            .catch(() => {});
-        })
-        .catch(() => {});
+    if (!vehCount || vehCount.c === 0) {
+      seedSync(db);
+      if (!isHydrating) {
+        isHydrating = true;
+        import("./hydrate-db")
+          .then(({ hydrateSQLiteFromSupabase }) => {
+            hydrateSQLiteFromSupabase(db).catch(() => {});
+          })
+          .catch(() => {});
+      }
     }
   } catch {}
 
   return db;
+}
+
+function seedSync(targetDb: any) {
+  try {
+    targetDb.exec(`
+      INSERT OR IGNORE INTO branches (id, name, city, address, phone, active) VALUES
+      (1, 'Sakleshpura Main Branch', 'Sakleshpura', 'BM Road, near Bus Stand, Sakleshpura', '+919845210001', 1),
+      (2, 'Hassan City Branch', 'Hassan', 'BBM Road, Hassan', '+919845210002', 1);
+
+      INSERT OR IGNORE INTO vehicle_categories (id, slug, name, kind, short_desc, description, active, sort) VALUES
+      (1, 'cars', 'Cars', 'car', 'Self-drive hatchbacks, sedans & SUVs', 'Well maintained self-drive car fleet.', 1, 1),
+      (2, 'bikes', 'Bikes', 'bike', 'Cruisers and commuter bikes', 'Well-serviced bikes for trips.', 1, 2),
+      (3, 'scooters', 'Scooters', 'scooter', 'Automatic scooters for local travel', 'Simple automatic scooters.', 1, 3),
+      (4, 'tempo-traveller', 'Tempo Traveller', 'van', 'Chauffeur driven tempo traveller', 'Group sightseeing trips.', 1, 4);
+
+      INSERT OR IGNORE INTO vehicles (id, slug, name, brand, model, year, category_id, branch_id, registration_no, cc, fuel_type, transmission, seats, mileage, included_km, extra_km_rate, rate_12h, rate_24h, hourly_rate, weekend_rate_24h, deposit, late_fee_per_hour, total_units, available_units, description, status, active) VALUES
+      (1, 'honda-dio', 'Honda Dio', 'Honda', 'Dio', 2023, 3, 1, 'KA-46-E-1234', 110, 'Petrol', 'Automatic', 2, '45 km/l', 100, 4, 500, 900, 100, 950, 1000, 100, 3, 3, 'Light, easy-to-ride scooter.', 'available', 1),
+      (2, 'honda-activa', 'Honda Activa 6G', 'Honda', 'Activa 6G', 2023, 3, 1, 'KA-46-E-5678', 110, 'Petrol', 'Automatic', 2, '50 km/l', 100, 4, 500, 900, 100, 950, 1000, 100, 4, 4, 'Automatic, light and simple to ride.', 'available', 1),
+      (3, 'tvs-ronin', 'TVS Ronin 225', 'TVS', 'Ronin', 2023, 2, 1, 'KA-46-M-9012', 225, 'Petrol', 'Manual', 2, '35 km/l', 100, 4, 1000, 1800, 150, 1800, 1000, 120, 2, 2, 'Modern cruiser styling.', 'available', 1),
+      (4, 'honda-cb200x', 'Honda CB200X', 'Honda', 'CB200X', 2023, 2, 1, 'KA-46-M-3456', 184, 'Petrol', 'Manual', 2, '38 km/l', 100, 4, 1000, 1800, 150, 1800, 1000, 120, 2, 2, 'Adventure-styled bike.', 'available', 1),
+      (5, 'maruti-baleno', 'Maruti Suzuki Baleno', 'Maruti Suzuki', 'Baleno', 2023, 1, 1, 'KA-46-C-7890', 1197, 'Petrol', 'Manual', 5, '21 km/l', 300, 8, 2000, 3500, 200, 3500, 2000, 150, 2, 2, 'Comfortable premium hatchback.', 'available', 1),
+      (7, 'tempo-traveller-12', 'Force Tempo Traveller (12 Seater)', 'Force Motors', 'Traveller', 2023, 4, 1, 'KA-46-V-1212', 2596, 'Diesel', 'Manual', 12, '12 km/l', 999, 0, 8000, 12000, 500, 12000, 2000, 250, 1, 1, 'Chauffeur driven 12 seater.', 'available', 1);
+
+      INSERT OR IGNORE INTO vehicle_photos (vehicle_id, photo_url, is_primary) VALUES
+      (1, '/vehicles/honda-dio.avif', 1),
+      (2, '/vehicles/honda-activa.webp', 1),
+      (3, '/vehicles/tvs-ronin.avif', 1),
+      (4, '/vehicles/honda-cb200x.jpg', 1),
+      (5, '/vehicles/baleno-manual.avif', 1),
+      (7, '/vehicles/tempo-traveller.jpg', 1);
+
+      INSERT OR IGNORE INTO terms_versions (version, content, is_active) VALUES
+      (1, '["Valid original Driving Licence & Government ID (Aadhaar/Passport) mandatory for vehicle handover.","Included drive limit per day. Driving beyond this limit is charged per KM.","Fuel policy: Return the vehicle with the same fuel level as provided at pickup.","Security deposit is fully refundable upon safe vehicle return inspection.","Late returns exceeding 1 minute add full 24-hour additional day rental charges."]', 1);
+    `);
+  } catch (err) {
+    console.warn("seedSync error:", err);
+  }
 }
 
 const SCHEMA = `
