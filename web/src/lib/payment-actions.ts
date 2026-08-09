@@ -3,7 +3,7 @@
 import { gatewayPost } from "./gateway";
 
 export async function createBookingPaymentOrder(bookingId: number): Promise<
-  { ok: true; orderId: string; amountPaise: number; keyId: string; paymentId: number; paymentNo: string; businessName: string } | { ok: false; error: string }
+  { ok: true; orderId: string; amountPaise: number; keyId: string; paymentId: number; paymentNo: string; notes?: Record<string, string>; businessName: string } | { ok: false; error: string }
 > {
   return gatewayPost("/api/gateway/v1/payments/order", { bookingId });
 }

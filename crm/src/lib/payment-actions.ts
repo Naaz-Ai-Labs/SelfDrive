@@ -14,7 +14,7 @@ import { toPaise, syncPaymentToSupabase } from "./supabase-sync";
  * confirmation step and from the customer portal's "Pay now".
  */
 export async function createBookingPaymentOrder(bookingId: number): Promise<
-  { ok: true; orderId: string; amountPaise: number; keyId: string; paymentId: number; paymentNo: string; businessName: string } | { ok: false; error: string }
+  { ok: true; orderId: string; amountPaise: number; keyId: string; paymentId: number; paymentNo: string; notes?: Record<string, string>; businessName: string } | { ok: false; error: string }
 > {
   if (!razorpayConfigured()) {
     return { ok: false, error: "Online payment isn't set up yet. Our team will contact you on WhatsApp to arrange payment." };
@@ -52,14 +52,25 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
     db.prepare("UPDATE payments SET breakdown_json = ? WHERE id = ?").run(breakdownJson, payment.id);
   }
 
-  const order = await createRazorpayOrder({ amountInRupees: payment.amount, receipt: payment.payment_no, notes: { booking_no: String(booking.booking_no), payment_no: payment.payment_no } });
+  const baseAmount = Number(booking.total_amount);
+  const depositAmount = Number(booking.deposit_amount);
+  const gstAmount = Math.round(baseAmount * 0.06);
+
+  const rzpNotes: Record<string, string> = {
+    "Booking No": String(booking.booking_no),
+    "Rental Base": `₹${baseAmount.toLocaleString("en-IN")}`,
+    "Pickup Fee": `₹250`,
+    "GST (6%)": `₹${gstAmount.toLocaleString("en-IN")}`,
+    "Refundable Deposit": `₹${depositAmount.toLocaleString("en-IN")}`,
+  };
+
+  const order = await createRazorpayOrder({ amountInRupees: payment.amount, receipt: payment.payment_no, notes: rzpNotes });
   if (!order.ok) return { ok: false, error: order.error };
 
   db.prepare("UPDATE payments SET gateway_ref = ?, razorpay_order_id = ?, amount_paise = ? WHERE id = ?").run(order.orderId, order.orderId, duePaise, payment.id);
 
   // Sync transaction to Supabase
   syncPaymentToSupabase(payment.id).catch(() => {});
-
 
   return {
     ok: true,
@@ -68,6 +79,7 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
     keyId: razorpayKeyId()!,
     paymentId: payment.id,
     paymentNo: payment.payment_no,
+    notes: rzpNotes,
     businessName: "Darshh Holiday",
   };
 }

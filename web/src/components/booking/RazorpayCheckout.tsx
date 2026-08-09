@@ -73,8 +73,14 @@ export function RazorpayCheckout({
       amount: order.amountPaise,
       currency: "INR",
       name: order.businessName,
-      description: `Booking payment — ${order.paymentNo}`,
+      description: `Rental + GST + Deposit — ${order.paymentNo}`,
       order_id: order.orderId,
+      notes: (order as { notes?: Record<string, string> }).notes ?? {
+        "Base Rental": quote ? `₹${quote.baseAmount.toLocaleString("en-IN")}` : "—",
+        "Pickup Charge": "₹250",
+        "GST (6%)": quote ? `₹${quote.gstAmount.toLocaleString("en-IN")}` : "—",
+        "Refundable Deposit": quote ? `₹${quote.depositAmount.toLocaleString("en-IN")}` : "—",
+      },
       prefill: { name: customerName, contact: customerPhone, email: customerEmail || undefined },
       theme: { color: "#f2b705" },
       handler: async (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
