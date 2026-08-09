@@ -187,13 +187,9 @@ export async function POST(req: NextRequest) {
     maxAge: 7 * 24 * 3600,
   };
 
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, token, cookieOptions);
-
   const res = NextResponse.json({
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
   });
   res.cookies.set(SESSION_COOKIE, token, cookieOptions);
-  console.log("[AUTH_DEBUG] Login response returning with Set-Cookie header (secure:", isProd, ")");
   return res;
 }
