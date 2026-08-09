@@ -3,13 +3,6 @@ import path from "node:path";
 import os from "node:os";
 import bcrypt from "bcryptjs";
 
-let DatabaseSyncClass: any = null;
-try {
-  DatabaseSyncClass = require("node:sqlite").DatabaseSync;
-} catch {
-  // node:sqlite module not present in older Node versions
-}
-
 export type DatabaseSync = any;
 
 export function getWritableDataDir(): string {
@@ -38,16 +31,37 @@ export function getWritableUploadsDir(): string {
 
 let db: any = null;
 
+function createDatabaseInstance(dbPath: string): any {
+  const req = eval("require");
+  try {
+    const BetterSqlite = req("better-sqlite3");
+    return new BetterSqlite(dbPath);
+  } catch {
+    try {
+      const NodeSqlite = req("node:sqlite").DatabaseSync;
+      return new NodeSqlite(dbPath);
+    } catch {
+      try {
+        const BetterSqlite = req("better-sqlite3");
+        return new BetterSqlite(":memory:");
+      } catch (err: any) {
+        throw new Error("Failed to initialize SQLite database engine: " + (err?.message || err));
+      }
+    }
+  }
+}
+
 export function getDb(): any {
   if (db) return db;
-  if (!DatabaseSyncClass) {
-    throw new Error("node:sqlite module is unavailable in this Node environment. Node 22+ is required.");
-  }
   const dataDir = getWritableDataDir();
   const dbPath = path.join(dataDir, "darshan.db");
-  db = new DatabaseSyncClass(dbPath);
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("PRAGMA foreign_keys = ON;");
+  db = createDatabaseInstance(dbPath);
+  try {
+    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("PRAGMA foreign_keys = ON;");
+  } catch {
+    // PRAGMA journal_mode WAL may be ignored in memory mode
+  }
   applySchema(db);
   ensureDefaultUsers(db);
   return db;
