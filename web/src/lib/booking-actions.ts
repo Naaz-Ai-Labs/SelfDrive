@@ -127,15 +127,56 @@ export async function submitBooking(input: {
 }
 
 export async function getAvailableVehicles(kind: string | null, pickupAt: string | null, returnAt: string | null): Promise<Vehicle[]> {
-  const qs = new URLSearchParams();
-  if (kind) qs.set("kind", kind);
-  if (pickupAt) qs.set("pickupAt", pickupAt);
-  if (returnAt) qs.set("returnAt", returnAt);
-  const res = await gatewayGet<{ vehicles: Vehicle[] }>(`/api/gateway/v1/booking/available?${qs.toString()}`);
-  if (res && Array.isArray(res.vehicles) && res.vehicles.length > 0) {
-    return res.vehicles;
+  // 1. Primary CRM Gateway API Request
+  try {
+    const qs = new URLSearchParams();
+    if (kind) qs.set("kind", kind);
+    if (pickupAt) qs.set("pickupAt", pickupAt);
+    if (returnAt) qs.set("returnAt", returnAt);
+    const res = await gatewayGet<{ vehicles: Vehicle[] }>(`/api/gateway/v1/booking/available?${qs.toString()}`);
+    if (res && Array.isArray(res.vehicles) && res.vehicles.length > 0) {
+      return res.vehicles;
+    }
+  } catch (err) {
+    console.warn("Gateway available vehicles fetch warning:", err);
   }
-  // Fallback to static/cached fleet data if gateway fails or returns empty
+
+  // 2. Direct Supabase PostgreSQL Query Fallback
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseKey =
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    "";
+
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      let query = supabase.from("vehicles").select("*").eq("active", 1);
+
+      if (kind) {
+        query = query.eq("category_kind", kind);
+      }
+
+      const { data: supaVehicles, error } = await query;
+      if (!error && Array.isArray(supaVehicles) && supaVehicles.length > 0) {
+        return supaVehicles.map((v: any) => ({
+          ...v,
+          category_name: v.category_name || "Vehicle",
+          category_kind: v.category_kind || "car",
+          category_slug: v.category_slug || "cars",
+          photos: Array.isArray(v.photos) ? v.photos : [v.primary_photo || "/vehicles/baleno-manual.avif"],
+          primary_photo: v.primary_photo || (Array.isArray(v.photos) ? v.photos[0] : "/vehicles/baleno-manual.avif"),
+          available_units: v.available_units ?? v.total_units ?? 1,
+        }));
+      }
+    } catch (supaErr) {
+      console.warn("Direct Supabase vehicles fetch warning:", supaErr);
+    }
+  }
+
+  // 3. Fallback to static fleet data
   const { getVehicles } = await import("@/lib/data");
   const all = await getVehicles();
   return kind ? all.filter((v) => v.category_kind === kind) : all;
