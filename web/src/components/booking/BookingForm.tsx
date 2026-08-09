@@ -526,7 +526,18 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               ].map(([kind, label]) => (
                 <label key={kind} className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-5 text-center text-sm text-ink-500 hover:border-brand-500">
                   {documents[kind]?.url ? <span className="font-semibold text-emerald-700">✓ {label.replace(" *", "")} uploaded</span> : <span>{uploading === kind ? "Uploading…" : `Upload ${label}`}</span>}
-                  <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && upload(kind, e.target.files[0])} />
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        upload(kind, file).catch(console.error);
+                        e.target.value = "";
+                      }
+                    }}
+                  />
                 </label>
               ))}
             </div>

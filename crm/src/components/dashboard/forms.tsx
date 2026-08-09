@@ -236,7 +236,18 @@ export function InspectionForm({ bookingId, kind }: { bookingId: number; kind: "
           {PHOTO_SIDES.map((side) => (
             <label key={side} className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-3 text-center text-xs capitalize text-ink-500 hover:border-brand-500">
               {photos[side] ? <span className="font-semibold text-emerald-700">✓ {side}</span> : <span>{uploading === side ? "Uploading…" : side}</span>}
-              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && upload(side, e.target.files[0])} />
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    upload(side, file).catch(console.error);
+                    e.target.value = "";
+                  }
+                }}
+              />
             </label>
           ))}
         </div>
