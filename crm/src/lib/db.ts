@@ -412,6 +412,7 @@ CREATE TABLE IF NOT EXISTS payments (
   status TEXT NOT NULL DEFAULT 'Pending',
   notes TEXT,
   receipt_no TEXT,
+  breakdown_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_payments_booking ON payments(booking_id);
@@ -656,6 +657,7 @@ function applySchema(database: DatabaseSync) {
   try { database.exec("ALTER TABLE payments ADD COLUMN razorpay_order_id TEXT;"); } catch {}
   try { database.exec("ALTER TABLE payments ADD COLUMN razorpay_payment_id TEXT;"); } catch {}
   try { database.exec("ALTER TABLE payments ADD COLUMN razorpay_signature TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN breakdown_json TEXT;"); } catch {}
   try { database.exec("ALTER TABLE payment_events ADD COLUMN razorpay_order_id TEXT;"); } catch {}
   try { database.exec("ALTER TABLE payment_events ADD COLUMN razorpay_payment_id TEXT;"); } catch {}
 

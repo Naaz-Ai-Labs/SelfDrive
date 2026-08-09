@@ -34,12 +34,22 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
     .prepare("SELECT * FROM payments WHERE booking_id = ? AND status = 'Pending' AND kind = 'full' ORDER BY id DESC LIMIT 1")
     .get(bookingId) as { id: number; payment_no: string; amount: number; amount_paise: number } | undefined;
 
+  const breakdownJson = JSON.stringify({
+    baseAmount: Number(booking.total_amount),
+    depositAmount: Number(booking.deposit_amount),
+    pickupFee: 250,
+    gstAmount: Math.round(Number(booking.total_amount) * 0.06),
+    totalAmount: due,
+  });
+
   if (!payment) {
     const paymentNo = nextNumber("PY", null);
     const result = db
-      .prepare("INSERT INTO payments (payment_no, booking_id, customer_id, amount, amount_paise, kind, status, notes) VALUES (?, ?, ?, ?, ?, 'full', 'Pending', 'Rental total + deposit')")
-      .run(paymentNo, bookingId, booking.customer_id as number | null, due, duePaise);
+      .prepare("INSERT INTO payments (payment_no, booking_id, customer_id, amount, amount_paise, kind, status, notes, breakdown_json) VALUES (?, ?, ?, ?, ?, 'full', 'Pending', 'Rental total + deposit', ?)")
+      .run(paymentNo, bookingId, booking.customer_id as number | null, due, duePaise, breakdownJson);
     payment = { id: Number(result.lastInsertRowid), payment_no: paymentNo, amount: due, amount_paise: duePaise };
+  } else {
+    db.prepare("UPDATE payments SET breakdown_json = ? WHERE id = ?").run(breakdownJson, payment.id);
   }
 
   const order = await createRazorpayOrder({ amountInRupees: payment.amount, receipt: payment.payment_no, notes: { booking_no: String(booking.booking_no), payment_no: payment.payment_no } });

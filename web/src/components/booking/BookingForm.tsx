@@ -293,6 +293,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 customerName={contact.name}
                 customerPhone={contact.phone}
                 customerEmail={contact.email}
+                quote={quote}
                 onPaid={() => setPaid(true)}
                 onPayLater={() => setPaid(true)}
               />
