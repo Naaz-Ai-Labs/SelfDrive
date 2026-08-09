@@ -139,27 +139,38 @@ export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle
   const { vehicles } = await getContent();
   return vehicles
     .filter((v) => (!filters.kind || v.category_kind === filters.kind) && (!filters.categorySlug || v.category_slug === filters.categorySlug))
-    .map((v) => ({
-      ...v,
-      rate_24h: getDynamicRate24h(v.rate_24h),
-    }));
+    .map((v) => {
+      const baseRate = Number(v.rate_24h ?? 0);
+      const weekendRate = Math.max(baseRate + 50, Number(v.weekend_rate_24h ?? (baseRate + 50)));
+      return {
+        ...v,
+        rate_24h: baseRate,
+        weekend_rate_24h: weekendRate,
+      };
+    });
 }
 
 export async function getVehicle(slug: string): Promise<Vehicle | null> {
   const v = (await getContent()).vehicles.find((v) => v.slug === slug) ?? null;
   if (!v) return null;
+  const baseRate = Number(v.rate_24h ?? 0);
+  const weekendRate = Math.max(baseRate + 50, Number(v.weekend_rate_24h ?? (baseRate + 50)));
   return {
     ...v,
-    rate_24h: getDynamicRate24h(v.rate_24h),
+    rate_24h: baseRate,
+    weekend_rate_24h: weekendRate,
   };
 }
 
 export async function getVehicleById(id: number): Promise<Vehicle | null> {
   const v = (await getContent()).vehicles.find((v) => v.id === id) ?? null;
   if (!v) return null;
+  const baseRate = Number(v.rate_24h ?? 0);
+  const weekendRate = Math.max(baseRate + 50, Number(v.weekend_rate_24h ?? (baseRate + 50)));
   return {
     ...v,
-    rate_24h: getDynamicRate24h(v.rate_24h),
+    rate_24h: baseRate,
+    weekend_rate_24h: weekendRate,
   };
 }
 

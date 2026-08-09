@@ -73,11 +73,12 @@ function attachPhotos(vehicle: Record<string, unknown>): Vehicle {
   const availableUnits = Math.max(0, totalUnits - bookedCount);
 
   const baseRate24h = Number(vehicle.rate_24h ?? 0);
-  const liveRate24h = getDynamicRate24h(baseRate24h);
+  const weekendRate24h = Math.max(baseRate24h + 50, Number(vehicle.weekend_rate_24h ?? (baseRate24h + 50)));
 
   return {
     ...(vehicle as unknown as Vehicle),
-    rate_24h: liveRate24h,
+    rate_24h: baseRate24h,
+    weekend_rate_24h: weekendRate24h,
     total_units: totalUnits,
     available_units: availableUnits,
     photos: photos.map((p) => p.url),

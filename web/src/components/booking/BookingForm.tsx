@@ -421,31 +421,42 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             <p className="text-sm text-ink-500">{days} day{days > 1 ? "s" : ""}, from {formatDate(pickupAt)} to {formatDate(returnAt)}.</p>
             {loadingVehicles && <p className="text-sm text-ink-400">Checking availability…</p>}
             {!loadingVehicles && availableVehicles.length === 0 && <p className="text-sm text-ink-400">No vehicles available for this period. Try different dates.</p>}
-            <div className="grid gap-3 sm:grid-cols-2">
-              {availableVehicles.map((v) => (
-                <button
-                  type="button"
-                  key={v.id}
-                  onClick={() => setVehicleId(v.id)}
-                  className={`rounded-xl border p-4 text-left transition ${vehicleId === v.id ? "border-brand-500 bg-brand-50" : "border-ink-100 hover:border-ink-300"}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="font-semibold text-ink-900">{v.name}</p>
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${(v.available_units ?? v.total_units) <= 1 ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                      {(v.available_units ?? v.total_units ?? 1) > 0 ? `${v.available_units ?? v.total_units} Left` : "Pending Approval"}
-                    </span>
-                  </div>
-                  <p className="text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day (Extra KM: ₹${(v.category_kind === "bike" || v.category_kind === "scooter") ? 4 : v.extra_km_rate ?? 8}/km)`}</p>
-                  <p className="mt-2 font-display text-lg font-semibold text-ink-900">
-                    {formatINR(v.rate_24h)}<span className="text-xs font-normal text-ink-500">/day weekday</span>
-                  </p>
-                  {v.weekend_rate_24h && v.weekend_rate_24h !== v.rate_24h && (
-                    <p className="text-xs text-ink-500">{formatINR(v.weekend_rate_24h)}/day weekend</p>
-                  )}
-                </button>
-              ))}
-            </div>
+            {(() => {
+              const lockedVehicleId = search.get("vehicle") ? Number(search.get("vehicle")) : null;
+              const vehiclesToDisplay = lockedVehicleId
+                ? availableVehicles.filter((v) => v.id === lockedVehicleId)
+                : availableVehicles;
+
+              return (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {vehiclesToDisplay.map((v) => (
+                    <button
+                      type="button"
+                      key={v.id}
+                      onClick={() => setVehicleId(v.id)}
+                      className={`rounded-xl border p-4 text-left transition ${vehicleId === v.id ? "border-brand-500 bg-brand-50 shadow-sm" : "border-ink-100 hover:border-ink-300"}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold text-ink-900">{v.name}</p>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${(v.available_units ?? v.total_units ?? 0) <= 0 ? "bg-rose-100 text-rose-900 border border-rose-300" : (v.available_units ?? v.total_units) <= 1 ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                          {(v.available_units ?? v.total_units ?? 0) <= 0 ? "Out of Stock" : `${v.available_units ?? v.total_units} Left`}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day (Extra KM: ₹${(v.category_kind === "bike" || v.category_kind === "scooter") ? 4 : v.extra_km_rate ?? 8}/km)`}</p>
+                      <div className="mt-3 flex items-baseline gap-2 flex-wrap">
+                        <p className="font-display text-lg font-bold text-ink-900">
+                          {formatINR(v.rate_24h)}<span className="text-xs font-normal text-ink-500">/day weekday</span>
+                        </p>
+                        <p className="text-xs font-semibold text-amber-800 bg-amber-500/15 px-2 py-0.5 rounded">
+                          {formatINR(v.weekend_rate_24h ?? (v.rate_24h + 50))}/day weekend
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
             {errors.vehicle && <p className="field-error">{errors.vehicle}</p>}
             {quote && selectedVehicle && (
               <div className="rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm">
