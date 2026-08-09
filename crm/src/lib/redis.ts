@@ -1,21 +1,24 @@
-import { Redis } from "@upstash/redis";
-
-// In-Memory Fallback Cache Store (for environments without Upstash Redis credentials)
+// In-Memory Fallback Cache Store (for environments without Upstash Redis credentials or package)
 const memoryCache = new Map<string, { value: any; expiresAt: number }>();
 
-let redisClient: Redis | null = null;
+let redisClient: any = null;
+let redisAttempted = false;
 
-function getRedis(): Redis | null {
-  if (redisClient) return redisClient;
+async function getRedis(): Promise<any | null> {
+  if (redisAttempted) return redisClient;
+  redisAttempted = true;
 
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.REDIS_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
 
   if (url && token) {
     try {
+      const { Redis } = await import("@upstash/redis");
       redisClient = new Redis({ url, token });
       return redisClient;
-    } catch {
+    } catch (err: any) {
+      console.warn("⚠️ @upstash/redis not available or failed to initialize, using in-memory cache fallback.");
+      redisClient = null;
       return null;
     }
   }
@@ -26,12 +29,12 @@ function getRedis(): Redis | null {
  * Retrieves a cached value from Upstash Redis (or in-memory fallback cache).
  */
 export async function cacheGet<T>(key: string): Promise<T | null> {
-  const redis = getRedis();
+  const redis = await getRedis();
 
   if (redis) {
     try {
-      const data = await redis.get<T>(key);
-      if (data !== null) return data;
+      const data = await redis.get(key);
+      if (data !== null && data !== undefined) return data as T;
     } catch (err: any) {
       console.warn("⚠️ Upstash Redis cacheGet error:", err?.message || err);
     }
@@ -54,7 +57,7 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
  * Stores a value in Upstash Redis (or in-memory fallback cache) with a TTL in seconds.
  */
 export async function cacheSet<T>(key: string, value: T, ttlSeconds = 3600): Promise<void> {
-  const redis = getRedis();
+  const redis = await getRedis();
 
   if (redis) {
     try {
@@ -76,7 +79,7 @@ export async function cacheSet<T>(key: string, value: T, ttlSeconds = 3600): Pro
  * Invalidates (deletes) a cache key or keys matching a pattern.
  */
 export async function cacheInvalidate(key: string): Promise<void> {
-  const redis = getRedis();
+  const redis = await getRedis();
 
   if (redis) {
     try {
