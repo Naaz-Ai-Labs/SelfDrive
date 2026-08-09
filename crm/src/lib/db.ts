@@ -686,28 +686,25 @@ function applySchema(database: DatabaseSync) {
 
 function ensureDefaultUsers(database: DatabaseSync) {
   try {
-    const row = database.prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number } | undefined;
-    if (!row || row.c === 0) {
-      const defaultUsers = [
-        { name: "Administrator", email: "admin@darshhrentals.in", phone: "+917676875595", pass: "Admin@123", role: "admin" },
-        { name: "Branch Manager", email: "manager@darshhrentals.in", phone: "+917676875596", pass: "Manager@123", role: "manager" },
-        { name: "Handover Staff", email: "staff@darshhrentals.in", phone: "+917676875597", pass: "Staff@123", role: "staff" },
-        { name: "Accounts", email: "finance@darshhrentals.in", phone: "+917676875598", pass: "Finance@123", role: "finance" },
-        { name: "Darshan Admin", email: "admin@darshh.com", phone: "+919876500001", pass: "AdminPassword123!", role: "admin" },
-        { name: "Rahul Sharma", email: "rahul.staff@darshh.com", phone: "+919876500002", pass: "StaffPassword123!", role: "staff" },
-        { name: "Priya Patel", email: "priya.staff@darshh.com", phone: "+919876500003", pass: "StaffPassword123!", role: "staff" },
-        { name: "Amit Kumar", email: "amit.staff@darshh.com", phone: "+919876500004", pass: "StaffPassword123!", role: "staff" },
-        { name: "Neha Singh", email: "neha.staff@darshh.com", phone: "+919876500005", pass: "StaffPassword123!", role: "staff" },
-      ];
+    const defaultUsers = [
+      { name: "Administrator", email: "admin@darshhrentals.in", phone: "+917676875595", pass: "Admin@123", role: "admin" },
+      { name: "Branch Manager", email: "manager@darshhrentals.in", phone: "+917676875596", pass: "Manager@123", role: "manager" },
+      { name: "Handover Staff", email: "staff@darshhrentals.in", phone: "+917676875597", pass: "Staff@123", role: "staff" },
+      { name: "Accounts", email: "finance@darshhrentals.in", phone: "+917676875598", pass: "Finance@123", role: "finance" },
+      { name: "Darshan Admin", email: "admin@darshh.com", phone: "+919876500001", pass: "AdminPassword123!", role: "admin" },
+      { name: "Rahul Sharma", email: "rahul.staff@darshh.com", phone: "+919876500002", pass: "StaffPassword123!", role: "staff" },
+      { name: "Priya Patel", email: "priya.staff@darshh.com", phone: "+919876500003", pass: "StaffPassword123!", role: "staff" },
+      { name: "Amit Kumar", email: "amit.staff@darshh.com", phone: "+919876500004", pass: "StaffPassword123!", role: "staff" },
+      { name: "Neha Singh", email: "neha.staff@darshh.com", phone: "+919876500005", pass: "StaffPassword123!", role: "staff" },
+    ];
 
-      for (const u of defaultUsers) {
-        const hash = bcrypt.hashSync(u.pass, 10);
-        database
-          .prepare(
-            "INSERT OR IGNORE INTO users (name, email, phone, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?, 1)"
-          )
-          .run(u.name, u.email.toLowerCase().trim(), u.phone, hash, u.role);
-      }
+    for (const u of defaultUsers) {
+      const hash = bcrypt.hashSync(u.pass, 10);
+      database
+        .prepare(
+          "INSERT OR IGNORE INTO users (name, email, phone, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?, 1)"
+        )
+        .run(u.name, u.email.toLowerCase().trim(), u.phone, hash, u.role);
     }
   } catch {
     // Ignore seeding warning if initializing
