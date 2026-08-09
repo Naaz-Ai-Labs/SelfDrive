@@ -223,3 +223,46 @@ export function getActiveTermsVersion(): { id: number; version: number; content:
     return { id: row.id, version: row.version, content: [] };
   }
 }
+
+// ---- Redis Caching Layer Wrappers ----
+import { cacheGet, cacheSet } from "./redis";
+
+export async function getVehiclesCached(filters: VehicleFilters = {}, onlyActive = true): Promise<Vehicle[]> {
+  const cacheKey = `vehicles:${JSON.stringify(filters)}:${onlyActive}`;
+  const cached = await cacheGet<Vehicle[]>(cacheKey);
+  if (cached) return cached;
+
+  const fresh = getVehicles(filters, onlyActive);
+  await cacheSet(cacheKey, fresh, 600);
+  return fresh;
+}
+
+export async function getVehicleCategoriesCached(onlyActive = true): Promise<VehicleCategory[]> {
+  const cacheKey = `vehicle_categories:${onlyActive}`;
+  const cached = await cacheGet<VehicleCategory[]>(cacheKey);
+  if (cached) return cached;
+
+  const fresh = getVehicleCategories(onlyActive);
+  await cacheSet(cacheKey, fresh, 3600);
+  return fresh;
+}
+
+export async function getTestimonialsCached(): Promise<Array<Record<string, unknown>>> {
+  const cacheKey = "testimonials:active";
+  const cached = await cacheGet<Array<Record<string, unknown>>>(cacheKey);
+  if (cached) return cached;
+
+  const fresh = getTestimonials();
+  await cacheSet(cacheKey, fresh, 3600);
+  return fresh;
+}
+
+export async function getFaqsCached(): Promise<Array<Record<string, unknown>>> {
+  const cacheKey = "faqs:active";
+  const cached = await cacheGet<Array<Record<string, unknown>>>(cacheKey);
+  if (cached) return cached;
+
+  const fresh = getFaqs();
+  await cacheSet(cacheKey, fresh, 3600);
+  return fresh;
+}

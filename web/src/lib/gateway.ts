@@ -46,8 +46,24 @@ async function gatewayFetch<T>(path: string, init: RequestInit & FetchOptions = 
   }
 }
 
-export function gatewayGet<T>(path: string, opts: FetchOptions = {}) {
-  return gatewayFetch<T>(path, { method: "GET", ...opts });
+import { cacheGet, cacheSet } from "./redis";
+
+export async function gatewayGet<T>(path: string, opts: FetchOptions = {}): Promise<T> {
+  const isCacheable = !opts.auth && (path.includes("/content") || path.includes("/vehicle"));
+  const cacheKey = `web:gateway:${path}`;
+
+  if (isCacheable) {
+    const cached = await cacheGet<T>(cacheKey);
+    if (cached) return cached;
+  }
+
+  const result = await gatewayFetch<T>(path, { method: "GET", ...opts });
+
+  if (isCacheable && result && typeof result === "object" && !("error" in (result as any))) {
+    await cacheSet(cacheKey, result, 600);
+  }
+
+  return result;
 }
 
 export function gatewayPost<T>(path: string, body: unknown, opts: FetchOptions = {}) {
