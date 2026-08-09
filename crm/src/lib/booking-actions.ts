@@ -157,7 +157,27 @@ export async function submitBooking(input: {
 export async function getAvailableVehicles(kind: string | null, pickupAt: string | null, returnAt: string | null) {
   const vehicles = getVehicles({ kind: kind || undefined, onlyAvailable: true });
   if (!pickupAt || !returnAt) return vehicles;
-  return vehicles.filter((v) => checkVehicleAvailable(v.id, pickupAt, returnAt));
+
+  const db = getDb();
+  return vehicles
+    .map((v) => {
+      const clashes = db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM bookings
+           WHERE vehicle_id = ?
+             AND status NOT IN ('Cancelled', 'Completed', 'Draft')
+             AND NOT (return_at <= ? OR pickup_at >= ?)`
+        )
+        .get(v.id, pickupAt, returnAt) as { c: number } | undefined;
+
+      const taken = clashes?.c ?? 0;
+      const availableUnits = Math.max(0, (v.total_units ?? 1) - taken);
+      return {
+        ...v,
+        available_units: availableUnits,
+      };
+    })
+    .filter((v) => (v.available_units ?? 1) > 0);
 }
 
 export async function attachCustomerDocuments(customerId: number, bookingId: number, docs: Array<{ kind: string; url: string; number?: string; expiry?: string }>) {

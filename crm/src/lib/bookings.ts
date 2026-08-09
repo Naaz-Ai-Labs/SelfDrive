@@ -39,6 +39,9 @@ function findOrCreateCustomer(contact: BookingPayload["customer"]): number {
 
 export function checkVehicleAvailable(vehicleId: number, pickupAt: string, returnAt: string, excludeBookingId?: number): boolean {
   const db = getDb();
+  const vehicle = db.prepare("SELECT total_units FROM vehicles WHERE id = ?").get(vehicleId) as { total_units: number } | undefined;
+  const totalUnits = vehicle?.total_units ?? 1;
+
   const clashes = db
     .prepare(
       `SELECT id FROM bookings
@@ -48,7 +51,7 @@ export function checkVehicleAvailable(vehicleId: number, pickupAt: string, retur
          ${excludeBookingId ? "AND id != ?" : ""}`
     )
     .all(...(excludeBookingId ? [vehicleId, pickupAt, returnAt, excludeBookingId] : [vehicleId, pickupAt, returnAt])) as Array<{ id: number }>;
-  return clashes.length === 0;
+  return clashes.length < totalUnits;
 }
 
 /** Creates or reuses a customer, computes the quote, and inserts a booking in 'Pending verification' status. */
