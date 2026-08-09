@@ -429,13 +429,31 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
           <div className="space-y-4">
             <h2 className="font-display text-xl font-semibold text-ink-900">Choose your vehicle</h2>
             <p className="text-sm text-ink-500">{days} day{days > 1 ? "s" : ""}, from {formatDate(pickupAt)} to {formatDate(returnAt)}.</p>
+
+            <div className="flex gap-2 border-b border-ink-100 pb-3 overflow-x-auto">
+              <button
+                type="button"
+                onClick={() => setCategoryKind("")}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${!categoryKind ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
+              >
+                All Vehicles ({availableVehicles.length})
+              </button>
+              {categories.map((c) => (
+                <button
+                  type="button"
+                  key={c.id}
+                  onClick={() => setCategoryKind(c.kind)}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${categoryKind === c.kind ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+
             {loadingVehicles && <p className="text-sm text-ink-400">Checking availability…</p>}
             {!loadingVehicles && availableVehicles.length === 0 && <p className="text-sm text-ink-400">No vehicles available for this period. Try different dates.</p>}
             {(() => {
-              const lockedVehicleId = search.get("vehicle") ? Number(search.get("vehicle")) : null;
-              const vehiclesToDisplay = lockedVehicleId
-                ? availableVehicles.filter((v) => v.id === lockedVehicleId)
-                : availableVehicles;
+              const vehiclesToDisplay = availableVehicles;
 
               return (
                 <div className="grid gap-3 sm:grid-cols-2">
