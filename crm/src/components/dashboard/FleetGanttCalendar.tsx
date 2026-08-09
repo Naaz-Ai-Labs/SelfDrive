@@ -110,22 +110,32 @@ export function FleetGanttCalendar({
         </div>
       </div>
 
-      {/* Hover Info Tooltip */}
-      {hoveredBooking && (
-        <div className="rounded-xl border border-brand-300 bg-brand-50/50 p-3 text-xs flex flex-wrap items-center justify-between gap-2 animate-fadeIn">
-          <div>
-            <span className="font-bold text-ink-900">{hoveredBooking.bookingNo}</span> • Customer:{" "}
-            <strong>{hoveredBooking.customerName}</strong> • Schedule:{" "}
-            <span className="font-mono">{hoveredBooking.pickupAt.slice(0, 16)} → {hoveredBooking.returnAt.slice(0, 16)}</span>
+      {/* Hover Info Tooltip Banner (Fixed Height to prevent layout shifts & hover flickering) */}
+      <div className="min-h-[48px] rounded-xl border border-brand-200 bg-brand-50/40 p-3 text-xs flex items-center justify-between gap-2 transition-all">
+        {hoveredBooking ? (
+          <>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-ink-900 bg-brand-100 px-2 py-0.5 rounded font-mono text-[11px]">
+                {hoveredBooking.bookingNo}
+              </span>
+              <span>Customer: <strong className="text-ink-900">{hoveredBooking.customerName}</strong></span>
+              <span className="text-ink-400">•</span>
+              <span>Schedule: <span className="font-mono text-ink-700">{hoveredBooking.pickupAt.slice(0, 16)} → {hoveredBooking.returnAt.slice(0, 16)}</span></span>
+            </div>
+            <Link
+              href={`/dashboard/bookings/${hoveredBooking.id}`}
+              className="btn-primary px-3 py-1 text-[11px] shrink-0 font-semibold shadow-xs"
+            >
+              View Booking →
+            </Link>
+          </>
+        ) : (
+          <div className="text-ink-500 text-xs flex items-center gap-2">
+            <span className="text-sm">💡</span>
+            <span>Hover over any active or confirmed rental block in the matrix below to inspect customer details & schedule.</span>
           </div>
-          <Link
-            href={`/dashboard/bookings/${hoveredBooking.id}`}
-            className="btn-primary px-2.5 py-1 text-[11px]"
-          >
-            View Booking →
-          </Link>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Gantt Grid Table */}
       <div className="overflow-x-auto">
@@ -189,7 +199,7 @@ export function FleetGanttCalendar({
                           <div
                             onMouseEnter={() => setHoveredBooking(matchingBooking)}
                             onMouseLeave={() => setHoveredBooking(null)}
-                            className={`rounded-lg px-1.5 py-1 text-[10px] font-bold truncate border shadow-xs cursor-pointer transition transform hover:scale-105 ${getStatusColor(
+                            className={`rounded-lg px-1.5 py-1 text-[10px] font-bold truncate border shadow-xs cursor-pointer transition-all hover:brightness-110 hover:shadow-md ${getStatusColor(
                               matchingBooking.status
                             )}`}
                           >
