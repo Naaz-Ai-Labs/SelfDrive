@@ -104,6 +104,7 @@ function seedSync(targetDb: any) {
       (3, 'tvs-ronin', 'TVS Ronin 225', 'TVS', 'Ronin', 2023, 2, 1, 'KA-46-M-9012', 225, 'Petrol', 'Manual', 2, '35 km/l', 100, 4, 1000, 1800, 150, 1800, 1000, 120, 2, 2, 'Modern cruiser styling.', 'available', 1),
       (4, 'honda-cb200x', 'Honda CB200X', 'Honda', 'CB200X', 2023, 2, 1, 'KA-46-M-3456', 184, 'Petrol', 'Manual', 2, '38 km/l', 100, 4, 1000, 1800, 150, 1800, 1000, 120, 2, 2, 'Adventure-styled bike.', 'available', 1),
       (5, 'maruti-baleno', 'Maruti Suzuki Baleno', 'Maruti Suzuki', 'Baleno', 2023, 1, 1, 'KA-46-C-7890', 1197, 'Petrol', 'Manual', 5, '21 km/l', 300, 8, 2000, 3500, 200, 3500, 2000, 150, 2, 2, 'Comfortable premium hatchback.', 'available', 1),
+      (6, 'mahindra-thar', 'Mahindra Thar 4x4', 'Mahindra', 'Thar', 2023, 1, 1, 'KA-46-C-9999', 2184, 'Diesel', 'Manual', 4, '15 km/l', 300, 8, 3000, 5000, 300, 5500, 3000, 250, 1, 1, 'Iconic 4x4 SUV for offroad exploration.', 'available', 1),
       (7, 'tempo-traveller-12', 'Force Tempo Traveller (12 Seater)', 'Force Motors', 'Traveller', 2023, 4, 1, 'KA-46-V-1212', 2596, 'Diesel', 'Manual', 12, '12 km/l', 999, 0, 8000, 12000, 500, 12000, 2000, 250, 1, 1, 'Chauffeur driven 12 seater.', 'available', 1);
 
       INSERT OR IGNORE INTO vehicle_photos (vehicle_id, photo_url, is_primary) VALUES
@@ -112,6 +113,7 @@ function seedSync(targetDb: any) {
       (3, '/vehicles/tvs-ronin.avif', 1),
       (4, '/vehicles/honda-cb200x.jpg', 1),
       (5, '/vehicles/baleno-manual.avif', 1),
+      (6, '/vehicles/mahindra-thar.avif', 1),
       (7, '/vehicles/tempo-traveller.jpg', 1);
 
       INSERT OR IGNORE INTO terms_versions (version, content, is_active) VALUES
