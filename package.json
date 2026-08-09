@@ -10,5 +10,8 @@
     "build": "npm run build --prefix crm",
     "build:crm": "npm run build --prefix crm",
     "build:web": "npm run build --prefix web"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }

@@ -1,8 +1,16 @@
-import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import bcrypt from "bcryptjs";
+
+let DatabaseSyncClass: any = null;
+try {
+  DatabaseSyncClass = require("node:sqlite").DatabaseSync;
+} catch {
+  // node:sqlite module not present in older Node versions
+}
+
+export type DatabaseSync = any;
 
 export function getWritableDataDir(): string {
   if (process.env.VERCEL) {
@@ -28,13 +36,16 @@ export function getWritableUploadsDir(): string {
   return uploadsDir;
 }
 
-let db: DatabaseSync | null = null;
+let db: any = null;
 
-export function getDb(): DatabaseSync {
+export function getDb(): any {
   if (db) return db;
+  if (!DatabaseSyncClass) {
+    throw new Error("node:sqlite module is unavailable in this Node environment. Node 22+ is required.");
+  }
   const dataDir = getWritableDataDir();
   const dbPath = path.join(dataDir, "darshan.db");
-  db = new DatabaseSync(dbPath);
+  db = new DatabaseSyncClass(dbPath);
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
   applySchema(db);
