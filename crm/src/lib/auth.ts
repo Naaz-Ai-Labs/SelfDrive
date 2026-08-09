@@ -78,10 +78,9 @@ export function destroySession(token: string) {
 export async function getCurrentUser(): Promise<SessionUser | null> {
   const store = await cookies();
   const rawToken = store.get(SESSION_COOKIE)?.value;
-  console.log("[AUTH_DEBUG] getCurrentUser called. Token present:", !!rawToken, "Token length:", rawToken?.length);
   if (!rawToken) return null;
 
-  // 1. Verify signed HMAC session token (stateless across Vercel serverless containers)
+  // 1. Verify signed HMAC session token (stateless & instant across Vercel serverless containers)
   const parts = rawToken.split(":");
   if (parts.length >= 5) {
     const [userIdStr, role, expiresMsStr, encEmail, encName, sig] = parts;
@@ -91,73 +90,30 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
 
     const isExpired = Date.now() >= expiresMs;
     const sigMatch = sig === expectedSig;
-    console.log("[AUTH_DEBUG] Signed token parsed:", { userIdStr, role, expiresMs, isExpired, sigMatch });
 
     if (sigMatch && !isExpired) {
       const userId = Number(userIdStr);
       const email = decodeURIComponent(encEmail || "");
       const name = decodeURIComponent(encName || "");
 
-      const db = getDb();
+      // Quick SQLite lookup
       try {
+        const db = getDb();
         const userRow = db
-          .prepare("SELECT id, name, email, role, branch FROM users WHERE id = ? AND is_active = 1")
-          .get(userId) as SessionUser | undefined;
-        if (userRow) {
-          console.log("[AUTH_DEBUG] User found in DB by ID:", userRow.email);
-          return userRow;
-        }
+          .prepare("SELECT id, name, email, role, branch FROM users WHERE (id = ? OR email = ?) AND is_active = 1")
+          .get(userId, email.toLowerCase().trim()) as SessionUser | undefined;
+        if (userRow) return userRow;
+      } catch {}
 
-        if (email) {
-          const userByEmail = db
-            .prepare("SELECT id, name, email, role, branch FROM users WHERE email = ? AND is_active = 1")
-            .get(email.toLowerCase().trim()) as SessionUser | undefined;
-          if (userByEmail) {
-            console.log("[AUTH_DEBUG] User found in DB by email:", userByEmail.email);
-            return userByEmail;
-          }
-        }
-      } catch (err: any) {
-        console.error("[AUTH_DEBUG] DB query error:", err?.message);
-      }
-
-      // Fallback: If user isn't in ephemeral SQLite on new Lambda container, try fetching from Supabase DB
-      if (supabaseAdmin && email) {
-        try {
-          const { data: sbUser } = await supabaseAdmin
-            .from("users")
-            .select("id, name, email, role, branch")
-            .eq("email", email.toLowerCase().trim())
-            .maybeSingle();
-
-          if (sbUser) {
-            try {
-              db.prepare(
-                "INSERT OR IGNORE INTO users (id, name, email, password_hash, role, branch, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)"
-              ).run(sbUser.id, sbUser.name, sbUser.email, "stateless-session", sbUser.role, sbUser.branch);
-            } catch {}
-            console.log("[AUTH_DEBUG] User restored from Supabase DB:", sbUser.email);
-            return sbUser as SessionUser;
-          }
-        } catch (err: any) {
-          console.error("[AUTH_DEBUG] Supabase user query error:", err?.message);
-        }
-      }
-
-      const reconstructed: SessionUser = {
+      // Bulletproof stateless session return: token is HMAC verified and unexpired
+      return {
         id: userId,
         name: name || (role === "admin" ? "Administrator" : "Staff User"),
-        email: email || "staff@darshhrentals.in",
+        email: email || "admin@darshhrentals.in",
         role: role || "staff",
         branch: null,
       };
-      console.log("[AUTH_DEBUG] Returning reconstructed user:", reconstructed.email);
-      return reconstructed;
-    } else {
-      console.error("[AUTH_DEBUG] Token verification failed: sigMatch =", sigMatch, "isExpired =", isExpired);
     }
-  } else {
-    console.log("[AUTH_DEBUG] Legacy token format, parts length:", parts.length);
   }
 
   // 2. Fallback to SQLite DB token lookup

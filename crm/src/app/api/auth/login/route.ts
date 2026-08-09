@@ -178,23 +178,22 @@ export async function POST(req: NextRequest) {
     console.error("[AUTH_DEBUG] DB update error on login:", err?.message);
   }
 
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, token, {
+  const isProd = process.env.NODE_ENV === "production" || !!process.env.VERCEL;
+  const cookieOptions = {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: "lax" as const,
+    secure: isProd,
     path: "/",
     maxAge: 7 * 24 * 3600,
-  });
+  };
+
+  const cookieStore = await cookies();
+  cookieStore.set(SESSION_COOKIE, token, cookieOptions);
 
   const res = NextResponse.json({
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
   });
-  res.cookies.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 7 * 24 * 3600,
-  });
-  console.log("[AUTH_DEBUG] Login response returning with Set-Cookie header");
+  res.cookies.set(SESSION_COOKIE, token, cookieOptions);
+  console.log("[AUTH_DEBUG] Login response returning with Set-Cookie header (secure:", isProd, ")");
   return res;
 }
