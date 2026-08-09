@@ -116,15 +116,21 @@ export async function POST(req: NextRequest) {
   }
 
   attempts.delete(key);
+  console.log("[AUTH_DEBUG] Login credentials verified for user:", user.id, user.email, "Creating session...");
   const token = createSession(user.id, ip, { role: user.role, email: user.email, name: user.name });
-  db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
-  logActivity(user.id, "login", "user", user.id);
+  console.log("[AUTH_DEBUG] Generated token:", token);
+
+  try {
+    db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
+    logActivity(user.id, "login", "user", user.id);
+  } catch (err: any) {
+    console.error("[AUTH_DEBUG] DB update error on login:", err?.message);
+  }
 
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 7 * 24 * 3600,
   });
@@ -135,9 +141,9 @@ export async function POST(req: NextRequest) {
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 7 * 24 * 3600,
   });
+  console.log("[AUTH_DEBUG] Login response returning with Set-Cookie header");
   return res;
 }

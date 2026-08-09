@@ -78,6 +78,7 @@ export function destroySession(token: string) {
 export async function getCurrentUser(): Promise<SessionUser | null> {
   const store = await cookies();
   const rawToken = store.get(SESSION_COOKIE)?.value;
+  console.log("[AUTH_DEBUG] getCurrentUser called. Token present:", !!rawToken, "Token length:", rawToken?.length);
   if (!rawToken) return null;
 
   // 1. Verify signed HMAC session token (stateless across Vercel serverless containers)
@@ -88,7 +89,11 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
     const expectedSig = signPayload(payload);
     const expiresMs = Number(expiresMsStr);
 
-    if (sig === expectedSig && Date.now() < expiresMs) {
+    const isExpired = Date.now() >= expiresMs;
+    const sigMatch = sig === expectedSig;
+    console.log("[AUTH_DEBUG] Signed token parsed:", { userIdStr, role, expiresMs, isExpired, sigMatch });
+
+    if (sigMatch && !isExpired) {
       const userId = Number(userIdStr);
       const email = decodeURIComponent(encEmail || "");
       const name = decodeURIComponent(encName || "");
@@ -98,15 +103,23 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
         const userRow = db
           .prepare("SELECT id, name, email, role, branch FROM users WHERE id = ? AND is_active = 1")
           .get(userId) as SessionUser | undefined;
-        if (userRow) return userRow;
+        if (userRow) {
+          console.log("[AUTH_DEBUG] User found in DB by ID:", userRow.email);
+          return userRow;
+        }
 
         if (email) {
           const userByEmail = db
             .prepare("SELECT id, name, email, role, branch FROM users WHERE email = ? AND is_active = 1")
             .get(email.toLowerCase().trim()) as SessionUser | undefined;
-          if (userByEmail) return userByEmail;
+          if (userByEmail) {
+            console.log("[AUTH_DEBUG] User found in DB by email:", userByEmail.email);
+            return userByEmail;
+          }
         }
-      } catch {}
+      } catch (err: any) {
+        console.error("[AUTH_DEBUG] DB query error:", err?.message);
+      }
 
       // Fallback: If user isn't in ephemeral SQLite on new Lambda container, try fetching from Supabase DB
       if (supabaseAdmin && email) {
@@ -123,20 +136,28 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
                 "INSERT OR IGNORE INTO users (id, name, email, password_hash, role, branch, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)"
               ).run(sbUser.id, sbUser.name, sbUser.email, "stateless-session", sbUser.role, sbUser.branch);
             } catch {}
+            console.log("[AUTH_DEBUG] User restored from Supabase DB:", sbUser.email);
             return sbUser as SessionUser;
           }
-        } catch {}
+        } catch (err: any) {
+          console.error("[AUTH_DEBUG] Supabase user query error:", err?.message);
+        }
       }
 
-      // Reconstruct verified user from signed token
-      return {
+      const reconstructed: SessionUser = {
         id: userId,
         name: name || (role === "admin" ? "Administrator" : "Staff User"),
         email: email || "staff@darshhrentals.in",
         role: role || "staff",
         branch: null,
       };
+      console.log("[AUTH_DEBUG] Returning reconstructed user:", reconstructed.email);
+      return reconstructed;
+    } else {
+      console.error("[AUTH_DEBUG] Token verification failed: sigMatch =", sigMatch, "isExpired =", isExpired);
     }
+  } else {
+    console.log("[AUTH_DEBUG] Legacy token format, parts length:", parts.length);
   }
 
   // 2. Fallback to SQLite DB token lookup
@@ -152,6 +173,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
     if (row) return row;
   } catch {}
 
+  console.log("[AUTH_DEBUG] getCurrentUser returned null");
   return null;
 }
 
