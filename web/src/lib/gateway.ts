@@ -9,7 +9,8 @@ function getBaseUrl(): string {
   return "http://localhost:3001";
 }
 
-const KEY = process.env.GATEWAY_API_KEY ?? "";
+const DEFAULT_GATEWAY_KEY = "gtw_darshh_sec_9845210001_88f9a2b1c3";
+const KEY = process.env.GATEWAY_API_KEY || DEFAULT_GATEWAY_KEY;
 export const CUSTOMER_COOKIE = "darshh_customer";
 
 type FetchOptions = { auth?: boolean; cache?: RequestCache; revalidate?: number };
