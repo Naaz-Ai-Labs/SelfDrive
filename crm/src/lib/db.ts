@@ -51,6 +51,8 @@ function createDatabaseInstance(dbPath: string): any {
   }
 }
 
+let isHydrating = false;
+
 export function getDb(): any {
   if (db) return db;
   const dataDir = getWritableDataDir();
@@ -64,6 +66,25 @@ export function getDb(): any {
   }
   applySchema(db);
   ensureDefaultUsers(db);
+
+  try {
+    const vehCount = db.prepare("SELECT COUNT(*) AS c FROM vehicles").get() as { c: number } | undefined;
+    if ((!vehCount || vehCount.c === 0) && !isHydrating) {
+      isHydrating = true;
+      import("./hydrate-db")
+        .then(({ hydrateSQLiteFromSupabase }) => {
+          hydrateSQLiteFromSupabase(db)
+            .then((success) => {
+              if (!success) {
+                import("./seed").then(({ seed }) => seed()).catch(() => {});
+              }
+            })
+            .catch(() => {});
+        })
+        .catch(() => {});
+    }
+  } catch {}
+
   return db;
 }
 

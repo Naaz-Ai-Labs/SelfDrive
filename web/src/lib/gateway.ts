@@ -1,6 +1,12 @@
 import { cookies } from "next/headers";
 
-const BASE = process.env.CRM_API_URL ?? "http://localhost:3001";
+function getBaseUrl(): string {
+  if (process.env.CRM_API_URL) return process.env.CRM_API_URL.replace(/\/$/, "");
+  if (process.env.NEXT_PUBLIC_CRM_API_URL) return process.env.NEXT_PUBLIC_CRM_API_URL.replace(/\/$/, "");
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3001";
+}
+
 const KEY = process.env.GATEWAY_API_KEY ?? "";
 export const CUSTOMER_COOKIE = "darshh_customer";
 
@@ -24,7 +30,7 @@ async function gatewayFetch<T>(path: string, init: RequestInit & FetchOptions = 
     }
   }
   try {
-    const res = await fetch(`${BASE}${path}`, {
+    const res = await fetch(`${getBaseUrl()}${path}`, {
       ...rest,
       headers,
       ...(revalidate ? { next: { revalidate } } : { cache: cache ?? "no-store" }),

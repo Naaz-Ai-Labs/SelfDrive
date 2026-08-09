@@ -174,3 +174,21 @@ export async function markPaymentEventProcessed(eventDbId: number, processingErr
   }
 }
 
+/** Syncs any record to Supabase asynchronously. */
+export async function syncTableRecordToSupabase(table: string, record: Record<string, unknown>): Promise<boolean> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return false;
+  try {
+    const { error } = await supabase.from(table).upsert([record]);
+    if (error) {
+      console.warn(`⚠️ Supabase sync warning for [${table}]:`, error.message);
+      return false;
+    }
+    return true;
+  } catch (err: any) {
+    console.warn(`⚠️ Supabase sync exception for [${table}]:`, err?.message || err);
+    return false;
+  }
+}
+
+

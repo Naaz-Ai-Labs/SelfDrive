@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BASE = process.env.CRM_API_URL ?? "http://localhost:3001";
+function getBaseUrl(): string {
+  if (process.env.CRM_API_URL) return process.env.CRM_API_URL.replace(/\/$/, "");
+  if (process.env.NEXT_PUBLIC_CRM_API_URL) return process.env.NEXT_PUBLIC_CRM_API_URL.replace(/\/$/, "");
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3001";
+}
+
 const KEY = process.env.GATEWAY_API_KEY ?? "";
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -18,7 +24,7 @@ export async function POST(req: NextRequest) {
   const proxied = new FormData();
   proxied.append("file", file, file.name);
   try {
-    const res = await fetch(`${BASE}/api/gateway/v1/upload`, {
+    const res = await fetch(`${getBaseUrl()}/api/gateway/v1/upload`, {
       method: "POST",
       headers: { "x-gateway-key": KEY },
       body: proxied,
