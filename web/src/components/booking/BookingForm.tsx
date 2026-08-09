@@ -585,9 +585,17 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto pr-2">
                 {terms
                   .filter((t) => !t.toLowerCase().includes("cancellation"))
-                  .map((t) => (
-                    <li key={t} className="flex gap-2"><span aria-hidden>•</span>{t}</li>
-                  ))}
+                  .map((t) => {
+                    let text = t;
+                    if (t.toLowerCase().includes("driving beyond this limit") || t.toLowerCase().includes("drive limit")) {
+                      const extraKmRate = (selectedVehicle?.category_kind === "bike" || selectedVehicle?.category_kind === "scooter") ? 4 : (selectedVehicle?.extra_km_rate ?? 8);
+                      const kmLimit = selectedVehicle?.included_km ?? (selectedVehicle?.category_kind === "car" ? 300 : 100);
+                      text = `Included drive limit is ${kmLimit >= 999 ? "Unlimited" : `${kmLimit} km`} per day. Driving beyond this limit is charged at ₹${extraKmRate} per KM.`;
+                    }
+                    return (
+                      <li key={t} className="flex gap-2"><span aria-hidden>•</span>{text}</li>
+                    );
+                  })}
               </ul>
             </div>
             <label className="flex items-start gap-2 text-sm text-ink-700">
