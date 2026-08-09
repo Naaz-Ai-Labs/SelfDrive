@@ -74,15 +74,17 @@ export async function submitBooking(input: {
   }
 
   // 2. Direct Supabase PostgreSQL High-Availability Fallback
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const supabaseKey =
     process.env.SUPABASE_SECRET_KEY ||
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.SUPABASE_PUBLISHABLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    "";
 
-  try {
-    const supabase = createClient(supabaseUrl, supabaseKey);
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const supabase = createClient(supabaseUrl, supabaseKey);
     const bookingNo = `BK-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-01`;
     const phone = input.contact.phone ? input.contact.phone.replace(/[^\d+]/g, "") : "";
 
@@ -116,6 +118,7 @@ export async function submitBooking(input: {
   } catch (supaErr) {
     console.warn("Direct Supabase booking creation fallback attempt:", supaErr);
   }
+}
 
   // 3. Instant Fail-Safe Confirmation Guarantee
   const fallbackBookingNo = `BK-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-01`;
