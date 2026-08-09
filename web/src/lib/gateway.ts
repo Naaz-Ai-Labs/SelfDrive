@@ -43,8 +43,9 @@ async function gatewayFetch<T>(path: string, init: RequestInit & FetchOptions = 
     }
     return data as T;
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to fetch from CRM gateway.";
-    return { error: message } as T;
+    const rawMsg = err instanceof Error ? err.message : "";
+    const message = rawMsg && rawMsg !== "fetch failed" ? rawMsg : "Could not connect to server. Please try again.";
+    return { ok: false, error: message } as T;
   }
 }
 

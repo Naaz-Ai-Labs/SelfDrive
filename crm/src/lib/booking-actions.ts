@@ -56,7 +56,7 @@ export async function getDraft(token: string): Promise<DraftPayload | null> {
 }
 
 const submitSchema = z.object({
-  token: z.string().regex(/^[a-f0-9]{32,64}$/),
+  token: z.string().optional().or(z.literal("")),
   vehicleId: z.number().int().positive(),
   pickupAt: z.string().min(10, "Select a pickup date and time."),
   returnAt: z.string().min(10, "Select a return date and time."),
@@ -116,7 +116,7 @@ export async function submitBooking(input: {
     return { ok: false, error: "Please upload your driving licence and a government ID before confirming — this is required to hand over the vehicle." };
   }
   const db = getDb();
-  const existing = db.prepare("SELECT id FROM enquiries WHERE draft_token = ?").get(parsed.data.token) as { id: number } | undefined;
+  const existing = parsed.data.token ? (db.prepare("SELECT id FROM enquiries WHERE draft_token = ?").get(parsed.data.token) as { id: number } | undefined) : undefined;
 
   try {
     const { bookingNo, bookingId, customerId } = createBooking({
