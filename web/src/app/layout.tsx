@@ -90,6 +90,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" className={`${display.variable} ${sans.variable}`}>
       <body className="flex min-h-screen flex-col">
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.addEventListener('unhandledrejection',function(e){if(e.reason&&(String(e.reason).includes('Could not establish connection')||String(e.reason).includes('Receiving end does not exist')||String(e.reason).includes('message channel closed'))){e.preventDefault();}});`,
+          }}
+        />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
         <Header info={info} />
         <main className="flex-1 pt-20 sm:pt-24">{children}</main>
