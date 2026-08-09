@@ -144,26 +144,28 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
   };
 }
 
-export function calculateLateFee(scheduledReturn: Date, actualReturn: Date): { minutesLate: number; fee: number; breakdown: string } {
-  const rentalRules = getSetting<Record<string, unknown>>("rental_rules", {});
-  const grace = Number(rentalRules.grace_period_minutes ?? 15);
-  const tier1Fee = Number(rentalRules.late_fee_tier1 ?? 250);
-  const tier1Max = Number(rentalRules.late_fee_tier1_max_minutes ?? 30);
-  const perHour = Number(rentalRules.late_fee_per_hour ?? 150);
-  const fullDayAfterHours = Number(rentalRules.late_fee_full_day_after_hours ?? 6);
+export function calculateLateFee(
+  scheduledReturn: Date,
+  actualReturn: Date,
+  rate24h: number = 900
+): { minutesLate: number; fee: number; breakdown: string } {
+  const msLate = actualReturn.getTime() - scheduledReturn.getTime();
+  const minutesLate = Math.max(0, Math.ceil(msLate / 60000));
 
-  const minutesLate = Math.max(0, Math.round((actualReturn.getTime() - scheduledReturn.getTime()) / 60000));
-  if (minutesLate <= grace) return { minutesLate, fee: 0, breakdown: `Within the ${grace}-minute grace period — no late fee.` };
+  if (minutesLate <= 0) {
+    return { minutesLate: 0, fee: 0, breakdown: "Returned on time — no late fee." };
+  }
 
-  const lateHours = minutesLate / 60;
-  if (lateHours >= fullDayAfterHours) {
-    return { minutesLate, fee: tier1Fee + perHour * fullDayAfterHours, breakdown: `Late by ${lateHours.toFixed(1)}h — billed as a full extra day.` };
-  }
-  if (minutesLate <= tier1Max) {
-    return { minutesLate, fee: tier1Fee, breakdown: `Late by ${minutesLate} min (within ${tier1Max} min) — flat late fee.` };
-  }
-  const hoursLateRounded = Math.ceil(lateHours);
-  return { minutesLate, fee: tier1Fee + perHour * (hoursLateRounded - 1), breakdown: `Late by ${minutesLate} min (~${hoursLateRounded}h) — flat fee + hourly.` };
+  // Strict Return Policy: Overdue by even 1 minute = Billed full additional day charge!
+  const extraDays = Math.ceil(minutesLate / (24 * 60));
+  const effectiveDailyRate = getDynamicRate24h(rate24h, actualReturn);
+  const fee = extraDays * effectiveDailyRate;
+
+  return {
+    minutesLate,
+    fee,
+    breakdown: `Overdue by ${minutesLate} min — billed full extra day charge (₹${effectiveDailyRate}/day x ${extraDays} day${extraDays > 1 ? "s" : ""}).`,
+  };
 }
 
 export function calculateExtraKm(includedKm: number, startOdo: number, endOdo: number, extraKmRate: number): { travelled: number; extraKm: number; amount: number } {

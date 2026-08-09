@@ -416,9 +416,9 @@ export async function recordInspection(input: {
     const booking = db.prepare("SELECT vehicle_id, return_at, start_odometer, included_km FROM bookings WHERE id = ?").get(input.bookingId) as {
       vehicle_id: number; return_at: string; start_odometer: number | null; included_km: number;
     };
-    const vehicle = db.prepare("SELECT extra_km_rate FROM vehicles WHERE id = ?").get(booking.vehicle_id) as { extra_km_rate: number };
+    const vehicle = db.prepare("SELECT rate_24h, extra_km_rate FROM vehicles WHERE id = ?").get(booking.vehicle_id) as { rate_24h: number; extra_km_rate: number };
     const now = new Date();
-    const late = calculateLateFee(new Date(booking.return_at), now);
+    const late = calculateLateFee(new Date(booking.return_at), now, vehicle?.rate_24h ?? 900);
     const km = input.odometer != null && booking.start_odometer != null
       ? calculateExtraKm(booking.included_km, booking.start_odometer, input.odometer, vehicle.extra_km_rate)
       : { extraKm: 0, amount: 0 };

@@ -1,6 +1,5 @@
 /**
- * Live Clock Weekend Pricing Utility for Web Application
- * Automatically hikes prices by +₹50 on Saturdays & Sundays across Web & CRM.
+ * Live Clock Weekend Pricing & Strict Late Fee Utility for Web Application
  */
 
 export function isWeekend(date: Date = new Date()): boolean {
@@ -45,4 +44,31 @@ export function calculateRentalPrice(
 
   const rateUsed = isWeekend() ? rate24h + 50 : rate24h;
   return { totalAmount, daysCount, weekendDaysCount, rateUsed };
+}
+
+/**
+ * Strict Late Return Policy:
+ * Overdue by even 1 minute = Billed full additional day charge!
+ */
+export function calculateLateFee(
+  scheduledReturn: Date,
+  actualReturn: Date,
+  rate24h: number = 900
+): { minutesLate: number; fee: number; breakdown: string } {
+  const msLate = actualReturn.getTime() - scheduledReturn.getTime();
+  const minutesLate = Math.max(0, Math.ceil(msLate / 60000));
+
+  if (minutesLate <= 0) {
+    return { minutesLate: 0, fee: 0, breakdown: "Returned on time — no late fee." };
+  }
+
+  const extraDays = Math.ceil(minutesLate / (24 * 60));
+  const effectiveDailyRate = getDynamicRate24h(rate24h, actualReturn);
+  const fee = extraDays * effectiveDailyRate;
+
+  return {
+    minutesLate,
+    fee,
+    breakdown: `Overdue by ${minutesLate} min — billed full extra day charge (₹${effectiveDailyRate}/day x ${extraDays} day${extraDays > 1 ? "s" : ""}).`,
+  };
 }
