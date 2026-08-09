@@ -15,6 +15,13 @@ type Quote = Awaited<ReturnType<typeof getQuoteEstimate>>;
 
 const STEP_LABELS = ["Rental period", "Choose vehicle", "Your details", "Documents", "Review & confirm", "Payment"];
 const STANDARD_PICKUP_TIME = "08:00";
+const DEFAULT_TERMS = [
+  "Valid original Driving Licence & Government ID (Aadhaar/Passport) mandatory for vehicle handover.",
+  "Included drive limit per day. Driving beyond this limit is charged per KM.",
+  "Fuel policy: Return the vehicle with the same fuel level as provided at pickup.",
+  "Security deposit is fully refundable upon safe vehicle return inspection.",
+  "Late returns exceeding 1 minute add full 24-hour additional day rental charges.",
+];
 
 function todayISO() {
   const d = new Date();
@@ -597,14 +604,14 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             <div className="rounded-xl border border-ink-100 bg-ink-50 p-4 text-sm text-ink-600">
               <p className="font-semibold text-ink-900">Terms & conditions</p>
               <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto pr-2">
-                {terms
+                {((terms && terms.length > 0) ? terms : DEFAULT_TERMS)
                   .filter((t) => !t.toLowerCase().includes("cancellation"))
                   .map((t) => {
                     let text = t;
                     if (t.toLowerCase().includes("driving beyond this limit") || t.toLowerCase().includes("drive limit")) {
                       const extraKmRate = (selectedVehicle?.category_kind === "bike" || selectedVehicle?.category_kind === "scooter") ? 4 : (selectedVehicle?.extra_km_rate ?? 8);
                       const kmLimit = selectedVehicle?.included_km ?? (selectedVehicle?.category_kind === "car" ? 300 : 100);
-                      text = `Included drive limit is ${kmLimit >= 999 ? "Unlimited" : `${kmLimit} km`} per day. Driving beyond this limit is charged at ₹${extraKmRate} per KM.`;
+                      text = `Included drive limit is ${kmLimit >= 999 ? "Unlimited" : `${kmLimit} km`} per day. Driving beyond this limit is charged at ₹${extraKmRate}/KM.`;
                     }
                     return (
                       <li key={t} className="flex gap-2"><span aria-hidden>•</span>{text}</li>
