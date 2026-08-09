@@ -155,6 +155,12 @@ export async function submitBooking(input: {
 }
 
 export async function getAvailableVehicles(kind: string | null, pickupAt: string | null, returnAt: string | null) {
+  // On Vercel, SQLite is ephemeral and only has seed data. Query Supabase directly.
+  if (process.env.VERCEL) {
+    return getAvailableVehiclesFromSupabase(kind, pickupAt, returnAt);
+  }
+
+  // Local dev: use SQLite (it has full hydrated data)
   const vehicles = getVehicles({ kind: kind || undefined, onlyAvailable: true });
   if (!pickupAt || !returnAt) return vehicles;
 
@@ -178,6 +184,78 @@ export async function getAvailableVehicles(kind: string | null, pickupAt: string
       };
     })
     .filter((v) => (v.available_units ?? 1) > 0);
+}
+
+async function getAvailableVehiclesFromSupabase(kind: string | null, _pickupAt: string | null, _returnAt: string | null) {
+  const { createClient } = await import("@supabase/supabase-js");
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+  if (!url || !key) {
+    // Fall back to SQLite if no Supabase credentials
+    return getVehicles({ kind: kind || undefined, onlyAvailable: true });
+  }
+
+  try {
+    const supabase = createClient(url, key, { auth: { persistSession: false } });
+
+    // Fetch vehicles with their category info
+    let query = supabase
+      .from("vehicles")
+      .select("*, vehicle_categories!inner(name, kind, slug)")
+      .eq("active", true)
+      .eq("status", "available");
+
+    if (kind) {
+      query = query.eq("vehicle_categories.kind", kind);
+    }
+
+    const { data: vehicles, error } = await query.order("rate_24h", { ascending: true });
+
+    if (error || !vehicles) {
+      console.warn("Supabase vehicle query error:", error?.message);
+      return getVehicles({ kind: kind || undefined, onlyAvailable: true });
+    }
+
+    // Fetch photos for all vehicles
+    const vehicleIds = vehicles.map((v: any) => v.id);
+    const { data: photos } = await supabase
+      .from("vehicle_photos")
+      .select("vehicle_id, photo_url, is_primary")
+      .in("vehicle_id", vehicleIds);
+
+    const photoMap = new Map<number, { photos: string[]; primary: string }>();
+    if (photos) {
+      for (const p of photos) {
+        const entry = photoMap.get(p.vehicle_id) || { photos: [], primary: "" };
+        entry.photos.push(p.photo_url);
+        if (p.is_primary) entry.primary = p.photo_url;
+        photoMap.set(p.vehicle_id, entry);
+      }
+    }
+
+    return vehicles.map((v: any) => {
+      const cat = v.vehicle_categories;
+      const ph = photoMap.get(v.id);
+      return {
+        ...v,
+        category_name: cat?.name || "Vehicle",
+        category_kind: cat?.kind || "car",
+        category_slug: cat?.slug || "cars",
+        photos: ph?.photos || [],
+        primary_photo: ph?.primary || ph?.photos?.[0] || null,
+        available_units: v.available_units ?? v.total_units ?? 1,
+        vehicle_categories: undefined, // remove nested join object
+      };
+    });
+  } catch (err: any) {
+    console.warn("Supabase getAvailableVehicles error:", err?.message);
+    return getVehicles({ kind: kind || undefined, onlyAvailable: true });
+  }
 }
 
 export async function attachCustomerDocuments(customerId: number, bookingId: number, docs: Array<{ kind: string; url: string; number?: string; expiry?: string }>) {

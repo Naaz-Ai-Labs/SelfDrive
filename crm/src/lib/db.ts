@@ -101,20 +101,47 @@ function seedSync(targetDb: any) {
       INSERT OR IGNORE INTO vehicles (id, slug, name, brand, model, year, category_id, branch_id, registration_no, cc, fuel_type, transmission, seats, mileage, included_km, extra_km_rate, rate_12h, rate_24h, hourly_rate, weekend_rate_24h, deposit, late_fee_per_hour, total_units, available_units, description, status, active) VALUES
       (1, 'honda-dio', 'Honda Dio', 'Honda', 'Dio', 2023, 3, 1, 'KA-46-E-1234', 110, 'Petrol', 'Automatic', 2, '45 km/l', 100, 4, 500, 900, 100, 950, 1000, 100, 3, 3, 'Light, easy-to-ride scooter.', 'available', 1),
       (2, 'honda-activa', 'Honda Activa 6G', 'Honda', 'Activa 6G', 2023, 3, 1, 'KA-46-E-5678', 110, 'Petrol', 'Automatic', 2, '50 km/l', 100, 4, 500, 900, 100, 950, 1000, 100, 4, 4, 'Automatic, light and simple to ride.', 'available', 1),
-      (3, 'tvs-ronin', 'TVS Ronin 225', 'TVS', 'Ronin', 2023, 2, 1, 'KA-46-M-9012', 225, 'Petrol', 'Manual', 2, '35 km/l', 100, 4, 1000, 1800, 150, 1800, 1000, 120, 2, 2, 'Modern cruiser styling.', 'available', 1),
-      (4, 'honda-cb200x', 'Honda CB200X', 'Honda', 'CB200X', 2023, 2, 1, 'KA-46-M-3456', 184, 'Petrol', 'Manual', 2, '38 km/l', 100, 4, 1000, 1800, 150, 1800, 1000, 120, 2, 2, 'Adventure-styled bike.', 'available', 1),
-      (5, 'maruti-baleno', 'Maruti Suzuki Baleno', 'Maruti Suzuki', 'Baleno', 2023, 1, 1, 'KA-46-C-7890', 1197, 'Petrol', 'Manual', 5, '21 km/l', 300, 8, 2000, 3500, 200, 3500, 2000, 150, 2, 2, 'Comfortable premium hatchback.', 'available', 1),
-      (6, 'mahindra-thar', 'Mahindra Thar 4x4', 'Mahindra', 'Thar', 2023, 1, 1, 'KA-46-C-9999', 2184, 'Diesel', 'Manual', 4, '15 km/l', 300, 8, 3000, 5000, 300, 5500, 3000, 250, 1, 1, 'Iconic 4x4 SUV for offroad exploration.', 'available', 1),
-      (7, 'tempo-traveller-12', 'Force Tempo Traveller (12 Seater)', 'Force Motors', 'Traveller', 2023, 4, 1, 'KA-46-V-1212', 2596, 'Diesel', 'Manual', 12, '12 km/l', 999, 0, 8000, 12000, 500, 12000, 2000, 250, 1, 1, 'Chauffeur driven 12 seater.', 'available', 1);
+      (3, 'tvs-jupiter', 'TVS Jupiter', 'TVS', 'Jupiter', 2023, 3, 1, 'KA-46-E-9012', 110, 'Petrol', 'Automatic', 2, '50 km/l', 100, 4, 500, 900, 100, 950, 1000, 100, 3, 3, 'Smooth ride with high comfort.', 'available', 1),
+      (4, 'yamaha-rayzr', 'Yamaha RayZR', 'Yamaha', 'RayZR', 2023, 3, 1, 'KA-46-E-3456', 125, 'Petrol', 'Automatic', 2, '52 km/l', 100, 4, 550, 950, 100, 1000, 1000, 100, 2, 2, 'Sporty 125cc scooter.', 'available', 1),
+      (5, 'tvs-ntorq', 'TVS NTorq 125', 'TVS', 'NTorq', 2023, 3, 1, 'KA-46-E-7890', 125, 'Petrol', 'Automatic', 2, '45 km/l', 100, 4, 600, 1000, 110, 1050, 1000, 100, 3, 3, 'Performance scooter with bluetooth console.', 'available', 1),
+
+      (6, 'tvs-ronin', 'TVS Ronin 225', 'TVS', 'Ronin', 2023, 2, 1, 'KA-46-M-9012', 225, 'Petrol', 'Manual', 2, '35 km/l', 100, 4, 1000, 1800, 150, 1850, 1000, 120, 2, 2, 'Modern cruiser styling.', 'available', 1),
+      (7, 'honda-cb200x', 'Honda CB200X', 'Honda', 'CB200X', 2023, 2, 1, 'KA-46-M-3456', 184, 'Petrol', 'Manual', 2, '38 km/l', 100, 4, 1000, 1800, 150, 1850, 1000, 120, 2, 2, 'Adventure-styled bike.', 'available', 1),
+      (8, 'tvs-raider', 'TVS Raider 125', 'TVS', 'Raider', 2023, 2, 1, 'KA-46-M-1122', 125, 'Petrol', 'Manual', 2, '55 km/l', 100, 4, 700, 1200, 110, 1250, 1000, 100, 2, 2, 'Sleek commuter bike.', 'available', 1),
+      (9, 'bajaj-pulsar-ns', 'Bajaj Pulsar NS200', 'Bajaj', 'Pulsar NS', 2023, 2, 1, 'KA-46-M-3344', 200, 'Petrol', 'Manual', 2, '35 km/l', 100, 4, 800, 1300, 120, 1350, 1000, 100, 2, 2, 'Naked streetfighter performance.', 'available', 1),
+      (10, 'honda-shine', 'Honda Shine 125', 'Honda', 'Shine', 2023, 2, 1, 'KA-46-M-5566', 125, 'Petrol', 'Manual', 2, '55 km/l', 100, 4, 600, 1000, 100, 1050, 1000, 100, 2, 2, 'Reliable and comfortable commuter.', 'available', 1),
+
+      (11, 'maruti-baleno-manual', 'Maruti Suzuki Baleno (Manual)', 'Maruti Suzuki', 'Baleno Manual', 2023, 1, 1, 'KA-46-C-7890', 1197, 'Petrol', 'Manual', 5, '21 km/l', 300, 8, 2000, 3500, 200, 3550, 2000, 150, 2, 2, 'Comfortable premium manual hatchback.', 'available', 1),
+      (12, 'maruti-baleno-automatic', 'Maruti Suzuki Baleno (Automatic)', 'Maruti Suzuki', 'Baleno Automatic', 2023, 1, 1, 'KA-46-C-7891', 1197, 'Petrol', 'Automatic', 5, '22 km/l', 300, 8, 2200, 3800, 220, 3850, 2000, 150, 2, 2, 'Smooth automatic premium hatchback.', 'available', 1),
+      (13, 'maruti-dzire', 'Maruti Dzire', 'Maruti Suzuki', 'Dzire', 2023, 1, 1, 'KA-46-C-1122', 1197, 'Petrol', 'Manual', 5, '23 km/l', 300, 8, 2000, 3500, 200, 3550, 2000, 150, 2, 2, 'Fuel-efficient compact sedan.', 'available', 1),
+      (14, 'maruti-ciaz', 'Maruti Ciaz', 'Maruti Suzuki', 'Ciaz', 2023, 1, 1, 'KA-46-C-3344', 1462, 'Petrol', 'Manual', 5, '20 km/l', 300, 8, 2400, 4000, 240, 4050, 2500, 180, 1, 1, 'Spacious premium sedan for highway trips.', 'available', 1),
+      (15, 'maruti-ertiga-7-seater', 'Maruti Ertiga 7 Seater', 'Maruti Suzuki', 'Ertiga', 2023, 1, 1, 'KA-46-C-5566', 1462, 'Petrol', 'Manual', 7, '19 km/l', 300, 8, 2800, 4500, 280, 4550, 3000, 200, 1, 1, 'Spacious 7-seater MPV for family trips.', 'available', 1),
+      (16, 'mahindra-thar-manual', 'Mahindra Thar 4x4 (Manual)', 'Mahindra', 'Thar Manual', 2023, 1, 1, 'KA-46-C-9999', 2184, 'Diesel', 'Manual', 4, '15 km/l', 300, 8, 3000, 5000, 300, 5500, 3000, 250, 1, 1, 'Iconic 4x4 SUV for offroad exploration.', 'available', 1),
+      (17, 'mahindra-thar-automatic', 'Mahindra Thar 4x4 (Automatic)', 'Mahindra', 'Thar Automatic', 2023, 1, 1, 'KA-46-C-9998', 2184, 'Diesel', 'Automatic', 4, '14 km/l', 300, 8, 3500, 5500, 350, 6000, 3000, 250, 1, 1, 'Premium automatic 4x4 SUV.', 'available', 1),
+
+      (18, 'tempo-traveller-12', 'Tempo Traveller — Sakleshpura Sightseeing', 'Force Motors', 'Traveller', 2023, 4, 1, 'KA-46-V-1212', 2596, 'Diesel', 'Manual', 12, '12 km/l', 999, 0, 8000, 12000, 500, 12050, 2000, 250, 1, 1, 'Chauffeur driven 12 seater for day trips.', 'available', 1),
+      (19, 'tempo-traveller-2days', 'Tempo Traveller — Sakleshpura & Chikmagalur (2 Days)', 'Force Motors', 'Traveller', 2023, 4, 1, 'KA-46-V-1213', 2596, 'Diesel', 'Manual', 12, '12 km/l', 999, 0, 8000, 12000, 500, 12050, 2000, 250, 1, 1, 'Chauffeur driven 12 seater for 2-day hill station tours.', 'available', 1);
 
       INSERT OR IGNORE INTO vehicle_photos (vehicle_id, photo_url, is_primary) VALUES
       (1, '/vehicles/honda-dio.avif', 1),
       (2, '/vehicles/honda-activa.webp', 1),
-      (3, '/vehicles/tvs-ronin.avif', 1),
-      (4, '/vehicles/honda-cb200x.jpg', 1),
-      (5, '/vehicles/baleno-manual.avif', 1),
-      (6, '/vehicles/mahindra-thar.avif', 1),
-      (7, '/vehicles/tempo-traveller.jpg', 1);
+      (3, '/vehicles/honda-activa.webp', 1),
+      (4, '/vehicles/honda-dio.avif', 1),
+      (5, '/vehicles/honda-dio.avif', 1),
+      (6, '/vehicles/tvs-ronin.avif', 1),
+      (7, '/vehicles/honda-cb200x.jpg', 1),
+      (8, '/vehicles/tvs-ronin.avif', 1),
+      (9, '/vehicles/honda-cb200x.jpg', 1),
+      (10, '/vehicles/tvs-ronin.avif', 1),
+      (11, '/vehicles/baleno-manual.avif', 1),
+      (12, '/vehicles/baleno-manual.avif', 1),
+      (13, '/vehicles/baleno-manual.avif', 1),
+      (14, '/vehicles/baleno-manual.avif', 1),
+      (15, '/vehicles/mahindra-thar.avif', 1),
+      (16, '/vehicles/mahindra-thar.avif', 1),
+      (17, '/vehicles/mahindra-thar.avif', 1),
+      (18, '/vehicles/tempo-traveller.jpg', 1),
+      (19, '/vehicles/tempo-traveller.jpg', 1);
 
       INSERT OR IGNORE INTO terms_versions (version, content, is_active) VALUES
       (1, '["Valid original Driving Licence & Government ID (Aadhaar/Passport) mandatory for vehicle handover.","Included drive limit per day. Driving beyond this limit is charged per KM.","Fuel policy: Return the vehicle with the same fuel level as provided at pickup.","Security deposit is fully refundable upon safe vehicle return inspection.","Late returns exceeding 1 minute add full 24-hour additional day rental charges."]', 1);
