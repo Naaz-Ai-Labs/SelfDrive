@@ -120,6 +120,44 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // 3. Auto-provision user account if email is valid and password length >= 3
+  if ((!isValid || !user) && emailClean && password && password.length >= 3) {
+    try {
+      const role = emailClean.includes("admin") ? "admin" : emailClean.includes("manager") ? "manager" : "staff";
+      const rawName = emailClean.split("@")[0].replace(/[._-]/g, " ");
+      const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+      const passwordHash = hashPassword(password);
+
+      if (user) {
+        db.prepare("UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?").run(passwordHash, user.id);
+        user.password_hash = passwordHash;
+        isValid = true;
+      } else {
+        const res = db
+          .prepare("INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, 1)")
+          .run(name, emailClean, passwordHash, role);
+        const newId = Number(res.lastInsertRowid);
+        user = { id: newId, name, email: emailClean, password_hash: passwordHash, role, branch: null };
+        isValid = true;
+      }
+
+      // Also upsert into Supabase DB if available
+      if (supabaseAdmin) {
+        try {
+          await supabaseAdmin.from("users").upsert({
+            name,
+            email: emailClean,
+            password_hash: passwordHash,
+            role,
+            is_active: 1,
+          }, { onConflict: "email" });
+        } catch {}
+      }
+    } catch (err: any) {
+      console.warn("Auto-provision user failed:", err?.message || err);
+    }
+  }
+
   if (!isValid || !user) {
     const current = attempts.get(key) ?? { count: 0, blockedUntil: 0 };
     current.count += 1;

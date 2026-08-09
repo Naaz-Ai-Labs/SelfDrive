@@ -13,7 +13,11 @@ export function toRupees(paise: number): number {
 
 function getSupabaseClient() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const key =
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false } });
 }
@@ -31,7 +35,7 @@ export async function syncPaymentToSupabase(paymentId: number): Promise<boolean>
     // Ensure amount_paise is properly set
     const amountPaise = Number(payment.amount_paise) || toPaise(Number(payment.amount) || 0);
 
-    const { error } = await supabase.from("payments").upsert({
+    const payload: Record<string, unknown> = {
       id: payment.id,
       payment_no: payment.payment_no,
       booking_id: payment.booking_id,
@@ -50,7 +54,20 @@ export async function syncPaymentToSupabase(paymentId: number): Promise<boolean>
       paid_at: payment.paid_at ?? null,
       receipt_no: payment.receipt_no ?? null,
       notes: payment.notes ?? null,
-    });
+    };
+
+    let { error } = await supabase.from("payments").upsert(payload);
+
+    if (error && error.message.includes("Could not find the")) {
+      // Fallback: strip extended fields if Supabase table schema hasn't been updated yet
+      delete payload.amount_paise;
+      delete payload.currency;
+      delete payload.razorpay_order_id;
+      delete payload.razorpay_payment_id;
+      delete payload.razorpay_signature;
+      const fallback = await supabase.from("payments").upsert(payload);
+      error = fallback.error;
+    }
 
     if (error) {
       console.warn("⚠️ Supabase payment sync warning:", error.message);

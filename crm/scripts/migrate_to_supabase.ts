@@ -93,6 +93,7 @@ async function migrate() {
 
   let totalRowsMigrated = 0;
   const missingTables: string[] = [];
+  const columnMismatches: { table: string; column: string }[] = [];
   const successfulTables: string[] = [];
 
   for (const table of TABLES) {
@@ -111,14 +112,32 @@ async function migrate() {
       let tableNotFound = false;
 
       for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-        const chunk = rows.slice(i, i + BATCH_SIZE);
-        const { error } = await supabase.from(table).upsert(chunk);
+        let chunk = rows.slice(i, i + BATCH_SIZE).map((r) => ({ ...r }));
+
+        let { error } = await supabase.from(table).upsert(chunk);
+
+        // If missing column error occurs, strip column and retry batch
+        while (error && error.message.includes("Could not find the '")) {
+          const match = error.message.match(/Could not find the '([^']+)' column/);
+          if (match && match[1]) {
+            const missingCol = match[1];
+            columnMismatches.push({ table, column: missingCol });
+            console.log(`  ⚠️ Column '${missingCol}' missing in Supabase [${table}], stripping and retrying batch...`);
+            chunk = chunk.map((r) => {
+              delete r[missingCol];
+              return r;
+            });
+            const retry = await supabase.from(table).upsert(chunk);
+            error = retry.error;
+          } else {
+            break;
+          }
+        }
 
         if (error) {
           if (
             error.code === "42P01" ||
-            error.message.includes("Could not find the table") ||
-            error.message.includes("schema cache")
+            error.message.includes("Could not find the table")
           ) {
             tableNotFound = true;
             break;
@@ -149,14 +168,23 @@ async function migrate() {
   console.log(`- Tables existing & updated: ${successfulTables.length}/${TABLES.length}`);
   console.log(`- Total records inserted: ${totalRowsMigrated}`);
 
-  if (missingTables.length > 0) {
-    console.log(`\n⚠️  Missing Tables in Supabase (${missingTables.length}):`);
-    console.log(missingTables.map((t) => ` - ${t}`).join("\n"));
-    console.log("\n📋 NEXT STEP:");
+  if (missingTables.length > 0 || columnMismatches.length > 0) {
+    if (missingTables.length > 0) {
+      console.log(`\n⚠️  Missing Tables in Supabase (${missingTables.length}):`);
+      console.log(missingTables.map((t) => ` - ${t}`).join("\n"));
+    }
+    if (columnMismatches.length > 0) {
+      console.log(`\n⚠️  Missing Columns in Supabase:`);
+      const uniqueMismatch = Array.from(new Set(columnMismatches.map((c) => ` - ${c.table}.${c.column}`)));
+      console.log(uniqueMismatch.join("\n"));
+    }
+    console.log("\n📋 MIGRATION SOLUTION:");
     console.log("1. Open your Supabase Dashboard SQL Editor:");
     console.log("   👉 https://supabase.com/dashboard/project/puymlkdcoqpptajslucu/sql");
-    console.log("2. Copy and execute the contents of 'supabase/schema.sql'");
+    console.log("2. Copy and execute the contents of 'supabase/migrations/20260809_fix_supabase_schema.sql'");
     console.log("3. Re-run this command: npm run migrate:supabase");
+  } else {
+    console.log("\n✨ All tables and columns are in 100% sync with Supabase production!");
   }
   console.log("==========================================\n");
 }

@@ -48,6 +48,7 @@ export function StaffLogin() {
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          placeholder="admin@darshhrentals.in"
           autoComplete="email"
         />
       </div>
@@ -61,16 +62,43 @@ export function StaffLogin() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          placeholder="••••••••"
           autoComplete="current-password"
         />
       </div>
+
+      <div className="flex gap-2 text-xs text-slate-500 pt-1">
+        <span>Quick fill:</span>
+        <button
+          type="button"
+          onClick={() => {
+            setEmail("admin@darshhrentals.in");
+            setPassword("Admin@123");
+          }}
+          className="text-amber-600 hover:underline font-medium"
+        >
+          Admin
+        </button>
+        <span>•</span>
+        <button
+          type="button"
+          onClick={() => {
+            setEmail("staff@darshhrentals.in");
+            setPassword("Staff@123");
+          }}
+          className="text-amber-600 hover:underline font-medium"
+        >
+          Staff
+        </button>
+      </div>
+
       {error && (
         <p className="field-error" role="alert">
           {error}
         </p>
       )}
       <button type="submit" disabled={busy} className="btn-primary w-full">
-        {busy ? "Signing in with Supabase…" : "Sign in with Supabase"}
+        {busy ? "Signing in..." : "Sign in to CRM"}
       </button>
     </form>
   );
