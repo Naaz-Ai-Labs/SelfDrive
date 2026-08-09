@@ -2,9 +2,12 @@ import { getDb } from "./db";
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { randomToken } from "./utils";
+import crypto from "node:crypto";
+import { supabaseAdmin } from "./supabase";
 
 const SESSION_COOKIE = "dtt_session";
 const SESSION_DAYS = 7;
+const SESSION_SECRET = process.env.SESSION_SECRET || process.env.SUPABASE_SECRET_KEY || "darshh-crm-session-secret-key-2026";
 
 export type SessionUser = {
   id: number;
@@ -29,42 +32,127 @@ export function verifyPassword(plain: string, hash: string): boolean {
   return bcrypt.compareSync(plain, hash);
 }
 
-export function createSession(userId: number, ip?: string): string {
-  const db = getDb();
-  const token = randomToken(32);
-  const expires = new Date(Date.now() + SESSION_DAYS * 24 * 3600 * 1000)
+function signPayload(payload: string): string {
+  return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+}
+
+export function createSession(
+  userId: number,
+  ip?: string,
+  userMeta?: { role?: string; email?: string; name?: string }
+): string {
+  const tokenRaw = randomToken(32);
+  const expiresMs = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
+  const expiresISO = new Date(expiresMs)
     .toISOString()
     .slice(0, 19)
     .replace("T", " ");
-  db.prepare("INSERT INTO sessions (token, user_id, expires_at, ip) VALUES (?, ?, ?, ?)").run(
-    token,
-    userId,
-    expires,
-    ip ?? null
-  );
-  return token;
+
+  try {
+    const db = getDb();
+    db.prepare("INSERT INTO sessions (token, user_id, expires_at, ip) VALUES (?, ?, ?, ?)").run(
+      tokenRaw,
+      userId,
+      expiresISO,
+      ip ?? null
+    );
+  } catch {}
+
+  const role = userMeta?.role || "staff";
+  const email = userMeta?.email || "";
+  const name = userMeta?.name || "";
+
+  const payload = `${userId}:${role}:${expiresMs}:${encodeURIComponent(email)}:${encodeURIComponent(name)}`;
+  const sig = signPayload(payload);
+  return `${payload}:${sig}:${tokenRaw}`;
 }
 
 export function destroySession(token: string) {
-  getDb().prepare("DELETE FROM sessions WHERE token = ?").run(token);
+  try {
+    const parts = token.split(":");
+    const tokenRaw = parts.length >= 6 ? parts[5] : token;
+    getDb().prepare("DELETE FROM sessions WHERE token = ?").run(tokenRaw);
+  } catch {}
 }
 
 export async function getCurrentUser(): Promise<SessionUser | null> {
-  const db = getDb();
   const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
-  const row = db
-    .prepare(
-      `SELECT u.id, u.name, u.email, u.role, u.branch FROM sessions s
-       JOIN users u ON u.id = s.user_id
-       WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1`
-    )
-    .get(token) as
-    | { id: number; name: string; email: string; role: string; branch: string | null }
-    | undefined;
-  if (!row) return null;
-  return row;
+  const rawToken = store.get(SESSION_COOKIE)?.value;
+  if (!rawToken) return null;
+
+  // 1. Verify signed HMAC session token (stateless across Vercel serverless containers)
+  const parts = rawToken.split(":");
+  if (parts.length >= 5) {
+    const [userIdStr, role, expiresMsStr, encEmail, encName, sig] = parts;
+    const payload = `${userIdStr}:${role}:${expiresMsStr}:${encEmail}:${encName}`;
+    const expectedSig = signPayload(payload);
+    const expiresMs = Number(expiresMsStr);
+
+    if (sig === expectedSig && Date.now() < expiresMs) {
+      const userId = Number(userIdStr);
+      const email = decodeURIComponent(encEmail || "");
+      const name = decodeURIComponent(encName || "");
+
+      const db = getDb();
+      try {
+        const userRow = db
+          .prepare("SELECT id, name, email, role, branch FROM users WHERE id = ? AND is_active = 1")
+          .get(userId) as SessionUser | undefined;
+        if (userRow) return userRow;
+
+        if (email) {
+          const userByEmail = db
+            .prepare("SELECT id, name, email, role, branch FROM users WHERE email = ? AND is_active = 1")
+            .get(email.toLowerCase().trim()) as SessionUser | undefined;
+          if (userByEmail) return userByEmail;
+        }
+      } catch {}
+
+      // Fallback: If user isn't in ephemeral SQLite on new Lambda container, try fetching from Supabase DB
+      if (supabaseAdmin && email) {
+        try {
+          const { data: sbUser } = await supabaseAdmin
+            .from("users")
+            .select("id, name, email, role, branch")
+            .eq("email", email.toLowerCase().trim())
+            .maybeSingle();
+
+          if (sbUser) {
+            try {
+              db.prepare(
+                "INSERT OR IGNORE INTO users (id, name, email, password_hash, role, branch, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)"
+              ).run(sbUser.id, sbUser.name, sbUser.email, "stateless-session", sbUser.role, sbUser.branch);
+            } catch {}
+            return sbUser as SessionUser;
+          }
+        } catch {}
+      }
+
+      // Reconstruct verified user from signed token
+      return {
+        id: userId,
+        name: name || (role === "admin" ? "Administrator" : "Staff User"),
+        email: email || "staff@darshhrentals.in",
+        role: role || "staff",
+        branch: null,
+      };
+    }
+  }
+
+  // 2. Fallback to SQLite DB token lookup
+  try {
+    const db = getDb();
+    const row = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.branch FROM sessions s
+         JOIN users u ON u.id = s.user_id
+         WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1`
+      )
+      .get(rawToken) as SessionUser | undefined;
+    if (row) return row;
+  } catch {}
+
+  return null;
 }
 
 export async function requireUser(roles?: string[]): Promise<SessionUser> {

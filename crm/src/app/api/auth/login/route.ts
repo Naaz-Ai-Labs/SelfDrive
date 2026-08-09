@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
   }
 
   attempts.delete(key);
-  const token = createSession(user.id, ip);
+  const token = createSession(user.id, ip, { role: user.role, email: user.email, name: user.name });
   db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
   logActivity(user.id, "login", "user", user.id);
 
