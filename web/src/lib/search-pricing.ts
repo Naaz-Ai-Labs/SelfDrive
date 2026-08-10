@@ -53,8 +53,10 @@ export function calculateVehicleSearchPrice(
   const rParts = parseDateParts(returnDateStr);
   if (!pParts || !rParts) return null;
 
+  const isSundayReturn = rParts.dateObj.getDay() === 0;
+  const standardReturnTime = isSundayReturn ? "09:00" : "08:00";
   const pTime = pickupTimeStr || "08:00";
-  const rTime = returnTimeStr || "08:00";
+  const rTime = returnTimeStr || standardReturnTime;
 
   const pDate = new Date(`${pParts.year}-${String(pParts.month).padStart(2, "0")}-${String(pParts.day).padStart(2, "0")}T${pTime}`);
   const rDate = new Date(`${rParts.year}-${String(rParts.month).padStart(2, "0")}-${String(rParts.day).padStart(2, "0")}T${rTime}`);
@@ -78,7 +80,7 @@ export function calculateVehicleSearchPrice(
   }
 
   const isEarlyPickup = pTime < "08:00";
-  const isLateDrop = rTime > pTime;
+  const isLateDrop = isSundayReturn ? rTime > "09:00" : rTime > pTime;
   const earlyPickupFee = isEarlyPickup ? 250 : 0;
   const lateDropFee = isLateDrop ? 250 : 0;
   const totalTimingFees = earlyPickupFee + lateDropFee;

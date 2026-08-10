@@ -112,12 +112,13 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
   const effectiveWeekendMin = seasonalRule?.min_days && seasonalRule.min_days > 1 ? seasonalRule.min_days : weekendMinDays;
   const belowWeekendMinimum = bookingStartsWeekend && days < effectiveWeekendMin;
 
-  // Off-schedule timing fees: ₹250 for early pickup (< 08:00), ₹250 for late dropoff (> pickup time)
+  // Off-schedule timing fees: ₹250 for early pickup (< 08:00), ₹250 for late dropoff (> pickup time or > 09:00 on Sundays)
   const pickupTimeStr = pickupTimeHM || (pickupAt.toISOString().slice(11, 16));
+  const isSundayReturn = returnAt.getDay() === 0;
   const returnTimeStr = returnTimeHM || (returnAt.toISOString().slice(11, 16));
 
   const isEarlyPickup = pickupTimeStr < "08:00";
-  const isLateDrop = returnTimeStr > pickupTimeStr;
+  const isLateDrop = isSundayReturn ? returnTimeStr > "09:00" : returnTimeStr > pickupTimeStr;
   const timingFeeAmount = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
 
   const rawKm = seasonalRule?.included_km ?? vehicle.included_km ?? 100;

@@ -152,9 +152,11 @@ function computeClientQuote(
   }
 
   const pTime = pickupTimeStr ?? "08:00";
-  const rTime = returnTimeStr ?? "08:00";
+  const isSundayReturn = getDayOfWeek(returnDateStr) === 0;
+  const standardReturnTime = isSundayReturn ? "09:00" : "08:00";
+  const rTime = returnTimeStr ?? standardReturnTime;
   const isEarlyPickup = pTime < "08:00";
-  const isLateDrop = rTime > pTime;
+  const isLateDrop = isSundayReturn ? rTime > "09:00" : rTime > pTime;
   const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
 
   const depositAmount = Number(vehicle.deposit ?? 1000);
@@ -209,6 +211,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
   const isFriday = useMemo(() => getDayOfWeek(pickupDate) === 5, [pickupDate]);
   const isSaturday = useMemo(() => getDayOfWeek(pickupDate) === 6, [pickupDate]);
+  const isSundayReturn = useMemo(() => getDayOfWeek(returnDate) === 0, [returnDate]);
   const pickupDayLabel = useMemo(() => getDayName(pickupDate), [pickupDate]);
   const returnDayLabel = useMemo(() => getDayName(returnDate), [returnDate]);
 
@@ -248,22 +251,34 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   const handlePickupDateChange = (newDate: string) => {
     setPickupDate(newDate);
     const day = getDayOfWeek(newDate);
+    let newReturn = returnDate;
     if (day === 6) {
       const mondayISO = getNextMondayISO(newDate);
       if (returnDate < mondayISO) {
+        newReturn = mondayISO;
         setReturnDate(mondayISO);
       }
     } else if (day === 5) {
       if (fridayWeekendExtension) {
         const mondayISO = getNextMondayISO(newDate);
         if (returnDate < mondayISO) {
+          newReturn = mondayISO;
           setReturnDate(mondayISO);
         }
       } else {
-        setReturnDate(addDaysISO(newDate, 1));
+        newReturn = addDaysISO(newDate, 1);
+        setReturnDate(newReturn);
       }
     } else {
-      setReturnDate(addDaysISO(newDate, 1));
+      newReturn = addDaysISO(newDate, 1);
+      setReturnDate(newReturn);
+    }
+
+    const retDay = getDayOfWeek(newReturn);
+    if (retDay === 0 && returnTime === "08:00") {
+      setReturnTime("09:00");
+    } else if (retDay !== 0 && returnTime === "09:00") {
+      setReturnTime("08:00");
     }
   };
 
@@ -286,10 +301,17 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   };
 
   const handleReturnDateChange = (newReturnDate: string) => {
-    if (newReturnDate < minReturnDate) {
-      setReturnDate(minReturnDate);
+    const targetDate = newReturnDate < minReturnDate ? minReturnDate : newReturnDate;
+    setReturnDate(targetDate);
+    const day = getDayOfWeek(targetDate);
+    if (day === 0) {
+      if (returnTime === "08:00") {
+        setReturnTime("09:00");
+      }
     } else {
-      setReturnDate(newReturnDate);
+      if (returnTime === "09:00") {
+        setReturnTime("08:00");
+      }
     }
   };
 
@@ -644,13 +666,32 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 )}
               </div>
               <div>
-                <label className="label">Drop time (Return time)</label>
+                <label className="label">
+                  Drop time (Return time)
+                  {isSundayReturn && (
+                    <span className="ml-2 text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                      Standard: 9:00 AM
+                    </span>
+                  )}
+                </label>
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
-                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => (
-                    <option key={t} value={t}>
-                      {t === "08:00" ? "8:00 AM (Standard)" : t > pickupTime ? `${formatTimeLabel(t)} (+₹250 Late Drop)` : formatTimeLabel(t)}
-                    </option>
-                  ))}
+                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => {
+                    const isStandardSunday = isSundayReturn && t === "09:00";
+                    const isStandardWeekday = !isSundayReturn && t === "08:00";
+                    const isLate = isSundayReturn ? t > "09:00" : t > pickupTime;
+
+                    return (
+                      <option key={t} value={t}>
+                        {isStandardSunday
+                          ? "9:00 AM (Standard Sunday Drop)"
+                          : isStandardWeekday
+                          ? "8:00 AM (Standard)"
+                          : isLate
+                          ? `${formatTimeLabel(t)} (+₹250 Late Drop)`
+                          : formatTimeLabel(t)}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -663,7 +704,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               Calculated Duration: {days} day{days > 1 ? "s" : ""} · Standard Daily Limit: 100 km/day (Bikes/Scooters) / 300 km/day (Cars) / Unlimited (Tempo) · Extra KM: ₹4/km (Bikes &amp; Scooters) / ₹8/km (Cars)
             </p>
             <p className="mt-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900 shadow-xs">
-              <strong>NOTE:</strong> Standard pickup is 8:00 AM. Early pickup (before 8:00 AM) or drop-off after your scheduled 24-hr cycle incurs a ₹250 off-schedule fee.
+              <strong>NOTE:</strong> Standard pickup is 8:00 AM. Standard drop-off is 8:00 AM (9:00 AM for Sunday drop-offs). Early pickup (before 8:00 AM) or drop-off after standard time incurs a ₹250 off-schedule fee.
             </p>
           </div>
         )}

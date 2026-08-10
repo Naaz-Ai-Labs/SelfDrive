@@ -126,9 +126,10 @@ export async function submitBooking(input: {
         }
 
         const pickupTimeStr = input.pickupAt.includes("T") ? input.pickupAt.split("T")[1] : "08:00";
-        const returnTimeStr = input.returnAt.includes("T") ? input.returnAt.split("T")[1] : "08:00";
+        const isSundayReturn = r.getDay() === 0;
+        const returnTimeStr = input.returnAt.includes("T") ? input.returnAt.split("T")[1] : (isSundayReturn ? "09:00" : "08:00");
         const isEarlyPickup = pickupTimeStr < "08:00";
-        const isLateDrop = returnTimeStr > pickupTimeStr;
+        const isLateDrop = isSundayReturn ? returnTimeStr > "09:00" : returnTimeStr > pickupTimeStr;
         const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
 
         depositAmount = Number(v.deposit ?? 1000);
@@ -261,9 +262,10 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
       }
 
       const pickupTimeStr = pickupAt.includes("T") ? pickupAt.split("T")[1] : "08:00";
-      const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : "08:00";
+      const isSundayReturn = r.getDay() === 0;
+      const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : (isSundayReturn ? "09:00" : "08:00");
       const isEarlyPickup = pickupTimeStr < "08:00";
-      const isLateDrop = returnTimeStr > pickupTimeStr;
+      const isLateDrop = isSundayReturn ? returnTimeStr > "09:00" : returnTimeStr > pickupTimeStr;
       const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
 
       const depositAmount = Number(v.deposit ?? 1000);
