@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -49,6 +50,11 @@ export function SidebarNav({ items }: { items: NavItem[] }) {
 export function MobileNav({ items, user }: { items: NavItem[]; user?: User }) {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Close burger drawer automatically on route navigation
   useEffect(() => {
@@ -73,15 +79,15 @@ export function MobileNav({ items, user }: { items: NavItem[]; user?: User }) {
   return (
     <div className="lg:hidden">
       {/* Mobile Top Bar Header Controls: Hamburger Button + Current Section Name */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
           aria-label={isOpen ? "Close mobile menu" : "Open mobile menu"}
           aria-expanded={isOpen}
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-ink-200 bg-white text-ink-800 shadow-sm transition hover:bg-ink-50 active:scale-95"
+          className="flex h-9 w-9 items-center justify-center rounded-xl border border-ink-200 bg-white text-ink-800 shadow-sm transition hover:bg-ink-50 active:scale-95 shrink-0"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {isOpen ? (
               <path d="M18 6L6 18M6 6l12 12" />
             ) : (
@@ -91,29 +97,29 @@ export function MobileNav({ items, user }: { items: NavItem[]; user?: User }) {
         </button>
 
         {/* Current Active Section Badge for Phones */}
-        <Link href="/dashboard" className="flex items-center gap-2">
-          <img src="/logo.png" alt="Logo" className="h-7 w-7 object-contain" />
-          <div className="leading-tight">
-            <span className="block text-xs font-bold text-ink-900">{activeItem?.label || "CRM"}</span>
-            <span className="block text-[9px] font-semibold text-brand-600 uppercase tracking-widest">Darshh Holiday</span>
+        <Link href="/dashboard" className="flex items-center gap-2 min-w-0">
+          <img src="/logo.png" alt="Logo" className="h-6 w-6 object-contain shrink-0" />
+          <div className="leading-tight truncate">
+            <span className="block text-xs font-bold text-ink-900 truncate">{activeItem?.label || "CRM"}</span>
+            <span className="block text-[8px] font-semibold text-brand-600 uppercase tracking-wider">Darshh Holiday</span>
           </div>
         </Link>
       </div>
 
-      {/* OFF-CANVAS RESPONSIVE BURGER MENU DRAWER */}
-      {isOpen && (
-        <>
+      {/* OFF-CANVAS RESPONSIVE BURGER MENU DRAWER (Rendered via React Portal onto document.body to avoid stacking context traps) */}
+      {isOpen && mounted && createPortal(
+        <div className="fixed inset-0 z-[99999]">
           {/* Semi-transparent Backdrop Overlay */}
           <div
             onClick={() => setIsOpen(false)}
-            className="fixed inset-0 z-40 bg-ink-950/80 backdrop-blur-sm transition-opacity"
+            className="fixed inset-0 z-[99998] bg-black/75 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
             aria-hidden="true"
           />
 
-          {/* Slide-in Mobile Drawer Panel */}
-          <div className="fixed inset-y-0 left-0 z-50 flex h-full w-[280px] max-w-[85vw] flex-col bg-ink-950 text-white shadow-2xl border-r border-white/10">
+          {/* Full-Height Slide-in Mobile Drawer Panel */}
+          <aside className="fixed inset-y-0 left-0 z-[99999] flex h-[100dvh] w-[285px] max-w-[85vw] flex-col bg-ink-950 text-white shadow-2xl border-r border-white/10 animate-in slide-in-from-left duration-200">
             {/* Drawer Header */}
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-4 shrink-0">
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-4 shrink-0 bg-black/30">
               <Link href="/dashboard" onClick={() => setIsOpen(false)} className="flex items-center gap-2.5">
                 <img src="/logo.png" alt="Logo" className="h-8 w-8 object-contain" />
                 <div className="leading-tight">
@@ -165,7 +171,7 @@ export function MobileNav({ items, user }: { items: NavItem[]; user?: User }) {
 
             {/* Drawer User Footer */}
             {user && (
-              <div className="border-t border-white/10 bg-black/40 p-3.5 shrink-0">
+              <div className="border-t border-white/10 bg-black/60 p-3.5 shrink-0">
                 <div className="flex items-center gap-3">
                   <Avatar name={user.name} size="sm" />
                   <div className="min-w-0 flex-1 leading-tight">
@@ -178,8 +184,9 @@ export function MobileNav({ items, user }: { items: NavItem[]; user?: User }) {
                 </div>
               </div>
             )}
-          </div>
-        </>
+          </aside>
+        </div>,
+        document.body
       )}
     </div>
   );
