@@ -6,7 +6,7 @@ const __dirname = path.dirname(__filename);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["node:sqlite"],
+  serverExternalPackages: ["better-sqlite3", "node:sqlite", "bcryptjs"],
   outputFileTracingRoot: __dirname,
   turbopack: {
     root: __dirname,
