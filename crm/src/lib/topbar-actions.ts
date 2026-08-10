@@ -5,15 +5,19 @@ import { staffUser } from "./actions";
 import { revalidatePath } from "next/cache";
 
 export async function getNotifications() {
-  const user = await staffUser();
-  const db = getDb();
-  const items = (
-    db
-      .prepare("SELECT id, title, body, read, enquiry_id, booking_id, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 12")
-      .all(user.id) as Array<{ id: number; title: string; body: string | null; read: number; enquiry_id: number | null; booking_id: number | null; created_at: string }>
-  ).map((r) => ({ ...r }));
-  const unread = db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0").get(user.id) as { c: number };
-  return { items, unread: unread.c };
+  try {
+    const user = await staffUser();
+    const db = getDb();
+    const items = (
+      db
+        .prepare("SELECT id, title, body, read, enquiry_id, booking_id, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 12")
+        .all(user.id) as Array<{ id: number; title: string; body: string | null; read: number; enquiry_id: number | null; booking_id: number | null; created_at: string }>
+    ).map((r) => ({ ...r }));
+    const unread = db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0").get(user.id) as { c: number } | undefined;
+    return { items, unread: unread?.c ?? 0 };
+  } catch {
+    return { items: [], unread: 0 };
+  }
 }
 
 export async function markNotificationRead(id: number) {
