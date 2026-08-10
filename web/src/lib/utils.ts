@@ -251,7 +251,12 @@ export function compute25HourAutoReturn(
   const ry = rDateTime.getFullYear();
   const rm = String(rDateTime.getMonth() + 1).padStart(2, "0");
   const rd = String(rDateTime.getDate()).padStart(2, "0");
-  const rh = String(rDateTime.getHours()).padStart(2, "0");
+  let rhNum = rDateTime.getHours();
+  // Ensure drop-off time is never in 12 AM - 5 AM window (clamp to 06:00 AM)
+  if (rhNum >= 0 && rhNum <= 5) {
+    rhNum = 6;
+  }
+  const rh = String(rhNum).padStart(2, "0");
 
   return { returnDate: `${ry}-${rm}-${rd}`, returnTime: `${rh}:00` };
 }

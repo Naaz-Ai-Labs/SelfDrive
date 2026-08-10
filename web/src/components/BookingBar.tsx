@@ -176,6 +176,10 @@ export function BookingBar({
             className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
           >
             {TIME_SLOTS.filter((t) => {
+              // Always exclude drop-off time slots from 12 AM (00:00) to 5 AM (05:00)
+              if (t.value >= "00:00" && t.value <= "05:00") {
+                return false;
+              }
               const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
               if (isSameDay) {
                 return t.value > pickupTime;

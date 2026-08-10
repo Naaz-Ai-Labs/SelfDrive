@@ -778,6 +778,10 @@ export function BookingForm({
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`)
                     .filter((t) => {
+                      // Always exclude drop-off time slots from 12 AM (00:00) to 5 AM (05:00)
+                      if (t >= "00:00" && t <= "05:00") {
+                        return false;
+                      }
                       const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
                       if (isSameDay) {
                         return t > pickupTime;
