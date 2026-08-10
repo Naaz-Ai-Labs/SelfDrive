@@ -85,13 +85,13 @@ export default async function VehiclesPage(
       </section>
 
       <section className="container-x pb-16">
-        {/* Temporary Search Pricing Notification Banner */}
+        {/* Search Pricing Notification Banner */}
         {hasSearchQuery && searchQuotes[0] && (
           <div className="mb-6 rounded-2xl border border-brand-300 bg-brand-50/90 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
                 <span className="rounded bg-brand-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">
-                  Temporary Searched Prices
+                  Trip Pricing
                 </span>
                 <span className="text-sm font-bold text-ink-900">
                   {searchQuotes[0].days} Day{searchQuotes[0].days > 1 ? "s" : ""} Duration
@@ -186,7 +186,6 @@ export default async function VehiclesPage(
                         <div>
                           {quote ? (
                             <div>
-                              <p className="text-xs font-bold uppercase tracking-wider text-brand-700">Temporary Searched Price</p>
                               <p className="text-sm text-ink-500">
                                 <span className="font-display text-xl font-bold text-ink-900">{formatINR(quote.baseAmount)}</span>
                                 <span className="text-xs"> for {quote.days} day{quote.days > 1 ? "s" : ""}</span>
