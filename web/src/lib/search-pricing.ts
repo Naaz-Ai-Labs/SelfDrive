@@ -54,7 +54,7 @@ export function calculateVehicleSearchPrice(
   if (!pParts || !rParts) return null;
 
   const isSundayReturn = rParts.dateObj.getDay() === 0;
-  const standardReturnTime = isSundayReturn ? "09:00" : "08:00";
+  const standardReturnTime = "08:00";
   const pTime = pickupTimeStr || "08:00";
   const rTime = returnTimeStr || standardReturnTime;
 
@@ -64,8 +64,9 @@ export function calculateVehicleSearchPrice(
   const msPerDay = 24 * 60 * 60 * 1000;
   const diffMs = Math.max(0, rDate.getTime() - pDate.getTime());
   const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-  // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
-  const days = isSundayReturn ? baseDays + 1 : baseDays;
+  // If drop-off time is after standard 08:00 AM, charge for 1 more day
+  const isLateDrop = rTime > "08:00";
+  const days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
 
   let baseAmount = 0;
   let weekendDaysCount = 0;
@@ -82,9 +83,8 @@ export function calculateVehicleSearchPrice(
   }
 
   const isEarlyPickup = pTime < "08:00";
-  const isLateDrop = isSundayReturn ? rTime > "09:00" : rTime > pTime;
   const earlyPickupFee = isEarlyPickup ? 250 : 0;
-  const lateDropFee = isLateDrop ? 250 : 0;
+  const lateDropFee = 0;
   const totalTimingFees = earlyPickupFee + lateDropFee;
 
   const depositAmount = Number(vehicle.deposit ?? 1000);

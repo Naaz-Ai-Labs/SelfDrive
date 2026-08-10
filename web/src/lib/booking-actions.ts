@@ -116,8 +116,11 @@ export async function submitBooking(input: {
         const msPerDay = 24 * 60 * 60 * 1000;
         const diffMs = Math.max(0, r.getTime() - p.getTime());
         const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-        // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
-        const days = isSundayReturn ? baseDays + 1 : baseDays;
+        const pickupTimeStr = input.pickupAt.includes("T") ? input.pickupAt.split("T")[1] : "08:00";
+        const returnTimeStr = input.returnAt.includes("T") ? input.returnAt.split("T")[1] : "08:00";
+        const isLateDrop = returnTimeStr > "08:00";
+        // If drop-off time is after standard 08:00 AM, charge for 1 more day
+        const days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
 
         baseAmount = 0;
         for (let i = 0; i < days; i++) {
@@ -128,11 +131,8 @@ export async function submitBooking(input: {
           baseAmount += rate;
         }
 
-        const pickupTimeStr = input.pickupAt.includes("T") ? input.pickupAt.split("T")[1] : "08:00";
-        const returnTimeStr = input.returnAt.includes("T") ? input.returnAt.split("T")[1] : (isSundayReturn ? "09:00" : "08:00");
         const isEarlyPickup = pickupTimeStr < "08:00";
-        const isLateDrop = isSundayReturn ? returnTimeStr > "09:00" : returnTimeStr > pickupTimeStr;
-        const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
+        const timingFee = isEarlyPickup ? 250 : 0;
 
         depositAmount = Number(v.deposit ?? 1000);
         const taxableAmount = baseAmount + timingFee;
@@ -249,8 +249,11 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
       const msPerDay = 24 * 60 * 60 * 1000;
       const diffMs = Math.max(0, r.getTime() - p.getTime());
       const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-      // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
-      const days = isSundayReturn ? baseDays + 1 : baseDays;
+      const pickupTimeStr = pickupAt.includes("T") ? pickupAt.split("T")[1] : "08:00";
+      const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : "08:00";
+      const isLateDrop = returnTimeStr > "08:00";
+      // If drop-off time is after standard 08:00 AM, charge for 1 more day
+      const days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
 
       let baseAmount = 0;
       const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
@@ -266,11 +269,8 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
         baseAmount += rate;
       }
 
-      const pickupTimeStr = pickupAt.includes("T") ? pickupAt.split("T")[1] : "08:00";
-      const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : (isSundayReturn ? "09:00" : "08:00");
       const isEarlyPickup = pickupTimeStr < "08:00";
-      const isLateDrop = isSundayReturn ? returnTimeStr > "09:00" : returnTimeStr > pickupTimeStr;
-      const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
+      const timingFee = isEarlyPickup ? 250 : 0;
 
       const depositAmount = Number(v.deposit ?? 1000);
       const gstPct = 6;

@@ -145,8 +145,11 @@ function computeClientQuote(
   const msPerDay = 24 * 60 * 60 * 1000;
   const diffMs = Math.max(0, r.getTime() - p.getTime());
   const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-  // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
-  const days = isSundayReturn ? baseDays + 1 : baseDays;
+  // If drop-off time is after standard 08:00 AM, charge for 1 more day
+  const isLateDrop = rTime > "08:00";
+  const sundayExtra = isSundayReturn ? 1 : 0;
+  const lateDropExtra = isLateDrop ? 1 : 0;
+  const days = baseDays + sundayExtra + lateDropExtra;
 
   let baseAmount = 0;
   let weekendDaysCount = 0;
@@ -268,14 +271,17 @@ export function BookingForm({
   const returnAt = combineIso(returnDate, returnTime);
 
   const days = useMemo(() => {
-    const p = new Date(`${pickupDate}T${pickupTime}`);
-    const r = new Date(`${returnDate}T${returnTime}`);
-    const diffMs = r.getTime() - p.getTime();
-    if (Number.isNaN(diffMs) || diffMs <= 0) return 1;
-    const baseDays = Math.max(1, Math.round(diffMs / (24 * 60 * 60 * 1000)));
-    const isSunday = getDayOfWeek(returnDate) === 0;
-    return isSunday ? baseDays + 1 : baseDays;
-  }, [pickupDate, pickupTime, returnDate, returnTime]);
+    const pParts = parseDateParts(pickupDate);
+    const rParts = parseDateParts(returnDate);
+    if (!pParts || !rParts) return 1;
+    const p = new Date(pParts.year, pParts.month - 1, pParts.day);
+    const r = new Date(rParts.year, rParts.month - 1, rParts.day);
+    const rawDiff = Math.max(0, r.getTime() - p.getTime());
+    const baseDays = Math.max(1, Math.round(rawDiff / (24 * 60 * 60 * 1000)));
+    const isSunday = rParts.dateObj.getDay() === 0;
+    const isLateDrop = returnTime > "08:00";
+    return baseDays + (isSunday ? 1 : 0) + (isLateDrop ? 1 : 0);
+  }, [pickupDate, returnDate, returnTime]);
 
   const [vehicleId, setVehicleId] = useState<number | null>(search.get("vehicle") ? Number(search.get("vehicle")) : null);
   const [availableVehicles, setAvailableVehicles] = useState<Vehicle[]>(initialVehicles);
