@@ -53,11 +53,35 @@ export type Vehicle = {
 
 export type Branch = { id: number; name: string; city: string | null; address: string | null; phone: string | null; active: number };
 
+const DEFAULT_SLUG_PHOTOS: Record<string, string> = {
+  "honda-dio": "/vehicles/honda-dio.avif",
+  "honda-activa": "/vehicles/honda-activa.webp",
+  "tvs-jupiter": "/vehicles/honda-activa.webp",
+  "yamaha-rayzr": "/vehicles/honda-dio.avif",
+  "tvs-ntorq": "/vehicles/honda-dio.avif",
+  "tvs-ronin": "/vehicles/tvs-ronin.avif",
+  "honda-cb200x": "/vehicles/honda-cb200x.jpg",
+  "tvs-raider": "/vehicles/tvs-ronin.avif",
+  "bajaj-pulsar-ns": "/vehicles/honda-cb200x.jpg",
+  "honda-shine": "/vehicles/tvs-ronin.avif",
+  "maruti-baleno-manual": "/vehicles/baleno-manual.avif",
+  "maruti-dzire": "/vehicles/baleno-manual.avif",
+  "maruti-ciaz": "/vehicles/baleno-manual.avif",
+  "maruti-ertiga-7-seater": "/vehicles/mahindra-thar.avif",
+  "mahindra-thar-manual": "/vehicles/mahindra-thar.avif",
+  "tempo-traveller-12": "/vehicles/tempo-traveller.jpg",
+  "tempo-traveller-2days": "/vehicles/tempo-traveller.jpg",
+};
+
 function attachPhotos(vehicle: Record<string, unknown>): Vehicle {
   const db = getDb();
-  const photos = db
+  const rawPhotos = db
     .prepare("SELECT url FROM vehicle_photos WHERE vehicle_id = ? ORDER BY is_primary DESC, sort")
     .all(vehicle.id as number) as Array<{ url: string }>;
+
+  const slug = String(vehicle.slug ?? "");
+  const fallbackPhoto = DEFAULT_SLUG_PHOTOS[slug] || "/vehicles/baleno-manual.avif";
+  const photoUrls = rawPhotos.length > 0 ? rawPhotos.map((p) => p.url) : [fallbackPhoto];
 
   const booked = db
     .prepare(
@@ -81,8 +105,8 @@ function attachPhotos(vehicle: Record<string, unknown>): Vehicle {
     weekend_rate_24h: weekendRate24h,
     total_units: totalUnits,
     available_units: availableUnits,
-    photos: photos.map((p) => p.url),
-    primary_photo: photos[0]?.url ?? null,
+    photos: photoUrls,
+    primary_photo: photoUrls[0] ?? fallbackPhoto,
   };
 }
 

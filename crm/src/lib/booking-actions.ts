@@ -233,29 +233,53 @@ async function getAvailableVehiclesFromSupabase(kind: string | null, _pickupAt: 
     const vehicleIds = vehicles.map((v: any) => v.id);
     const { data: photos } = await supabase
       .from("vehicle_photos")
-      .select("vehicle_id, photo_url, is_primary")
+      .select("vehicle_id, url, is_primary")
       .in("vehicle_id", vehicleIds);
 
     const photoMap = new Map<number, { photos: string[]; primary: string }>();
     if (photos) {
       for (const p of photos) {
+        const photoUrl = (p as any).url || (p as any).photo_url;
+        if (!photoUrl) continue;
         const entry = photoMap.get(p.vehicle_id) || { photos: [], primary: "" };
-        entry.photos.push(p.photo_url);
-        if (p.is_primary) entry.primary = p.photo_url;
+        entry.photos.push(photoUrl);
+        if (p.is_primary) entry.primary = photoUrl;
         photoMap.set(p.vehicle_id, entry);
       }
     }
 
+    const DEFAULT_SLUG_PHOTOS: Record<string, string> = {
+      "honda-dio": "/vehicles/honda-dio.avif",
+      "honda-activa": "/vehicles/honda-activa.webp",
+      "tvs-jupiter": "/vehicles/honda-activa.webp",
+      "yamaha-rayzr": "/vehicles/honda-dio.avif",
+      "tvs-ntorq": "/vehicles/honda-dio.avif",
+      "tvs-ronin": "/vehicles/tvs-ronin.avif",
+      "honda-cb200x": "/vehicles/honda-cb200x.jpg",
+      "tvs-raider": "/vehicles/tvs-ronin.avif",
+      "bajaj-pulsar-ns": "/vehicles/honda-cb200x.jpg",
+      "honda-shine": "/vehicles/tvs-ronin.avif",
+      "maruti-baleno-manual": "/vehicles/baleno-manual.avif",
+      "maruti-dzire": "/vehicles/baleno-manual.avif",
+      "maruti-ciaz": "/vehicles/baleno-manual.avif",
+      "maruti-ertiga-7-seater": "/vehicles/mahindra-thar.avif",
+      "mahindra-thar-manual": "/vehicles/mahindra-thar.avif",
+      "tempo-traveller-12": "/vehicles/tempo-traveller.jpg",
+      "tempo-traveller-2days": "/vehicles/tempo-traveller.jpg",
+    };
+
     return vehicles.map((v: any) => {
       const cat = v.vehicle_categories;
       const ph = photoMap.get(v.id);
+      const fallback = DEFAULT_SLUG_PHOTOS[v.slug] || "/vehicles/baleno-manual.avif";
+      const vehiclePhotos = ph?.photos && ph.photos.length > 0 ? ph.photos : [fallback];
       return {
         ...v,
         category_name: cat?.name || "Vehicle",
         category_kind: cat?.kind || "car",
         category_slug: cat?.slug || "cars",
-        photos: ph?.photos || [],
-        primary_photo: ph?.primary || ph?.photos?.[0] || null,
+        photos: vehiclePhotos,
+        primary_photo: ph?.primary || vehiclePhotos[0] || fallback,
         available_units: v.available_units ?? v.total_units ?? 1,
         vehicle_categories: undefined, // remove nested join object
       };
