@@ -16,11 +16,12 @@ export function BookingBar({
   initialValues,
 }: {
   categories: { id: number; name: string; kind: string }[];
-  initialValues?: { kind?: string; pickup?: string; pickupTime?: string; return?: string; returnTime?: string };
+  initialValues?: { kind?: string; location?: string; pickup?: string; pickupTime?: string; return?: string; returnTime?: string };
 }) {
   const router = useRouter();
   const today = new Date().toISOString().slice(0, 10);
   const [kind, setKind] = useState(initialValues?.kind ?? "");
+  const [location, setLocation] = useState(initialValues?.location ?? "SAKLESHPURA");
   const [pickupDate, setPickupDate] = useState(initialValues?.pickup ?? today);
   const [pickupTime, setPickupTime] = useState(initialValues?.pickupTime ?? "08:00");
   const [returnDate, setReturnDate] = useState(initialValues?.return ?? today);
@@ -44,19 +45,32 @@ export function BookingBar({
         e.preventDefault();
         const params = new URLSearchParams();
         if (kind) params.set("kind", kind);
+        if (location) params.set("location", location);
         if (pickupDate) params.set("pickup", pickupDate);
         if (pickupTime) params.set("pickupTime", pickupTime);
         if (returnDate) params.set("return", returnDate);
         if (returnTime) params.set("returnTime", returnTime);
         // Cache search context so BookingForm can read it reliably
         try {
-          sessionStorage.setItem("darshh_search_context", JSON.stringify({ pickupDate, pickupTime, returnDate, returnTime, kind }));
+          sessionStorage.setItem("darshh_search_context", JSON.stringify({ pickupDate, pickupTime, returnDate, returnTime, kind, location }));
         } catch {}
         router.push(`/vehicles?${params.toString()}`);
       }}
-      className="grid gap-4 rounded-2xl border border-white/15 bg-ink-950/70 p-4 shadow-lift backdrop-blur-xl sm:grid-cols-2 lg:grid-cols-5 lg:items-end lg:p-5"
+      className="grid gap-4 rounded-2xl border border-white/15 bg-ink-950/70 p-4 shadow-lift backdrop-blur-xl sm:grid-cols-2 lg:grid-cols-6 lg:items-end lg:p-5"
       aria-label="Search available vehicles"
     >
+      <label className="block">
+        <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Location</span>
+        <select
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
+        >
+          <option value="SAKLESHPURA">Sakleshpura</option>
+          <option value="HASSAN">Hassan</option>
+        </select>
+      </label>
+
       <label className="block">
         <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Vehicle type</span>
         <select

@@ -246,7 +246,7 @@ export function BookingForm({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [categoryKind, setCategoryKind] = useState(search.get("kind") ?? "");
-  const [location, setLocation] = useState("");
+  const [location, setLocation] = useState(search.get("location") ?? "SAKLESHPURA");
   const initialPickup = search.get("pickup") ?? todayISO();
   const [pickupDate, setPickupDate] = useState(initialPickup);
   const [pickupTime, setPickupTime] = useState(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
@@ -378,6 +378,7 @@ export function BookingForm({
         if (!search.get("return") && ctx.returnDate) setReturnDate(ctx.returnDate);
         if (!search.get("returnTime") && ctx.returnTime) setReturnTime(ctx.returnTime);
         if (!search.get("kind") && ctx.kind) setCategoryKind(ctx.kind);
+        if (!search.get("location") && ctx.location) setLocation(ctx.location);
       }
     } catch {}
 
@@ -624,8 +625,15 @@ export function BookingForm({
                 </select>
               </div>
               <div>
-                <label className="label">Pickup location</label>
-                <input className="input" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Sakleshpura branch" />
+                <label className="label">Preferred location</label>
+                <select
+                  className="input font-semibold text-ink-900"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                >
+                  <option value="SAKLESHPURA">Sakleshpura (Main Branch)</option>
+                  <option value="HASSAN">Hassan (Branch)</option>
+                </select>
               </div>
 
               <div>
@@ -1035,7 +1043,7 @@ export function BookingForm({
               <div className="flex justify-between border-b border-ink-100 pb-2">
                 <span className="text-ink-500">Pickup</span>
                 <span className="font-medium text-ink-900">
-                  {formatDisplayDate(pickupDate)}, {formatTimeLabel(pickupTime)} {location && `· ${location}`}
+                  {formatDisplayDate(pickupDate)}, {formatTimeLabel(pickupTime)}
                   <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button>
                 </span>
               </div>
@@ -1043,6 +1051,13 @@ export function BookingForm({
                 <span className="text-ink-500">Return (Drop)</span>
                 <span className="font-medium text-ink-900">
                   {formatDisplayDate(returnDate)}, {formatTimeLabel(returnTime)}
+                  <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button>
+                </span>
+              </div>
+              <div className="flex justify-between border-b border-ink-100 pb-2">
+                <span className="text-ink-500">Location</span>
+                <span className="font-medium text-ink-900">
+                  {location === "HASSAN" ? "Hassan (Branch)" : "Sakleshpura (Main Branch)"}
                   <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button>
                 </span>
               </div>

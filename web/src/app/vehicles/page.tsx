@@ -18,10 +18,11 @@ export const revalidate = 60;
 const FLEET_VIDEO = "https://videos.pexels.com/video-files/5061405/5061405-sd_640_360_30fps.mp4";
 
 export default async function VehiclesPage(
-  props: { searchParams: Promise<{ kind?: string; pickup?: string; pickupTime?: string; return?: string; returnTime?: string }> }
+  props: { searchParams: Promise<{ kind?: string; location?: string; pickup?: string; pickupTime?: string; return?: string; returnTime?: string }> }
 ) {
   const searchParams = await props.searchParams;
   const kind = searchParams.kind;
+  const location = searchParams.location;
   const pickupDate = searchParams.pickup;
   const pickupTime = searchParams.pickupTime || "08:00";
   const returnDate = searchParams.return;
@@ -42,6 +43,7 @@ export default async function VehiclesPage(
 
   const queryParamsStr = new URLSearchParams();
   if (kind) queryParamsStr.set("kind", kind);
+  if (location) queryParamsStr.set("location", location);
   if (pickupDate) queryParamsStr.set("pickup", pickupDate);
   if (pickupTime) queryParamsStr.set("pickupTime", pickupTime);
   if (returnDate) queryParamsStr.set("return", returnDate);
@@ -81,7 +83,7 @@ export default async function VehiclesPage(
 
       {/* Interactive Search Bar Section */}
       <section className="relative z-30 -mt-6 sm:-mt-8 mb-8 container-x">
-        <BookingBar categories={categories} initialValues={{ kind, pickup: pickupDate, pickupTime, return: returnDate, returnTime }} />
+        <BookingBar categories={categories} initialValues={{ kind, location, pickup: pickupDate, pickupTime, return: returnDate, returnTime }} />
       </section>
 
       <section className="container-x pb-16">
