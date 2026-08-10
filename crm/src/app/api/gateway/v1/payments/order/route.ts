@@ -7,6 +7,6 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
   const body = await req.json().catch(() => null);
   if (!body?.bookingId) return NextResponse.json({ ok: false, error: "Missing bookingId." }, { status: 400 });
-  const res = await createBookingPaymentOrder(Number(body.bookingId));
+  const res = await createBookingPaymentOrder(Number(body.bookingId), body.amountDue ? Number(body.amountDue) : undefined);
   return NextResponse.json(res);
 }

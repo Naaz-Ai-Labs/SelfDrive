@@ -4,12 +4,24 @@ import { gatewayPost } from "./gateway";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
-export async function createBookingPaymentOrder(bookingId: number): Promise<
+export async function createBookingPaymentOrder(
+  bookingId: number,
+  amountDue?: number,
+  quote?: {
+    days?: number;
+    baseAmount?: number;
+    gstPct?: number;
+    gstAmount?: number;
+    depositAmount?: number;
+    gatewayFeeAmount?: number;
+    totalAmount?: number;
+  } | null
+): Promise<
   { ok: true; orderId: string; amountPaise: number; keyId: string; paymentId: number; paymentNo: string; notes?: Record<string, string>; businessName: string } | { ok: false; error: string }
 > {
   // 1. Primary Attempt via CRM Gateway
   try {
-    const res = await gatewayPost<any>("/api/gateway/v1/payments/order", { bookingId });
+    const res = await gatewayPost<any>("/api/gateway/v1/payments/order", { bookingId, amountDue, quote });
     if (res && res.ok && res.orderId) {
       return res;
     }
@@ -26,7 +38,7 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
   }
 
   try {
-    let amount = 1000;
+    let finalAmount = Number(amountDue) || 0;
     let bookingNo = `BK-${bookingId}`;
 
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
@@ -38,16 +50,38 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
         const { data: b } = await supabase.from("bookings").select("*, vehicles(*)").eq("id", bookingId).single();
         if (b) {
           bookingNo = b.booking_no || bookingNo;
-          amount = Number(b.total_amount || 0) + Number(b.deposit_amount || 0);
-          if (amount <= 0 && b.vehicles) {
-            amount = Number(b.vehicles.rate_24h || 1000) + Number(b.vehicles.deposit || 1000);
+          if (finalAmount <= 0) {
+            finalAmount = Number(b.total_amount || 0);
+            if (finalAmount <= 0 && b.vehicles) {
+              const base = Number(b.vehicles.rate_24h || 1000);
+              const dep = Number(b.vehicles.deposit || 1000);
+              const gst = Math.round(base * 0.06);
+              finalAmount = base + dep + gst;
+            }
           }
         }
       } catch {}
     }
 
-    const amountPaise = Math.max(100, Math.round(amount * 100)); // in paise (min 100 paise = 1 INR)
+    if (finalAmount <= 0) {
+      finalAmount = 1000;
+    }
+
+    const amountPaise = Math.round(finalAmount * 100); // exact paise representation
     const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
+
+    // Itemized notes for Razorpay receipt and customer transparency
+    const baseAmt = quote?.baseAmount ?? (finalAmount - (quote?.depositAmount ?? 0));
+    const depAmt = quote?.depositAmount ?? 0;
+    const gstAmt = quote?.gstAmount ?? 0;
+
+    const notes: Record<string, string> = {
+      "Booking No": bookingNo,
+      "Base Rental": `₹${baseAmt.toLocaleString("en-IN")}`,
+      "Refundable Deposit": depAmt > 0 ? `₹${depAmt.toLocaleString("en-IN")}` : "Included",
+      "GST (6%)": gstAmt > 0 ? `₹${gstAmt.toLocaleString("en-IN")}` : "Included",
+      "Total Payable": `₹${finalAmount.toLocaleString("en-IN")}`,
+    };
 
     // Call Razorpay API directly
     const authHeader = "Basic " + Buffer.from(`${keyId}:${keySecret}`).toString("base64");
@@ -61,10 +95,7 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
         amount: amountPaise,
         currency: "INR",
         receipt: paymentNo,
-        notes: {
-          booking_id: String(bookingId),
-          booking_no: bookingNo,
-        },
+        notes,
       }),
     });
 
@@ -81,9 +112,7 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
       paymentId: bookingId,
       paymentNo,
       businessName: "Darshh Holiday",
-      notes: {
-        "Booking No": bookingNo,
-      },
+      notes,
     };
   } catch (err: any) {
     console.error("Direct Razorpay order creation error:", err?.message || err);

@@ -55,7 +55,7 @@ export function RazorpayCheckout({
   async function payNow() {
     setStatus("loading");
     setError("");
-    const order = await createBookingPaymentOrder(bookingId);
+    const order = await createBookingPaymentOrder(bookingId, amountDue, quote);
     if (!order.ok) {
       setStatus("error");
       setError(order.error);
@@ -76,10 +76,10 @@ export function RazorpayCheckout({
       description: `Rental + GST + Deposit — ${order.paymentNo}`,
       order_id: order.orderId,
       notes: (order as { notes?: Record<string, string> }).notes ?? {
-        "Base Rental": quote ? `₹${quote.baseAmount.toLocaleString("en-IN")}` : "—",
-        "Pickup Charge": "₹250",
-        "GST (6%)": quote ? `₹${quote.gstAmount.toLocaleString("en-IN")}` : "—",
-        "Refundable Deposit": quote ? `₹${quote.depositAmount.toLocaleString("en-IN")}` : "—",
+        "Base Rental": quote ? `₹${quote.baseAmount.toLocaleString("en-IN")}` : `₹${amountDue.toLocaleString("en-IN")}`,
+        "GST (6%)": quote ? `₹${quote.gstAmount.toLocaleString("en-IN")}` : "Included",
+        "Refundable Deposit": quote ? `₹${quote.depositAmount.toLocaleString("en-IN")}` : "Included",
+        "Total Amount Paid": `₹${amountDue.toLocaleString("en-IN")}`,
       },
       prefill: { name: customerName, contact: customerPhone, email: customerEmail || undefined },
       theme: { color: "#f2b705" },

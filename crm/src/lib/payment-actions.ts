@@ -13,7 +13,7 @@ import { toPaise, syncPaymentToSupabase } from "./supabase-sync";
  * booking and opens a matching Razorpay order against it. Called from the booking
  * confirmation step and from the customer portal's "Pay now".
  */
-export async function createBookingPaymentOrder(bookingId: number): Promise<
+export async function createBookingPaymentOrder(bookingId: number, overrideAmount?: number): Promise<
   { ok: true; orderId: string; amountPaise: number; keyId: string; paymentId: number; paymentNo: string; notes?: Record<string, string>; businessName: string } | { ok: false; error: string }
 > {
   if (!razorpayConfigured()) {
@@ -48,7 +48,10 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
 
   if (!booking) return { ok: false, error: "Booking not found." };
 
-  const due = Number(booking.total_amount) + Number(booking.deposit_amount) - Number(booking.paid_amount);
+  const due = (overrideAmount && overrideAmount > 0)
+    ? overrideAmount
+    : Math.max(1, Number(booking.total_amount) - Number(booking.paid_amount || 0));
+
   if (due <= 0) return { ok: false, error: "This booking is already fully paid." };
 
   const duePaise = toPaise(due);
@@ -58,10 +61,9 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
     .get(bookingId) as { id: number; payment_no: string; amount: number; amount_paise: number } | undefined;
 
   const breakdownJson = JSON.stringify({
-    baseAmount: Number(booking.total_amount),
-    depositAmount: Number(booking.deposit_amount),
-    pickupFee: 250,
-    gstAmount: Math.round(Number(booking.total_amount) * 0.06),
+    baseAmount: Number(booking.base_amount || (due - Number(booking.deposit_amount || 0))),
+    depositAmount: Number(booking.deposit_amount || 0),
+    gstAmount: Number(booking.gst_amount || 0),
     totalAmount: due,
   });
 

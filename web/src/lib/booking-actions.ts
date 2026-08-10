@@ -98,6 +98,29 @@ export async function submitBooking(input: {
       if (customerData?.id) customerId = customerData.id;
     } catch {}
 
+    // Calculate accurate quote for the booking
+    let baseAmount = 1000;
+    let depositAmount = 1000;
+    let gstAmount = 60;
+    let totalAmount = 2060;
+
+    try {
+      const { getVehicles } = await import("./data");
+      const allVehicles = await getVehicles();
+      const v = allVehicles.find((item) => Number(item.id) === Number(input.vehicleId));
+      if (v) {
+        const p = new Date(input.pickupAt);
+        const r = new Date(input.returnAt);
+        const diffMs = Math.max(0, r.getTime() - p.getTime());
+        const hours = Math.ceil(diffMs / (1000 * 60 * 60));
+        const days = Math.max(1, Math.ceil(hours / 24));
+        baseAmount = v.rate_24h * days;
+        depositAmount = v.deposit ?? 2000;
+        gstAmount = Math.round(baseAmount * 0.06);
+        totalAmount = baseAmount + depositAmount + gstAmount;
+      }
+    } catch {}
+
     const { data: bookingData } = await supabase
       .from("bookings")
       .insert({
@@ -106,6 +129,10 @@ export async function submitBooking(input: {
         vehicle_id: input.vehicleId,
         pickup_date: input.pickupAt,
         return_date: input.returnAt,
+        base_amount: baseAmount,
+        deposit_amount: depositAmount,
+        gst_amount: gstAmount,
+        total_amount: totalAmount,
         status: "Pending",
         source: "web",
         created_at: new Date().toISOString(),
