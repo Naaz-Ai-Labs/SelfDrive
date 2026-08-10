@@ -199,9 +199,22 @@ function computeClientQuote(
 export function BookingForm({ categories, businessWhatsapp, terms }: { categories: Category[]; businessWhatsapp: string; terms: string[] }) {
   const router = useRouter();
   const search = useSearchParams();
-  // Arriving with a vehicle already picked (from a vehicle detail page) should
-  // land the user on the vehicle-confirmation step, not make them start over.
-  const [step, setStep] = useState(search.get("vehicle") && !search.get("resume") ? 2 : 1);
+  // If the user already provided search query details and selected a vehicle,
+  // take them directly to Step 3 (Customer Details) to proceed seamlessly.
+  const initialStep = useMemo(() => {
+    if (search.get("resume")) return 1;
+    const explicitStep = Number(search.get("step"));
+    if (explicitStep && explicitStep >= 1 && explicitStep <= 5) return explicitStep;
+    if (search.get("vehicle")) {
+      if (search.get("pickup") && search.get("return")) {
+        return 3;
+      }
+      return 2;
+    }
+    return 1;
+  }, [search]);
+
+  const [step, setStep] = useState(initialStep);
   const [token, setToken] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [lastSaved, setLastSaved] = useState<string | null>(null);

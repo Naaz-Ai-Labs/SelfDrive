@@ -68,7 +68,7 @@ export default async function VehicleDetailPage(props: {
     ? await getCachedVehicleSearchPrice(vehicle, pickupDate, pickupTime, returnDate, returnTime)
     : null;
 
-  const bookingHref = `/booking?vehicle=${vehicle.id}${pickupDate ? `&pickup=${pickupDate}` : ""}${pickupTime ? `&pickupTime=${pickupTime}` : ""}${returnDate ? `&return=${returnDate}` : ""}${returnTime ? `&returnTime=${returnTime}` : ""}`;
+  const bookingHref = `/booking?vehicle=${vehicle.id}${pickupDate ? `&pickup=${pickupDate}` : ""}${pickupTime ? `&pickupTime=${pickupTime}` : ""}${returnDate ? `&return=${returnDate}` : ""}${returnTime ? `&returnTime=${returnTime}` : ""}${pickupDate && returnDate ? "&step=3" : ""}`;
 
   const isOutOfStock = (vehicle.available_units ?? vehicle.total_units ?? 0) <= 0;
   const weekendActive = isWeekend();

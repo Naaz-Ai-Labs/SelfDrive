@@ -148,10 +148,14 @@ export default async function VehiclesPage(
               const weekendActive = isWeekend();
               const quote = searchQuotes[i];
 
+              const cardHref = hasSearchQuery
+                ? `/booking?vehicle=${v.id}${queryString}&step=3`
+                : `/vehicles/${v.slug}${queryString}`;
+
               return (
                 <Reveal key={v.id} delay={(i % 6) * 60}>
                   <Link
-                    href={`/vehicles/${v.slug}${queryString}`}
+                    href={cardHref}
                     className={`group card block overflow-hidden transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lift ${isOutOfStock ? "opacity-85" : ""}`}
                   >
                     <div className="relative h-44 overflow-hidden bg-ink-100">
