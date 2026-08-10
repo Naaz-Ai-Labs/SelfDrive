@@ -23,12 +23,21 @@ export function calculateRentalPrice(
   pickupAt: Date,
   returnAt: Date
 ): { totalAmount: number; daysCount: number; weekendDaysCount: number; rateUsed: number } {
-  const ms = Math.max(0, returnAt.getTime() - pickupAt.getTime());
-  const hours = Math.ceil(ms / (1000 * 3600));
-  const baseDays = Math.max(1, Math.round(hours / 24));
-  const isSundayReturn = returnAt.getDay() === 0;
-  const isLateDrop = returnAt.getHours() > 8 || (returnAt.getHours() === 8 && returnAt.getMinutes() > 0);
-  const daysCount = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+  const isSameDay = pickupAt.getFullYear() === returnAt.getFullYear() &&
+                    pickupAt.getMonth() === returnAt.getMonth() &&
+                    pickupAt.getDate() === returnAt.getDate();
+
+  let daysCount = 1;
+  if (isSameDay) {
+    daysCount = 1; // Same-day pickup and drop is always charged as 1 full day rental
+  } else {
+    const ms = Math.max(0, returnAt.getTime() - pickupAt.getTime());
+    const hours = Math.ceil(ms / (1000 * 3600));
+    const baseDays = Math.max(1, Math.round(hours / 24));
+    const isSundayReturn = returnAt.getDay() === 0;
+    const isLateDrop = returnAt.getHours() > 8 || (returnAt.getHours() === 8 && returnAt.getMinutes() > 0);
+    daysCount = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+  }
 
   let totalAmount = 0;
   let weekendDaysCount = 0;

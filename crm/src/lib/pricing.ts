@@ -87,13 +87,22 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
   const lateDropFee = Number(rentalRules.late_drop_fee ?? 250);
 
   const msPerDay = 24 * 60 * 60 * 1000;
-  const baseDays = Math.max(1, Math.round((returnAt.getTime() - pickupAt.getTime()) / msPerDay));
-  const isSundayReturn = returnAt.getDay() === 0;
+  const isSameDay = pickupAt.getFullYear() === returnAt.getFullYear() &&
+                    pickupAt.getMonth() === returnAt.getMonth() &&
+                    pickupAt.getDate() === returnAt.getDate();
+
   const pickupTimeStr = pickupTimeHM || (pickupAt.toISOString().slice(11, 16));
   const returnTimeStr = returnTimeHM || (returnAt.toISOString().slice(11, 16));
-  const isLateDrop = returnTimeStr > "08:00";
-  // If drop-off time is after standard 08:00 AM, charge for 1 more day
-  const days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+
+  let days = 1;
+  if (isSameDay) {
+    days = 1; // Same-day pickup and drop is always charged as 1 full day rental
+  } else {
+    const baseDays = Math.max(1, Math.round((returnAt.getTime() - pickupAt.getTime()) / msPerDay));
+    const isSundayReturn = returnAt.getDay() === 0;
+    const isLateDrop = returnTimeStr > "08:00";
+    days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+  }
 
   const seasonalRule = findSeasonalRule(vehicle, pickupAt, returnAt);
   const dayBreakdown: Quote["dayBreakdown"] = [];

@@ -62,11 +62,17 @@ export function calculateVehicleSearchPrice(
   const rDate = new Date(`${rParts.year}-${String(rParts.month).padStart(2, "0")}-${String(rParts.day).padStart(2, "0")}T${rTime}`);
 
   const msPerDay = 24 * 60 * 60 * 1000;
-  const diffMs = Math.max(0, rDate.getTime() - pDate.getTime());
-  const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-  // If drop-off time is after standard 08:00 AM, charge for 1 more day
-  const isLateDrop = rTime > "08:00";
-  const days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+  const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
+  let days = 1;
+  if (isSameDay) {
+    days = 1; // Same-day pickup and drop is always charged as 1 full day rental
+  } else {
+    const diffMs = Math.max(0, rDate.getTime() - pDate.getTime());
+    const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
+    // If drop-off time is after standard 08:00 AM, charge for 1 more day
+    const isLateDrop = rTime > "08:00";
+    days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+  }
 
   let baseAmount = 0;
   let weekendDaysCount = 0;

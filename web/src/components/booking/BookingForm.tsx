@@ -283,6 +283,9 @@ export function BookingForm({
     const pParts = parseDateParts(pickupDate);
     const rParts = parseDateParts(returnDate);
     if (!pParts || !rParts) return 1;
+    const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
+    if (isSameDay) return 1; // Same-day pickup and drop is always charged as 1 full day rental
+
     const p = new Date(pParts.year, pParts.month - 1, pParts.day);
     const r = new Date(rParts.year, rParts.month - 1, rParts.day);
     const rawDiff = Math.max(0, r.getTime() - p.getTime());

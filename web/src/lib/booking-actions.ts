@@ -245,15 +245,20 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
     if (v && pickupAt && returnAt) {
       const p = new Date(pickupAt);
       const r = new Date(returnAt);
-      const isSundayReturn = r.getDay() === 0;
       const msPerDay = 24 * 60 * 60 * 1000;
-      const diffMs = Math.max(0, r.getTime() - p.getTime());
-      const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-      const pickupTimeStr = pickupAt.includes("T") ? pickupAt.split("T")[1] : "08:00";
-      const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : "08:00";
-      const isLateDrop = returnTimeStr > "08:00";
-      // If drop-off time is after standard 08:00 AM, charge for 1 more day
-      const days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+      const isSameDay = p.getFullYear() === r.getFullYear() && p.getMonth() === r.getMonth() && p.getDate() === r.getDate();
+
+      let days = 1;
+      if (isSameDay) {
+        days = 1; // Same-day pickup and drop is always charged as 1 full day rental
+      } else {
+        const isSundayReturn = r.getDay() === 0;
+        const diffMs = Math.max(0, r.getTime() - p.getTime());
+        const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
+        const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : "08:00";
+        const isLateDrop = returnTimeStr > "08:00";
+        days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+      }
 
       let baseAmount = 0;
       const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
@@ -269,6 +274,7 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
         baseAmount += rate;
       }
 
+      const pickupTimeStr = pickupAt.includes("T") ? pickupAt.split("T")[1] : "08:00";
       const isEarlyPickup = pickupTimeStr < "08:00";
       const timingFee = isEarlyPickup ? 250 : 0;
 
