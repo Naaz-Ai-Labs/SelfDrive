@@ -80,12 +80,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <SearchBox />
             <CommandBar />
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <NotificationBell initialItems={plainNotifications} initialUnread={unread} />
-            <LogoutButton />
+            <div className="hidden sm:block">
+              <LogoutButton />
+            </div>
           </div>
         </div>
-        <div className="p-4 sm:p-6">{children}</div>
+        <div className="p-3 sm:p-6 max-w-full overflow-x-hidden">{children}</div>
       </div>
     </div>
   );

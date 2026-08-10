@@ -151,20 +151,20 @@ export default async function DashboardPage() {
         isAdmin={user.role === "admin"}
       />
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-4 lg:grid-cols-4">
         <KpiCard label="Vehicles" value={String(totalVehicles.c)} hint={`${availableVehicles.c} available`} accent="brand" href="/dashboard/vehicles" icon={ICON.vehicle} />
         <KpiCard label="Active rentals" value={String(activeRentals.c)} hint={`${bookedVehicles.c} vehicles out`} accent="ink" href="/dashboard/bookings" icon={ICON.booking} />
         <KpiCard label="Overdue returns" value={String(overdueReturns.c)} hint="past scheduled return" accent={overdueReturns.c > 0 ? "red" : "ink"} href="/dashboard/bookings" icon={ICON.clock} />
         <KpiCard label="Under maintenance" value={String(maintenanceVehicles.c)} accent="amber" href="/dashboard/vehicles" icon={ICON.wrench} />
       </div>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-4 lg:grid-cols-4">
         <KpiCard label="Today's pickups" value={String(todaysPickups.c)} accent="brand" href="/dashboard/bookings" icon={ICON.arrowUp} />
         <KpiCard label="Today's returns" value={String(todaysReturns.c)} accent="brand" href="/dashboard/bookings" icon={ICON.arrowDown} />
         <KpiCard label="New enquiries today" value={String(newEnquiries.c)} accent="ink" href="/dashboard/enquiries" icon={ICON.enquiry} />
         <KpiCard label="Open problem tickets" value={String(openTickets.c)} accent={openTickets.c > 0 ? "red" : "ink"} href="/dashboard/problem-tickets" icon={ICON.alert} />
       </div>
       {isAdmin && (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-4 lg:grid-cols-4">
           <KpiCard label="Revenue collected" value={formatINR(revenue.t)} accent="emerald" icon={ICON.money} trend={revenueTrend} hint="vs last month" />
           <KpiCard label="Payments pending" value={formatINR(pendingPayments.t)} accent={pendingPayments.t > 0 ? "amber" : "ink"} href="/dashboard/payments" icon={ICON.card} />
           <KpiCard label="Deposits held" value={formatINR(pendingDeposits.t)} accent="ink" icon={ICON.shield} />
@@ -172,20 +172,20 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
         {isAdmin ? (
-          <div className="card p-5 lg:col-span-2">
-            <h2 className="font-display text-lg font-semibold text-ink-900">Bookings trend</h2>
-            <p className="text-sm text-ink-500">New bookings created per month.</p>
+          <div className="card p-4 sm:p-5 lg:col-span-2">
+            <h2 className="font-display text-base sm:text-lg font-semibold text-ink-900">Bookings trend</h2>
+            <p className="text-xs sm:text-sm text-ink-500">New bookings created per month.</p>
             <div className="mt-4" style={{ ["--chart-accent" as string]: "#f2b705" }}>
               <AreaTrend data={monthlyBookings} />
             </div>
           </div>
         ) : (
-          <div className="card p-5 lg:col-span-2 bg-brand-50/20 border border-brand-100">
-            <h2 className="font-display text-lg font-semibold text-ink-900">Operations Checklist</h2>
-            <p className="text-sm text-ink-500">Daily operational workflow for vehicle handovers and returns.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="card p-4 sm:p-5 lg:col-span-2 bg-brand-50/20 border border-brand-100">
+            <h2 className="font-display text-base sm:text-lg font-semibold text-ink-900">Operations Checklist</h2>
+            <p className="text-xs sm:text-sm text-ink-500">Daily operational workflow for vehicle handovers and returns.</p>
+            <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
               <Link href="/dashboard/bookings" className="rounded-xl border border-ink-200 bg-white p-3 hover:border-brand-500">
                 <p className="font-bold text-sm text-ink-900">📋 Pickup & Handover</p>
                 <p className="text-xs text-ink-500">Verify customer DL, Aadhaar & complete vehicle inspection.</p>
@@ -197,10 +197,10 @@ export default async function DashboardPage() {
             </div>
           </div>
         )}
-        <div className="card p-5">
-          <h2 className="font-display text-lg font-semibold text-ink-900">Enquiry sources</h2>
-          <p className="text-sm text-ink-500">Where enquiries come from.</p>
-          <div className="mt-5">
+        <div className="card p-4 sm:p-5">
+          <h2 className="font-display text-base sm:text-lg font-semibold text-ink-900">Enquiry sources</h2>
+          <p className="text-xs sm:text-sm text-ink-500">Where enquiries come from.</p>
+          <div className="mt-4">
             <BarRows data={enquirySources.map((s) => ({ label: s.source, value: s.c }))} />
           </div>
         </div>

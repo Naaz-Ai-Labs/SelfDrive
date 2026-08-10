@@ -162,12 +162,12 @@ export function KpiCard({
   );
   if (href) {
     return (
-      <Link href={href} className="card block p-5 transition hover:border-brand-300">
+      <Link href={href} className="card block p-3.5 sm:p-5 transition hover:border-brand-300">
         {body}
       </Link>
     );
   }
-  return <div className="card p-5">{body}</div>;
+  return <div className="card p-3.5 sm:p-5">{body}</div>;
 }
 
 export function Pagination({ total, page, perPage, base }: { total: number; page: number; perPage: number; base: string }) {

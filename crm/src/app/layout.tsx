@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Archivo_Black, Jost } from "next/font/google";
 import "./globals.css";
 
@@ -19,6 +19,12 @@ const sans = Jost({
 });
 
 export const dynamic = "force-dynamic";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+};
 
 export const metadata: Metadata = {
   title: { default: "Darshh Holiday — CRM", template: "%s | Darshh Holiday CRM" },
