@@ -139,9 +139,14 @@ export function BookingBar({
           >
             {TIME_SLOTS.map((t) => {
               const disabled = isTimeDisabled(t.value, pickupDate);
+              const isEarly = t.value < "08:00";
               return (
                 <option key={t.value} value={t.value} disabled={disabled} className={disabled ? "opacity-30 text-white/30" : ""}>
-                  {t.value === "08:00" ? "8:00 AM (Standard)" : t.label} {disabled ? " (Past)" : ""}
+                  {t.value === "08:00"
+                    ? "8:00 AM (Standard)"
+                    : isEarly
+                    ? `${t.label} (+₹250 Early Pickup)`
+                    : t.label} {disabled ? " (Past)" : ""}
                 </option>
               );
             })}

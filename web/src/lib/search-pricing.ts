@@ -88,7 +88,7 @@ export function calculateVehicleSearchPrice(
     baseAmount += rate;
   }
 
-  const isEarlyPickup = !isSameDay && pTime < "08:00";
+  const isEarlyPickup = pTime < "08:00";
   const earlyPickupFee = isEarlyPickup ? 250 : 0;
   const lateDropFee = 0;
   const totalTimingFees = earlyPickupFee + lateDropFee;

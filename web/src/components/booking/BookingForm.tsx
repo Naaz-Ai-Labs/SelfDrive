@@ -174,7 +174,7 @@ function computeClientQuote(
     baseAmount += rate;
   }
 
-  const isEarlyPickup = !isSameDay && pTime < "08:00";
+  const isEarlyPickup = pTime < "08:00";
   const timingFee = isEarlyPickup ? 250 : 0;
 
   const depositAmount = Number(vehicle.deposit ?? 1000);
