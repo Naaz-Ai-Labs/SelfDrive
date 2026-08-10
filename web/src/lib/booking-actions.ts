@@ -19,6 +19,7 @@ export type DraftPayload = {
 
 export type Quote = {
   days: number;
+  weekendDaysCount?: number;
   dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }>;
   baseAmount: number;
   offSchedulePickupFee: number;
@@ -111,11 +112,20 @@ export async function submitBooking(input: {
       if (v) {
         const p = new Date(input.pickupAt);
         const r = new Date(input.returnAt);
+        const msPerDay = 24 * 60 * 60 * 1000;
         const diffMs = Math.max(0, r.getTime() - p.getTime());
-        const hours = Math.ceil(diffMs / (1000 * 60 * 60));
-        const days = Math.max(1, Math.ceil(hours / 24));
-        baseAmount = v.rate_24h * days;
-        depositAmount = v.deposit ?? 2000;
+        const days = Math.max(1, Math.round(diffMs / msPerDay));
+
+        baseAmount = 0;
+        for (let i = 0; i < days; i++) {
+          const day = new Date(p.getTime() + i * msPerDay);
+          const dayOfWeek = day.getDay();
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
+          const rate = isWeekend ? Number(v.weekend_rate_24h ?? (v.rate_24h + 50)) : Number(v.rate_24h);
+          baseAmount += rate;
+        }
+
+        depositAmount = Number(v.deposit ?? 1000);
         gstAmount = Math.round(baseAmount * 0.06);
         totalAmount = baseAmount + depositAmount + gstAmount;
       }
@@ -225,17 +235,29 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
     if (v && pickupAt && returnAt) {
       const p = new Date(pickupAt);
       const r = new Date(returnAt);
+      const msPerDay = 24 * 60 * 60 * 1000;
       const diffMs = Math.max(0, r.getTime() - p.getTime());
-      const hours = Math.ceil(diffMs / (1000 * 60 * 60));
-      const days = Math.max(1, Math.ceil(hours / 24));
-      const baseAmount = v.rate_24h * days;
-      const depositAmount = v.deposit ?? 2000;
+      const days = Math.max(1, Math.round(diffMs / msPerDay));
+
+      let baseAmount = 0;
+      const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
+
+      for (let i = 0; i < days; i++) {
+        const day = new Date(p.getTime() + i * msPerDay);
+        const dayOfWeek = day.getDay();
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
+        const rate = isWeekend ? Number(v.weekend_rate_24h ?? (v.rate_24h + 50)) : Number(v.rate_24h);
+        dayBreakdown.push({ date: day.toISOString().slice(0, 10), isWeekend, rate });
+        baseAmount += rate;
+      }
+
+      const depositAmount = Number(v.deposit ?? 1000);
       const gstPct = 6;
       const gstAmount = Math.round(baseAmount * 0.06);
       const totalAmount = baseAmount + depositAmount + gstAmount;
       return {
         days,
-        dayBreakdown: [],
+        dayBreakdown,
         baseAmount,
         offSchedulePickupFee: 0,
         gstAmount,

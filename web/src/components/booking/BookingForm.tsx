@@ -60,6 +60,56 @@ function formatDlNumber(val: string): string {
   return `${clean.slice(0, 4)} ${clean.slice(4, 15)}`;
 }
 
+function computeClientQuote(vehicle: Vehicle | null | undefined, pickupDateStr: string | null, returnDateStr: string | null) {
+  if (!vehicle || !pickupDateStr || !returnDateStr) return null;
+  const p = new Date(pickupDateStr);
+  const r = new Date(returnDateStr);
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const diffMs = Math.max(0, r.getTime() - p.getTime());
+  const days = Math.max(1, Math.round(diffMs / msPerDay));
+
+  let baseAmount = 0;
+  let weekendDaysCount = 0;
+  const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
+
+  for (let i = 0; i < days; i++) {
+    const day = new Date(p.getTime() + i * msPerDay);
+    const dayOfWeek = day.getDay();
+    const isWknd = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
+    if (isWknd) weekendDaysCount++;
+    const rate = isWknd ? Number(vehicle.weekend_rate_24h ?? (vehicle.rate_24h + 50)) : Number(vehicle.rate_24h);
+    dayBreakdown.push({ date: day.toISOString().slice(0, 10), isWeekend: isWknd, rate });
+    baseAmount += rate;
+  }
+
+  const depositAmount = Number(vehicle.deposit ?? 1000);
+  const gstPct = 6;
+  const gstAmount = Math.round(baseAmount * 0.06);
+  const totalAmount = baseAmount + depositAmount + gstAmount;
+
+  return {
+    days,
+    dayBreakdown,
+    weekendDaysCount,
+    baseAmount,
+    offSchedulePickupFee: 0,
+    gstAmount,
+    gstPct,
+    gatewayFeeAmount: 0,
+    gatewayFeePct: 0,
+    depositAmount,
+    includedKm: (vehicle.included_km ?? 100) * days,
+    extraKmRate: vehicle.extra_km_rate ?? 5,
+    afterHours: false,
+    offSchedulePickup: false,
+    weekendMinDays: 1,
+    belowWeekendMinimum: false,
+    appliedRuleName: null,
+    totalAmount,
+    payableNow: totalAmount,
+  };
+}
+
 export function BookingForm({ categories, businessWhatsapp, terms }: { categories: Category[]; businessWhatsapp: string; terms: string[] }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -212,6 +262,13 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     () => availableVehicles.find((v) => v.id === vehicleId) ?? (fetchedVehicle?.id === vehicleId ? fetchedVehicle : undefined),
     [availableVehicles, vehicleId, fetchedVehicle]
   );
+
+  const clientQuote = useMemo(() => {
+    return computeClientQuote(selectedVehicle, pickupAt, returnAt);
+  }, [selectedVehicle, pickupAt, returnAt]);
+
+  const activeQuote = quote ?? clientQuote;
+
   const kycComplete = Boolean(
     (documents.licence?.url || documents.driver_licence?.url) &&
     (documents.govt_id?.url || documents.driver_govt_id?.url) &&
@@ -225,7 +282,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     if (n === 1) {
       if (!pickupDate) e.pickupDate = "Please select a pickup date.";
       if (days < 1) e.days = "Minimum 1 day.";
-      if (quote?.belowWeekendMinimum) e.days = `Weekend bookings need at least ${quote.weekendMinDays} days.`;
+      if (activeQuote?.belowWeekendMinimum) e.days = `Weekend bookings need at least ${activeQuote.weekendMinDays} days.`;
     }
     if (n === 2 && !vehicleId) e.vehicle = "Please select a vehicle.";
     if (n === 3) {
@@ -297,31 +354,16 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             <h1 className="font-display text-2xl font-semibold text-ink-900">Booking received — {result.bookingNo}</h1>
             <p className="mt-2 text-sm text-ink-600">Complete your online payment now to confirm your vehicle reservation instantly.</p>
             <div className="mt-6">
-              {(() => {
-                const effectiveAmountDue = quote?.totalAmount ?? (selectedVehicle ? ((selectedVehicle.rate_24h * days) + selectedVehicle.deposit + Math.round(selectedVehicle.rate_24h * days * 0.06)) : 0);
-                const effectiveQuote = quote ?? (selectedVehicle ? {
-                  days,
-                  baseAmount: selectedVehicle.rate_24h * days,
-                  gstPct: 6,
-                  gstAmount: Math.round(selectedVehicle.rate_24h * days * 0.06),
-                  depositAmount: selectedVehicle.deposit,
-                  gatewayFeeAmount: 0,
-                  totalAmount: effectiveAmountDue,
-                } : null);
-
-                return (
-                  <RazorpayCheckout
-                    bookingId={result.bookingId}
-                    amountDue={effectiveAmountDue}
-                    customerName={contact.name}
-                    customerPhone={contact.phone}
-                    customerEmail={contact.email}
-                    quote={effectiveQuote}
-                    onPaid={() => setPaid(true)}
-                    onPayLater={() => setPaid(true)}
-                  />
-                );
-              })()}
+              <RazorpayCheckout
+                bookingId={result.bookingId}
+                amountDue={activeQuote?.totalAmount ?? 0}
+                customerName={contact.name}
+                customerPhone={contact.phone}
+                customerEmail={contact.email}
+                quote={activeQuote}
+                onPaid={() => setPaid(true)}
+                onPayLater={() => setPaid(true)}
+              />
             </div>
           </div>
         ) : (
@@ -623,31 +665,40 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             <div className="rounded-xl border border-brand-200 bg-brand-50/40 p-4 space-y-2.5 text-sm shadow-xs">
               <div className="flex items-center justify-between border-b border-brand-200/80 pb-2">
                 <span className="font-semibold text-ink-900">Price breakup</span>
-                <span className="text-xs font-semibold text-brand-800 bg-brand-100 px-2.5 py-0.5 rounded-full">{quote?.days || days} Day{((quote?.days || days) > 1) ? "s" : ""} Duration</span>
+                <div className="flex items-center gap-2">
+                  {activeQuote && activeQuote.weekendDaysCount && activeQuote.weekendDaysCount > 0 ? (
+                    <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                      Includes +₹50 Weekend Rate
+                    </span>
+                  ) : null}
+                  <span className="text-xs font-semibold text-brand-800 bg-brand-100 px-2.5 py-0.5 rounded-full">
+                    {activeQuote?.days || days} Day{((activeQuote?.days || days) > 1) ? "s" : ""} Duration
+                  </span>
+                </div>
               </div>
               <div className="flex justify-between text-ink-700">
-                <span>Base rental rate ({quote?.days || days} day{((quote?.days || days) > 1) ? "s" : ""})</span>
-                <span className="font-semibold text-ink-900">{formatINR(quote?.baseAmount ?? ((selectedVehicle?.rate_24h ?? 0) * days))}</span>
+                <span>Base rental rate ({activeQuote?.days || days} day{((activeQuote?.days || days) > 1) ? "s" : ""})</span>
+                <span className="font-semibold text-ink-900">{formatINR(activeQuote?.baseAmount ?? 0)}</span>
               </div>
               <div className="flex justify-between text-ink-700">
                 <span>Security deposit (Fully refundable upon vehicle return)</span>
-                <span className="font-semibold text-ink-900">{formatINR(quote?.depositAmount ?? (selectedVehicle?.deposit ?? 0))}</span>
+                <span className="font-semibold text-ink-900">{formatINR(activeQuote?.depositAmount ?? (selectedVehicle?.deposit ?? 0))}</span>
               </div>
-              {quote && quote.gstAmount > 0 && (
+              {activeQuote && activeQuote.gstAmount > 0 && (
                 <div className="flex justify-between text-ink-700">
-                  <span>GST ({quote.gstPct}%)</span>
-                  <span className="font-medium text-ink-900">{formatINR(quote.gstAmount)}</span>
+                  <span>GST ({activeQuote.gstPct}%)</span>
+                  <span className="font-medium text-ink-900">{formatINR(activeQuote.gstAmount)}</span>
                 </div>
               )}
-              {quote && quote.gatewayFeeAmount > 0 && (
+              {activeQuote && activeQuote.gatewayFeeAmount > 0 && (
                 <div className="flex justify-between text-ink-700">
                   <span>Payment gateway fee</span>
-                  <span className="font-medium text-ink-900">{formatINR(quote.gatewayFeeAmount)}</span>
+                  <span className="font-medium text-ink-900">{formatINR(activeQuote.gatewayFeeAmount)}</span>
                 </div>
               )}
               <div className="flex justify-between border-t border-brand-200 pt-2.5 text-base font-bold text-ink-900">
                 <span>Total payable amount</span>
-                <span className="text-lg text-brand-700">{formatINR(quote?.totalAmount ?? (((selectedVehicle?.rate_24h ?? 0) * days) + (selectedVehicle?.deposit ?? 0)))}</span>
+                <span className="text-lg text-brand-700">{formatINR(activeQuote?.totalAmount ?? 0)}</span>
               </div>
             </div>
 

@@ -22,6 +22,7 @@ export type PricingRuleRow = {
 
 export type Quote = {
   days: number;
+  weekendDaysCount?: number;
   dayBreakdown: Array<{ date: string; dayType: "weekday" | "weekend"; rate: number }>;
   baseAmount: number;
   offSchedulePickupFee: number;
@@ -92,9 +93,12 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
   const dayBreakdown: Quote["dayBreakdown"] = [];
   let baseAmount = 0;
 
+  let weekendDaysCount = 0;
+
   for (let i = 0; i < days; i++) {
     const day = new Date(pickupAt.getTime() + i * msPerDay);
     const weekend = isWeekend(day);
+    if (weekend) weekendDaysCount++;
     const rate = seasonalRule
       ? Number(seasonalRule.rate_24h ?? vehicle.rate_24h)
       : weekend
@@ -124,6 +128,7 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
 
   return {
     days,
+    weekendDaysCount,
     dayBreakdown,
     baseAmount,
     offSchedulePickupFee: 0,
