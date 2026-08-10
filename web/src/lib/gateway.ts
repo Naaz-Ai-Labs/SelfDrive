@@ -9,7 +9,7 @@ function getBaseUrl(): string {
   return "http://localhost:3001";
 }
 
-const DEFAULT_GATEWAY_KEY = "gtw_darshh_sec_9845210001_88f9a2b1c3";
+const DEFAULT_GATEWAY_KEY = "adb661bf6bbe85efd79f26fa2901e580809755dc7bfb37e69f444cb7f2be305c";
 const KEY = process.env.GATEWAY_API_KEY || DEFAULT_GATEWAY_KEY;
 export const CUSTOMER_COOKIE = "darshh_customer";
 

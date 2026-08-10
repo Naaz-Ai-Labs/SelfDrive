@@ -4,7 +4,7 @@ import { getCustomerSession } from "./portal-session";
 /** Every gateway route is only reachable from the web app's own server (never the
  * browser), authenticated with a shared secret — this is the trust boundary between
  * the two deployments. */
-const DEFAULT_GATEWAY_KEY = "gtw_darshh_sec_9845210001_88f9a2b1c3";
+const DEFAULT_GATEWAY_KEY = "adb661bf6bbe85efd79f26fa2901e580809755dc7bfb37e69f444cb7f2be305c";
 
 export function requireGatewayKey(req: NextRequest): NextResponse | null {
   const key = req.headers.get("x-gateway-key");
