@@ -314,7 +314,7 @@ export function BookingForm({
   const handlePickupDateChange = (newDate: string) => {
     const validDate = newDate < liveClock.minPickupDate ? liveClock.minPickupDate : newDate;
     setPickupDate(validDate);
-    const validTime = liveClock.getValidPickupTime(pickupTime);
+    const validTime = liveClock.getValidPickupTime(pickupTime, validDate);
     setPickupTime(validTime);
 
     const auto = compute25HourAutoReturn(validDate, validTime, { isFridayExt: fridayWeekendExtension });
@@ -330,7 +330,7 @@ export function BookingForm({
   };
 
   const handlePickupTimeChange = (newTime: string) => {
-    const validTime = liveClock.getValidPickupTime(newTime);
+    const validTime = liveClock.getValidPickupTime(newTime, pickupDate);
     setPickupTime(validTime);
 
     const auto = compute25HourAutoReturn(pickupDate, validTime, { isFridayExt: fridayWeekendExtension });
@@ -661,7 +661,7 @@ export function BookingForm({
                 <label className="label">Pickup time</label>
                 <select className="input" value={pickupTime} onChange={(e) => handlePickupTimeChange(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => {
-                    const disabled = liveClock.isTimeDisabled(t);
+                    const disabled = liveClock.isTimeDisabled(t, pickupDate);
                     return (
                       <option key={t} value={t} disabled={disabled} className={disabled ? "opacity-30 text-ink-300 bg-ink-50" : ""}>
                         {t === "08:00" ? "8:00 AM (Standard)" : t < "08:00" ? `${formatTimeLabel(t)} (+₹250 Early Pickup)` : formatTimeLabel(t)} {disabled ? " (Passed)" : ""}

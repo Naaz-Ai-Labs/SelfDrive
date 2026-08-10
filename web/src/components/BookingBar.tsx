@@ -48,7 +48,7 @@ export function BookingBar({
   const handlePickupDateChange = (newDate: string) => {
     const validDate = newDate < minPickupDate ? minPickupDate : newDate;
     setPickupDate(validDate);
-    const validTime = getValidPickupTime(pickupTime);
+    const validTime = getValidPickupTime(pickupTime, validDate);
     setPickupTime(validTime);
     const auto = compute25HourAutoReturn(validDate, validTime);
     setReturnDate(auto.returnDate);
@@ -56,7 +56,7 @@ export function BookingBar({
   };
 
   const handlePickupTimeChange = (newTime: string) => {
-    const validTime = getValidPickupTime(newTime);
+    const validTime = getValidPickupTime(newTime, pickupDate);
     setPickupTime(validTime);
     const auto = compute25HourAutoReturn(pickupDate, validTime);
     setReturnDate(auto.returnDate);
@@ -133,7 +133,7 @@ export function BookingBar({
             className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
           >
             {TIME_SLOTS.map((t) => {
-              const disabled = isTimeDisabled(t.value);
+              const disabled = isTimeDisabled(t.value, pickupDate);
               return (
                 <option key={t.value} value={t.value} disabled={disabled} className={disabled ? "opacity-30 text-white/30" : ""}>
                   {t.value === "08:00" ? "8:00 AM (Standard)" : t.label} {disabled ? " (Past)" : ""}

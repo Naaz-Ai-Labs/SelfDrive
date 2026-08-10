@@ -148,8 +148,8 @@ export function cn(...parts: Array<string | false | null | undefined>): string {
 export function getLiveClockMinPickup(pickupDateStr?: string | null): {
   todayISO: string;
   minPickupDate: string;
-  isTimeDisabled: (timeStr: string) => boolean;
-  getValidPickupTime: (currentTimeStr: string) => string;
+  isTimeDisabled: (timeStr: string, dateStr?: string | null) => boolean;
+  getValidPickupTime: (currentTimeStr: string, dateStr?: string | null) => string;
 } {
   const now = new Date();
   const y = now.getFullYear();
@@ -171,18 +171,23 @@ export function getLiveClockMinPickup(pickupDateStr?: string | null): {
     minPickupDate = `${ty}-${tm}-${td}`;
   }
 
-  const effectivePickupDate = !pickupDateStr || pickupDateStr < minPickupDate ? minPickupDate : pickupDateStr;
-  const isToday = effectivePickupDate === todayISO;
+  const isTimeDisabled = (timeStr: string, targetDateStr?: string | null): boolean => {
+    const activeDate = targetDateStr || pickupDateStr || todayISO;
+    // For any FUTURE date (activeDate > todayISO), NO time slots are disabled!
+    if (activeDate > todayISO) return false;
+    if (activeDate < todayISO) return true;
 
-  const isTimeDisabled = (timeStr: string): boolean => {
-    if (!isToday) return false;
+    // For TODAY (activeDate === todayISO):
     const hour = parseInt(timeStr.split(":")[0], 10);
     return hour < minHourToday;
   };
 
-  const getValidPickupTime = (currentTimeStr: string): string => {
-    if (!isToday) return currentTimeStr || "08:00";
-    if (isTimeDisabled(currentTimeStr)) {
+  const getValidPickupTime = (currentTimeStr: string, targetDateStr?: string | null): string => {
+    const activeDate = targetDateStr || pickupDateStr || todayISO;
+    // For any FUTURE date, any selected time (or default) is 100% valid!
+    if (activeDate > todayISO) return currentTimeStr || "08:00";
+
+    if (isTimeDisabled(currentTimeStr, activeDate)) {
       const validHour = Math.min(23, minHourToday);
       return `${String(validHour).padStart(2, "0")}:00`;
     }
