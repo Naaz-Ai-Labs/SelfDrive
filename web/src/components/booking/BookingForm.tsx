@@ -834,31 +834,74 @@ export function BookingForm({
 
               return (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {vehiclesToDisplay.map((v) => (
-                    <button
-                      type="button"
-                      key={v.id}
-                      onClick={() => setVehicleId(v.id)}
-                      className={`rounded-xl border p-4 text-left transition ${vehicleId === v.id ? "border-brand-500 bg-brand-50 shadow-sm" : "border-ink-100 hover:border-ink-300"}`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <p className="font-semibold text-ink-900">{v.name}</p>
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${(v.available_units ?? v.total_units ?? 0) <= 0 ? "bg-rose-100 text-rose-900 border border-rose-300" : (v.available_units ?? v.total_units) <= 1 ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                          {(v.available_units ?? v.total_units ?? 0) <= 0 ? "Out of Stock" : `${v.available_units ?? v.total_units} Left`}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day (Extra KM: ₹${(v.category_kind === "bike" || v.category_kind === "scooter") ? 4 : v.extra_km_rate ?? 8}/km)`}</p>
-                      <div className="mt-3 flex items-baseline gap-2 flex-wrap">
-                        <p className="font-display text-lg font-bold text-ink-900">
-                          {formatINR(v.rate_24h)}<span className="text-xs font-normal text-ink-500">/day weekday</span>
-                        </p>
-                        <p className="text-xs font-semibold text-amber-800 bg-amber-500/15 px-2 py-0.5 rounded">
-                          {formatINR(v.weekend_rate_24h ?? (v.rate_24h + 50))}/day weekend
-                        </p>
-                      </div>
-                    </button>
-                  ))}
+                  {vehiclesToDisplay.map((v) => {
+                    const isSelected = Number(vehicleId) === Number(v.id);
+                    const vQuote = computeClientQuote(v, pickupDate, pickupTime, returnDate, returnTime);
+                    const isOutOfStock = (v.available_units ?? v.total_units ?? 0) <= 0;
+                    const weekendDiff = (v.weekend_rate_24h ?? (v.rate_24h + 50)) - v.rate_24h;
+
+                    return (
+                      <button
+                        type="button"
+                        key={v.id}
+                        onClick={() => setVehicleId(v.id)}
+                        className={`rounded-xl border p-4 text-left transition relative cursor-pointer ${
+                          isSelected
+                            ? "border-brand-600 bg-brand-50/80 ring-2 ring-brand-500 shadow-sm"
+                            : "border-ink-100 bg-white hover:border-ink-300"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-ink-900">{v.name}</p>
+                            {isSelected && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                                Selected
+                              </span>
+                            )}
+                          </div>
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${isOutOfStock ? "bg-rose-100 text-rose-900 border border-rose-300" : (v.available_units ?? v.total_units) <= 1 ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                            {isOutOfStock ? "Out of Stock" : `${v.available_units ?? v.total_units} Left`}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day (Extra KM: ₹${(v.category_kind === "bike" || v.category_kind === "scooter") ? 4 : v.extra_km_rate ?? 8}/km)`}</p>
+
+                        <div className="mt-3 flex items-end justify-between border-t border-ink-100/80 pt-2.5">
+                          <div>
+                            {vQuote ? (
+                              <div>
+                                <p className="font-display text-lg font-bold text-ink-900">
+                                  {formatINR(vQuote.baseAmount)}
+                                  <span className="text-xs font-normal text-ink-500"> for {vQuote.days} day{vQuote.days > 1 ? "s" : ""}</span>
+                                </p>
+                                <p className="text-[11px] text-ink-500 font-medium">
+                                  Total: {formatINR(vQuote.totalAmount)} (incl. GST &amp; Deposit)
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="flex items-baseline gap-2 flex-wrap">
+                                <p className="font-display text-lg font-bold text-ink-900">
+                                  {formatINR(v.rate_24h)}<span className="text-xs font-normal text-ink-500">/day</span>
+                                </p>
+                              </div>
+                            )}
+                          </div>
+
+                          {vQuote && vQuote.weekendDaysCount > 0 ? (
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                              +₹{weekendDiff} Weekend Rate
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-medium text-ink-500 bg-ink-100 px-2 py-0.5 rounded">
+                              Standard Rate
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               );
             })()}
@@ -866,10 +909,12 @@ export function BookingForm({
             {activeQuote && selectedVehicle && (
               <div className="rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm">
                 <div className="flex items-center justify-between">
-                  <p className="font-semibold text-ink-900">Estimated total: {formatINR(activeQuote.totalAmount)}</p>
+                  <p className="font-semibold text-ink-900">
+                    Estimated total for {selectedVehicle.name}: {formatINR(activeQuote.totalAmount)}
+                  </p>
                   {activeQuote.weekendDaysCount && activeQuote.weekendDaysCount > 0 ? (
                     <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
-                      +₹50 Weekend Rate ({activeQuote.weekendDaysCount} day{activeQuote.weekendDaysCount > 1 ? "s" : ""})
+                      Weekend Rate Applied ({activeQuote.weekendDaysCount} day{activeQuote.weekendDaysCount > 1 ? "s" : ""})
                     </span>
                   ) : null}
                 </div>
@@ -1041,7 +1086,7 @@ export function BookingForm({
                 <div className="flex items-center gap-2">
                   {activeQuote && activeQuote.weekendDaysCount && activeQuote.weekendDaysCount > 0 ? (
                     <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
-                      Includes +₹50 Weekend Rate ({activeQuote.weekendDaysCount} day{activeQuote.weekendDaysCount > 1 ? "s" : ""})
+                      Weekend Rate Applied ({activeQuote.weekendDaysCount} day{activeQuote.weekendDaysCount > 1 ? "s" : ""})
                     </span>
                   ) : null}
                   <span className="text-xs font-semibold text-brand-800 bg-brand-100 px-2.5 py-0.5 rounded-full">
