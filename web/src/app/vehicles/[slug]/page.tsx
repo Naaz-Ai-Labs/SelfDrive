@@ -183,7 +183,6 @@ export default async function VehicleDetailPage(
                 <span className="font-display text-3xl font-black text-ink-900">{formatINR(vehicle.rate_24h)}</span>
                 <span className="pb-1 text-sm text-ink-500">/ 24 hours</span>
               </div>
-              {vehicle.rate_12h > 0 && <p className="mt-1 text-sm text-ink-500">{formatINR(vehicle.rate_12h)} for up to 12 hours</p>}
               <ul className="mt-4 space-y-2 border-t border-ink-100 pt-4 text-sm text-ink-600">
                 <li className="flex justify-between font-semibold text-brand-700">
                   <span>Fleet stock</span>
