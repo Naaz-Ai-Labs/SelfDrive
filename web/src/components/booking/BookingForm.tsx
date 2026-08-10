@@ -250,9 +250,8 @@ export function BookingForm({
 
   const liveClock = useMemo(() => getLiveClockMinPickup(), []);
 
-  const rawSearchPickup = search.get("pickup") ?? todayISO();
-  const initialPickup = rawSearchPickup < liveClock.minPickupDate ? liveClock.minPickupDate : rawSearchPickup;
-  const initialPickupTime = liveClock.getValidPickupTime(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
+  const initialPickup = search.get("pickup") ?? liveClock.minPickupDate;
+  const initialPickupTime = search.get("pickupTime") ?? STANDARD_PICKUP_TIME;
 
   const initialAutoReturn = compute25HourAutoReturn(initialPickup, initialPickupTime);
   const initialReturnDate = search.get("return") ?? initialAutoReturn.returnDate;

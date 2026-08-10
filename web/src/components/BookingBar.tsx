@@ -23,8 +23,8 @@ export function BookingBar({
   
   const { minPickupDate, isTimeDisabled, getValidPickupTime } = useMemo(() => getLiveClockMinPickup(), []);
 
-  const initialPickupDate = initialValues?.pickup && initialValues.pickup >= minPickupDate ? initialValues.pickup : minPickupDate;
-  const initialPickupTime = getValidPickupTime(initialValues?.pickupTime ?? "08:00");
+  const initialPickupDate = initialValues?.pickup ?? minPickupDate;
+  const initialPickupTime = initialValues?.pickupTime ?? "08:00";
   
   const initialAutoReturn = compute25HourAutoReturn(initialPickupDate, initialPickupTime);
   const initialReturnDate = initialValues?.return ?? initialAutoReturn.returnDate;
