@@ -11,14 +11,20 @@ const TIME_SLOTS = Array.from({ length: 24 }, (_, i) => {
   return { value, label };
 });
 
-export function BookingBar({ categories }: { categories: { id: number; name: string; kind: string }[] }) {
+export function BookingBar({
+  categories,
+  initialValues,
+}: {
+  categories: { id: number; name: string; kind: string }[];
+  initialValues?: { kind?: string; pickup?: string; pickupTime?: string; return?: string; returnTime?: string };
+}) {
   const router = useRouter();
-  const [kind, setKind] = useState("");
   const today = new Date().toISOString().slice(0, 10);
-  const [pickupDate, setPickupDate] = useState(today);
-  const [pickupTime, setPickupTime] = useState("08:00");
-  const [returnDate, setReturnDate] = useState(today);
-  const [returnTime, setReturnTime] = useState("08:00");
+  const [kind, setKind] = useState(initialValues?.kind ?? "");
+  const [pickupDate, setPickupDate] = useState(initialValues?.pickup ?? today);
+  const [pickupTime, setPickupTime] = useState(initialValues?.pickupTime ?? "08:00");
+  const [returnDate, setReturnDate] = useState(initialValues?.return ?? today);
+  const [returnTime, setReturnTime] = useState(initialValues?.returnTime ?? "08:00");
 
   return (
     <form

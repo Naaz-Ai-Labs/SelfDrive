@@ -4,10 +4,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { getVehicle, getVehicles } from "@/lib/data";
 import { getActiveTermsVersion } from "@/lib/data";
-import { formatINR, waLink } from "@/lib/utils";
+import { formatINR, formatDate, waLink } from "@/lib/utils";
 import { businessInfo } from "@/lib/settings";
 import { Reveal } from "@/components/ui/Reveal";
 import { isWeekend } from "@/lib/pricing";
+import { getCachedVehicleSearchPrice } from "@/lib/search-pricing";
 
 export async function generateMetadata(props: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const params = await props.params;
@@ -43,9 +44,10 @@ function SpecIcon({ d }: { d: string }) {
   );
 }
 
-export default async function VehicleDetailPage(
-  props: { params: Promise<{ slug: string }>; searchParams: Promise<{ pickup?: string; return?: string }> }
-) {
+export default async function VehicleDetailPage(props: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ pickup?: string; pickupTime?: string; return?: string; returnTime?: string }>;
+}) {
   const searchParams = await props.searchParams;
   const params = await props.params;
   const vehicle = await getVehicle(params.slug);
@@ -57,7 +59,16 @@ export default async function VehicleDetailPage(
   ]);
   const similar = similarAll.filter((v) => v.id !== vehicle.id).slice(0, 3);
 
-  const bookingHref = `/booking?vehicle=${vehicle.id}${searchParams.pickup ? `&pickup=${searchParams.pickup}` : ""}${searchParams.return ? `&return=${searchParams.return}` : ""}`;
+  const pickupDate = searchParams.pickup;
+  const pickupTime = searchParams.pickupTime || "08:00";
+  const returnDate = searchParams.return;
+  const returnTime = searchParams.returnTime || "08:00";
+
+  const searchQuote = Boolean(pickupDate && returnDate)
+    ? await getCachedVehicleSearchPrice(vehicle, pickupDate, pickupTime, returnDate, returnTime)
+    : null;
+
+  const bookingHref = `/booking?vehicle=${vehicle.id}${pickupDate ? `&pickup=${pickupDate}` : ""}${pickupTime ? `&pickupTime=${pickupTime}` : ""}${returnDate ? `&return=${returnDate}` : ""}${returnTime ? `&returnTime=${returnTime}` : ""}`;
 
   const isOutOfStock = (vehicle.available_units ?? vehicle.total_units ?? 0) <= 0;
   const weekendActive = isWeekend();
@@ -173,16 +184,64 @@ export default async function VehicleDetailPage(
               <div className="absolute inset-x-0 top-0 h-2 bg-brand-500" aria-hidden />
               <div className="flex items-center justify-between">
                 <p className="text-xs font-bold uppercase tracking-wider text-ink-400">Pricing</p>
-                {weekendActive && (
+                {searchQuote && searchQuote.weekendDaysCount > 0 ? (
+                  <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
+                    +₹50 Weekend Rate ({searchQuote.weekendDaysCount}d)
+                  </span>
+                ) : weekendActive && !searchQuote ? (
                   <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
                     +₹50 Weekend Rate
                   </span>
-                )}
+                ) : null}
               </div>
-              <div className="mt-2 flex items-end gap-2">
-                <span className="font-display text-3xl font-black text-ink-900">{formatINR(vehicle.rate_24h)}</span>
-                <span className="pb-1 text-sm text-ink-500">/ 24 hours</span>
-              </div>
+
+              {searchQuote ? (
+                <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/70 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-brand-800">Searched Trip Quote</span>
+                    <span className="rounded bg-brand-500 px-2 py-0.5 text-[10px] font-extrabold text-ink-950">
+                      {searchQuote.days} Day{searchQuote.days > 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-display text-3xl font-black text-brand-900">{formatINR(searchQuote.baseAmount)}</span>
+                    <span className="text-xs text-ink-600">base rental</span>
+                  </div>
+                  <p className="text-xs text-ink-600">
+                    {formatDate(pickupDate ?? "")} ({pickupTime}) → {formatDate(returnDate ?? "")} ({returnTime})
+                  </p>
+                  <div className="border-t border-brand-200/80 pt-2 space-y-1 text-xs text-ink-700">
+                    <div className="flex justify-between">
+                      <span>Base Rental ({searchQuote.days}d)</span>
+                      <span className="font-semibold text-ink-900">{formatINR(searchQuote.baseAmount)}</span>
+                    </div>
+                    {searchQuote.totalTimingFees > 0 && (
+                      <div className="flex justify-between text-amber-800">
+                        <span>Off-schedule timing surcharge</span>
+                        <span className="font-semibold">+{formatINR(searchQuote.totalTimingFees)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>Refundable Deposit</span>
+                      <span className="font-semibold text-ink-900">{formatINR(searchQuote.depositAmount)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>GST (6%)</span>
+                      <span className="font-semibold text-ink-900">{formatINR(searchQuote.gstAmount)}</span>
+                    </div>
+                    <div className="flex justify-between border-t border-brand-200 pt-1 text-sm font-bold text-ink-900">
+                      <span>Total Payable</span>
+                      <span className="text-brand-700">{formatINR(searchQuote.totalAmount)}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 flex items-end gap-2">
+                  <span className="font-display text-3xl font-black text-ink-900">{formatINR(vehicle.rate_24h)}</span>
+                  <span className="pb-1 text-sm text-ink-500">/ 24 hours</span>
+                </div>
+              )}
+
               <ul className="mt-4 space-y-2 border-t border-ink-100 pt-4 text-sm text-ink-600">
                 <li className="flex justify-between font-semibold text-brand-700">
                   <span>Fleet stock</span>
@@ -202,7 +261,7 @@ export default async function VehicleDetailPage(
                 </div>
               ) : (
                 <Link href={bookingHref} className="btn-shine mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
-                  Book this vehicle
+                  {searchQuote ? `Book for ${formatINR(searchQuote.totalAmount)}` : "Book this vehicle"}
                 </Link>
               )}
               <a href={waLink(String(info.whatsapp ?? ""), `Hi, I'd like to enquire about the ${vehicle.name}`)} target="_blank" rel="noopener noreferrer" className="btn-secondary mt-2 w-full">
