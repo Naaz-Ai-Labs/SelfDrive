@@ -21,6 +21,7 @@ const DEFAULT_TERMS = [
   "Fuel policy: Return the vehicle with the same fuel level as provided at pickup.",
   "Security deposit is fully refundable upon safe vehicle return inspection.",
   "Late returns exceeding 1 minute add full 24-hour additional day rental charges.",
+  "In case of any accident or damages, notify the owner immediately and do not do anything on your own.",
 ];
 
 function todayISO() {
@@ -347,16 +348,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
       {/* Persistent reminder of what's being booked */}
       {step >= 3 && selectedVehicle && (
-        <div className="mb-4 flex items-center gap-3 rounded-xl border border-ink-100 bg-white p-3 shadow-sm">
-          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-ink-100">
-            {selectedVehicle.primary_photo ? (
-              <Image src={selectedVehicle.primary_photo} alt={selectedVehicle.name} fill className="object-cover" sizes="56px" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-ink-400" aria-hidden>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 17h14M5 17a2 2 0 104 0M5 17V9l2-4h10l2 4v8M15 17a2 2 0 104 0" /></svg>
-              </div>
-            )}
-          </div>
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-ink-100 bg-white p-3.5 shadow-sm">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-ink-900">{selectedVehicle.name}</p>
             <p className="truncate text-xs text-ink-500">{days} day{days > 1 ? "s" : ""} · {formatDate(pickupAt)} → {formatDate(returnAt)}</p>
@@ -603,43 +595,76 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
         {step === 5 && (
           <div className="space-y-5">
             <h2 className="font-display text-xl font-semibold text-ink-900">Review & confirm</h2>
-            <div className="space-y-3 text-sm">
+            
+            {/* Booking Summary */}
+            <div className="space-y-2.5 text-sm">
               <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Vehicle</span><span className="font-medium text-ink-900">{selectedVehicle?.name ?? "—"} <button type="button" onClick={() => setStep(2)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
               <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Pickup</span><span className="font-medium text-ink-900">{formatDate(pickupAt)}, {formatTimeLabel(pickupTime)} {location && `· ${location}`} <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
               <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Return (Drop)</span><span className="font-medium text-ink-900">{formatDate(returnAt)}, {formatTimeLabel(returnTime)}</span></div>
               <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Customer</span><span className="font-medium text-ink-900">{contact.name} · {contact.phone} <button type="button" onClick={() => setStep(3)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
-              {quote && (
-                <>
-                  <div className="flex justify-between"><span className="text-ink-500">Base rental ({quote.days} day{quote.days > 1 ? "s" : ""})</span><span>{formatINR(quote.baseAmount)}</span></div>
-                  <div className="flex justify-between"><span className="text-ink-500">GST ({quote.gstPct}%)</span><span>{formatINR(quote.gstAmount)}</span></div>
-                  {quote.gatewayFeeAmount > 0 && <div className="flex justify-between"><span className="text-ink-500">Payment gateway fee ({quote.gatewayFeePct}%)</span><span>{formatINR(quote.gatewayFeeAmount)}</span></div>}
-                  <div className="flex justify-between"><span className="text-ink-500">Security deposit (refundable)</span><span>{formatINR(quote.depositAmount)}</span></div>
-                  <div className="flex justify-between border-t border-ink-100 pt-2 text-base font-semibold text-ink-900"><span>Total payable</span><span>{formatINR(quote.totalAmount)}</span></div>
-                </>
-              )}
             </div>
 
+            {/* Dedicated Price Breakup Box */}
+            <div className="rounded-xl border border-brand-200 bg-brand-50/40 p-4 space-y-2.5 text-sm shadow-xs">
+              <div className="flex items-center justify-between border-b border-brand-200/80 pb-2">
+                <span className="font-semibold text-ink-900">Price breakup</span>
+                <span className="text-xs font-semibold text-brand-800 bg-brand-100 px-2.5 py-0.5 rounded-full">{quote?.days || days} Day{((quote?.days || days) > 1) ? "s" : ""} Duration</span>
+              </div>
+              <div className="flex justify-between text-ink-700">
+                <span>Base rental rate ({quote?.days || days} day{((quote?.days || days) > 1) ? "s" : ""})</span>
+                <span className="font-semibold text-ink-900">{formatINR(quote?.baseAmount ?? ((selectedVehicle?.rate_24h ?? 0) * days))}</span>
+              </div>
+              <div className="flex justify-between text-ink-700">
+                <span>Security deposit (Fully refundable upon vehicle return)</span>
+                <span className="font-semibold text-ink-900">{formatINR(quote?.depositAmount ?? (selectedVehicle?.deposit ?? 0))}</span>
+              </div>
+              {quote && quote.gstAmount > 0 && (
+                <div className="flex justify-between text-ink-700">
+                  <span>GST ({quote.gstPct}%)</span>
+                  <span className="font-medium text-ink-900">{formatINR(quote.gstAmount)}</span>
+                </div>
+              )}
+              {quote && quote.gatewayFeeAmount > 0 && (
+                <div className="flex justify-between text-ink-700">
+                  <span>Payment gateway fee</span>
+                  <span className="font-medium text-ink-900">{formatINR(quote.gatewayFeeAmount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-brand-200 pt-2.5 text-base font-bold text-ink-900">
+                <span>Total payable amount</span>
+                <span className="text-lg text-brand-700">{formatINR(quote?.totalAmount ?? (((selectedVehicle?.rate_24h ?? 0) * days) + (selectedVehicle?.deposit ?? 0)))}</span>
+              </div>
+            </div>
+
+            {/* Terms & Conditions */}
             <div className="rounded-xl border border-ink-100 bg-ink-50 p-4 text-sm text-ink-600">
               <p className="font-semibold text-ink-900">Terms & conditions</p>
-              <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto pr-2">
-                {((terms && terms.length > 0) ? terms : DEFAULT_TERMS)
-                  .filter((t) => !t.toLowerCase().includes("cancellation"))
-                  .map((t) => {
-                    let text = t;
-                    if (t.toLowerCase().includes("driving beyond this limit") || t.toLowerCase().includes("drive limit")) {
-                      const extraKmRate = (selectedVehicle?.category_kind === "bike" || selectedVehicle?.category_kind === "scooter") ? 4 : (selectedVehicle?.extra_km_rate ?? 8);
-                      const kmLimit = selectedVehicle?.included_km ?? (selectedVehicle?.category_kind === "car" ? 300 : 100);
-                      text = `Included drive limit is ${kmLimit >= 999 ? "Unlimited" : `${kmLimit} km`} per day. Driving beyond this limit is charged at ₹${extraKmRate}/KM.`;
-                    }
-                    return (
-                      <li key={t} className="flex gap-2"><span aria-hidden>•</span>{text}</li>
-                    );
-                  })}
+              <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto pr-2">
+                {(() => {
+                  const baseTerms = (terms && terms.length > 0) ? [...terms] : [...DEFAULT_TERMS];
+                  if (!baseTerms.some((t) => t.toLowerCase().includes("accident") || t.toLowerCase().includes("damages"))) {
+                    baseTerms.push("In case of any accident or damages, notify the owner immediately and do not do anything on your own.");
+                  }
+                  return baseTerms
+                    .filter((t) => !t.toLowerCase().includes("cancellation"))
+                    .map((t) => {
+                      let text = t;
+                      if (t.toLowerCase().includes("driving beyond this limit") || t.toLowerCase().includes("drive limit")) {
+                        const extraKmRate = (selectedVehicle?.category_kind === "bike" || selectedVehicle?.category_kind === "scooter") ? 4 : (selectedVehicle?.extra_km_rate ?? 8);
+                        const kmLimit = selectedVehicle?.included_km ?? (selectedVehicle?.category_kind === "car" ? 300 : 100);
+                        text = `Included drive limit is ${kmLimit >= 999 ? "Unlimited" : `${kmLimit} km`} per day. Driving beyond this limit is charged at ₹${extraKmRate}/KM.`;
+                      }
+                      return (
+                        <li key={t} className="flex gap-2"><span aria-hidden className="text-brand-600 font-bold">•</span><span>{text}</span></li>
+                      );
+                    });
+                })()}
               </ul>
             </div>
-            <label className="flex items-start gap-2 text-sm text-ink-700">
+
+            <label className="flex items-start gap-2 text-sm text-ink-700 cursor-pointer">
               <input type="checkbox" checked={termsAccepted} onChange={(e) => setTermsAccepted(e.target.checked)} className="mt-0.5 h-4 w-4 accent-brand-600" />
-              I have read and accept the terms and conditions and fuel policy.
+              <span>I have read and accept the terms and conditions and fuel policy.</span>
             </label>
             {errors.terms && <p className="field-error">{errors.terms}</p>}
 

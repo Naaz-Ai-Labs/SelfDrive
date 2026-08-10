@@ -20,7 +20,7 @@ export default async function StaffManagementPage() {
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-2xl font-semibold text-ink-900">Staff Accounts & Roster</h1>
-        <p className="text-sm text-ink-500">Admin staff credentials creation, Supabase Auth sync, and departure audit logs</p>
+        <p className="text-sm text-ink-500">Staff credentials creation, access management, and activity audit logs</p>
       </div>
 
       <StaffEditor users={users} history={history} isAdmin={true} />

@@ -86,7 +86,7 @@ export function VehicleForm({
         });
 
         if (res?.ok) {
-          setSuccess(`Vehicle details saved & synced with Supabase!`);
+          setSuccess("Vehicle details saved successfully!");
           router.refresh();
           if (!vehicle) {
             setForm({ ...form, name: "", brand: "", model: "", registrationNo: "" });

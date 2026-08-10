@@ -67,31 +67,6 @@ export function StaffLogin() {
         />
       </div>
 
-      <div className="flex gap-2 text-xs text-slate-500 pt-1">
-        <span>Quick fill:</span>
-        <button
-          type="button"
-          onClick={() => {
-            setEmail("admin@darshhrentals.in");
-            setPassword("Admin@123");
-          }}
-          className="text-amber-600 hover:underline font-medium"
-        >
-          Admin
-        </button>
-        <span>•</span>
-        <button
-          type="button"
-          onClick={() => {
-            setEmail("staff@darshhrentals.in");
-            setPassword("Staff@123");
-          }}
-          className="text-amber-600 hover:underline font-medium"
-        >
-          Staff
-        </button>
-      </div>
-
       {error && (
         <p className="field-error" role="alert">
           {error}

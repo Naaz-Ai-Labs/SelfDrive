@@ -70,12 +70,9 @@ export default async function VehiclesAdminPage() {
         <div>
           <h1 className="font-display text-2xl font-semibold text-ink-900">Fleet & Vehicle Management</h1>
           <p className="text-xs text-ink-500">
-            Admin CRUD operations, real-time inventory units tracking, and Supabase Storage photo sync
+            Real-time fleet inventory units tracking, vehicle status, and pricing controls
           </p>
         </div>
-        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
-          ⚡ Supabase DB & Storage Synced
-        </span>
       </div>
 
       {/* Interactive Fleet Gantt Timeline Schedule */}
