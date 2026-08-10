@@ -756,14 +756,24 @@ export function BookingForm({
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => {
                     const isStandard = t === "08:00";
+                    const isLate = t > "08:00";
 
                     return (
                       <option key={t} value={t}>
-                        {isStandard ? "8:00 AM (Standard Drop)" : formatTimeLabel(t)}
+                        {isStandard
+                          ? "8:00 AM (Standard Drop)"
+                          : isLate
+                          ? `${formatTimeLabel(t)} (+1 Day Extra Charge)`
+                          : formatTimeLabel(t)}
                       </option>
                     );
                   })}
                 </select>
+                {returnTime > "08:00" && (
+                  <p className="mt-1 text-[11px] font-semibold text-amber-800">
+                    ⚡ Drop after standard 8:00 AM: 1 day extra charge will be included.
+                  </p>
+                )}
               </div>
 
               <div>

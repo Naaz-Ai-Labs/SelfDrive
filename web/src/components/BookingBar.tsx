@@ -120,11 +120,19 @@ export function BookingBar({
             onChange={(e) => setReturnTime(e.target.value)}
             className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
           >
-            {TIME_SLOTS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.value === "08:00" ? "8:00 AM (Standard)" : t.label}
-              </option>
-            ))}
+            {TIME_SLOTS.map((t) => {
+              const isStandard = t.value === "08:00";
+              const isLate = t.value > "08:00";
+              return (
+                <option key={t.value} value={t.value}>
+                  {isStandard
+                    ? "8:00 AM (Standard)"
+                    : isLate
+                    ? `${t.label} (+1 Day Extra Charge)`
+                    : t.label}
+                </option>
+              );
+            })}
           </select>
         </label>
       </div>
