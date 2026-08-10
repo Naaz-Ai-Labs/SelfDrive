@@ -20,9 +20,32 @@ export async function createBookingPaymentOrder(bookingId: number): Promise<
     return { ok: false, error: "Online payment isn't set up yet. Our team will contact you on WhatsApp to arrange payment." };
   }
   const db = getDb();
-  const booking = db
+  let booking = db
     .prepare("SELECT b.*, c.name AS customer_name, c.phone AS customer_phone FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id WHERE b.id = ?")
     .get(bookingId) as Record<string, unknown> | undefined;
+
+  if (!booking) {
+    // Check Supabase
+    try {
+      const { supabaseAdmin, supabase } = await import("./supabase");
+      const client = supabaseAdmin || supabase;
+      if (client) {
+        const { data: sbBooking } = await client.from("bookings").select("*").eq("id", bookingId).single();
+        if (sbBooking) {
+          booking = {
+            id: sbBooking.id,
+            booking_no: sbBooking.booking_no || `BK-${sbBooking.id}`,
+            customer_id: sbBooking.customer_id,
+            total_amount: Number(sbBooking.total_amount || 1000),
+            deposit_amount: Number(sbBooking.deposit_amount || 1000),
+            paid_amount: Number(sbBooking.paid_amount || 0),
+            status: sbBooking.status || "Pending",
+          };
+        }
+      }
+    } catch {}
+  }
+
   if (!booking) return { ok: false, error: "Booking not found." };
 
   const due = Number(booking.total_amount) + Number(booking.deposit_amount) - Number(booking.paid_amount);
