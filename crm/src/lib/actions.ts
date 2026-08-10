@@ -213,15 +213,21 @@ export async function deleteVehicle(id: number) {
   const db = getDb();
   const { supabaseAdmin } = await import("./supabase");
 
-  db.prepare("UPDATE vehicles SET active = 0, status = 'archived' WHERE id = ?").run(id);
+  // Hard delete from local SQLite
+  db.prepare("DELETE FROM vehicle_photos WHERE vehicle_id = ?").run(id);
+  db.prepare("DELETE FROM vehicles WHERE id = ?").run(id);
 
+  // Hard delete from Supabase PostgreSQL
   if (supabaseAdmin) {
     try {
-      await supabaseAdmin.from("vehicles").update({ active: 0, status: "archived" }).eq("id", id);
-    } catch {}
+      await supabaseAdmin.from("vehicle_photos").delete().eq("vehicle_id", id);
+      await supabaseAdmin.from("vehicles").delete().eq("id", id);
+    } catch (err: any) {
+      console.warn("Supabase vehicle delete warning:", err?.message || err);
+    }
   }
 
-  logActivity(user.id, "vehicle_archived", "vehicle", id);
+  logActivity(user.id, "vehicle_deleted", "vehicle", id);
   refresh("/");
   refresh();
   return { ok: true };

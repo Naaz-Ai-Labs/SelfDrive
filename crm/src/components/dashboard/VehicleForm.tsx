@@ -126,7 +126,7 @@ export function VehicleForm({
 
   function handleDelete() {
     if (!vehicle?.id) return;
-    if (!confirm(`Are you sure you want to archive "${vehicle.name}"?`)) return;
+    if (!confirm(`Are you sure you want to permanently delete "${vehicle.name}" from the fleet? This action cannot be undone.`)) return;
 
     startTransition(async () => {
       await deleteVehicle(vehicle.id);
@@ -352,20 +352,20 @@ export function VehicleForm({
               value={form.status}
               onChange={(e) => setForm({ ...form, status: e.target.value })}
             >
-              {["available", "booked", "maintenance", "archived"].map((s) => (
+              {["available", "booked", "maintenance"].map((s) => (
                 <option key={s}>{s}</option>
               ))}
             </select>
           </div>
         </div>
 
-        {/* Supabase Image Uploader */}
+        {/* Photo Uploader */}
         <div className="rounded-xl border border-dashed border-ink-300 bg-ink-50/50 p-4 space-y-2">
           <div className="flex items-center justify-between">
             <label className="label text-xs font-semibold">
-              Vehicle Photo (Uploaded & Saved in Supabase Storage ☁️)
+              Vehicle Photo (Upload image file or enter URL)
             </label>
-            {uploading && <span className="text-xs text-brand-600 animate-pulse">Uploading to Supabase…</span>}
+            {uploading && <span className="text-xs text-brand-600 animate-pulse">Uploading photo…</span>}
           </div>
           <div className="flex items-center gap-3">
             <input
@@ -402,7 +402,7 @@ export function VehicleForm({
 
         <div className="flex items-center justify-between pt-2">
           <button type="submit" disabled={pending || uploading} className="btn-primary">
-            {pending ? "Saving…" : vehicle ? "Save Vehicle & Sync to Supabase" : "Add Vehicle & Sync to Supabase"}
+            {pending ? "Saving…" : vehicle ? "Save Vehicle Details" : "Add Vehicle to Fleet"}
           </button>
 
           {vehicle && (
@@ -410,9 +410,9 @@ export function VehicleForm({
               type="button"
               disabled={pending}
               onClick={handleDelete}
-              className="btn-secondary text-xs text-red-600 hover:bg-red-50"
+              className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-red-700 transition"
             >
-              Archive / Delete Vehicle
+              🗑️ Delete Vehicle
             </button>
           )}
         </div>
@@ -420,7 +420,7 @@ export function VehicleForm({
 
       {vehicle && vehicle.photos && vehicle.photos.length > 0 && (
         <div className="border-t border-ink-100 pt-4">
-          <p className="label mb-2">Saved Vehicle Photos (Supabase Synced)</p>
+          <p className="label mb-2">Saved Vehicle Photos</p>
           <div className="flex flex-wrap gap-2">
             {vehicle.photos.map((p, idx) => (
               <img key={idx} src={p} alt="" className="h-16 w-24 rounded-lg object-cover border border-ink-200" />

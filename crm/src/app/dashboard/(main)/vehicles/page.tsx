@@ -123,8 +123,6 @@ export default async function VehiclesAdminPage() {
                 <td className="px-4 py-3">
                   {v.status === "maintenance" ? (
                     <span className="badge bg-amber-100 text-amber-800 font-semibold">Maintenance</span>
-                  ) : v.status === "archived" ? (
-                    <span className="badge bg-stone-100 text-stone-600 font-semibold">Archived</span>
                   ) : (v.available_units ?? v.total_units ?? 1) > 0 ? (
                     <span className="badge bg-emerald-100 text-emerald-800 font-semibold">
                       {v.available_units ?? v.total_units ?? 1}/{v.total_units ?? 1} Available
