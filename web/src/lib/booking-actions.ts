@@ -125,9 +125,16 @@ export async function submitBooking(input: {
           baseAmount += rate;
         }
 
+        const pickupTimeStr = input.pickupAt.includes("T") ? input.pickupAt.split("T")[1] : "08:00";
+        const returnTimeStr = input.returnAt.includes("T") ? input.returnAt.split("T")[1] : "08:00";
+        const isEarlyPickup = pickupTimeStr < "08:00";
+        const isLateDrop = returnTimeStr > pickupTimeStr;
+        const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
+
         depositAmount = Number(v.deposit ?? 1000);
-        gstAmount = Math.round(baseAmount * 0.06);
-        totalAmount = baseAmount + depositAmount + gstAmount;
+        const taxableAmount = baseAmount + timingFee;
+        gstAmount = Math.round(taxableAmount * 0.06);
+        totalAmount = taxableAmount + depositAmount + gstAmount;
       }
     } catch {}
 
@@ -242,24 +249,34 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
       let baseAmount = 0;
       const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
 
+      let weekendDaysCount = 0;
       for (let i = 0; i < days; i++) {
         const day = new Date(p.getTime() + i * msPerDay);
         const dayOfWeek = day.getDay();
         const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
+        if (isWeekend) weekendDaysCount++;
         const rate = isWeekend ? Number(v.weekend_rate_24h ?? (v.rate_24h + 50)) : Number(v.rate_24h);
         dayBreakdown.push({ date: day.toISOString().slice(0, 10), isWeekend, rate });
         baseAmount += rate;
       }
 
+      const pickupTimeStr = pickupAt.includes("T") ? pickupAt.split("T")[1] : "08:00";
+      const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : "08:00";
+      const isEarlyPickup = pickupTimeStr < "08:00";
+      const isLateDrop = returnTimeStr > pickupTimeStr;
+      const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
+
       const depositAmount = Number(v.deposit ?? 1000);
       const gstPct = 6;
-      const gstAmount = Math.round(baseAmount * 0.06);
-      const totalAmount = baseAmount + depositAmount + gstAmount;
+      const taxableAmount = baseAmount + timingFee;
+      const gstAmount = Math.round(taxableAmount * 0.06);
+      const totalAmount = taxableAmount + depositAmount + gstAmount;
       return {
         days,
+        weekendDaysCount,
         dayBreakdown,
         baseAmount,
-        offSchedulePickupFee: 0,
+        offSchedulePickupFee: timingFee,
         gstAmount,
         gstPct,
         gatewayFeeAmount: 0,
@@ -267,8 +284,8 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
         depositAmount,
         includedKm: (v.included_km ?? 100) * days,
         extraKmRate: v.extra_km_rate ?? 5,
-        afterHours: false,
-        offSchedulePickup: false,
+        afterHours: isEarlyPickup,
+        offSchedulePickup: timingFee > 0,
         weekendMinDays: 1,
         belowWeekendMinimum: false,
         appliedRuleName: null,

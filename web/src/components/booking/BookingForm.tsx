@@ -34,18 +34,51 @@ function combineIso(dateStr: string, timeStr: string) {
   return `${dateStr}T${timeStr}`;
 }
 
-function computeAutoReturnDate(pickupDateStr: string): string {
-  if (!pickupDateStr) return pickupDateStr;
-  const parts = pickupDateStr.split("-").map(Number);
-  if (parts.length !== 3) return pickupDateStr;
+function getDayOfWeek(dateStr: string): number {
+  if (!dateStr) return 0;
+  const parts = dateStr.split("-").map(Number);
+  if (parts.length !== 3) return 0;
+  return new Date(parts[0], parts[1] - 1, parts[2]).getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
+}
+
+function addDaysISO(dateStr: string, numDays: number): string {
+  if (!dateStr) return dateStr;
+  const parts = dateStr.split("-").map(Number);
+  if (parts.length !== 3) return dateStr;
   const d = new Date(parts[0], parts[1] - 1, parts[2]);
-  const dayOfWeek = d.getDay();
-  const daysToAdd = dayOfWeek === 6 ? 2 : 1;
+  d.setDate(d.getDate() + numDays);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const date = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${date}`;
+}
+
+function getNextMondayISO(dateStr: string): string {
+  if (!dateStr) return dateStr;
+  const parts = dateStr.split("-").map(Number);
+  if (parts.length !== 3) return dateStr;
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  const day = d.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
+  const daysToAdd = day === 0 ? 1 : day === 6 ? 2 : day === 5 ? 3 : (8 - day);
   d.setDate(d.getDate() + daysToAdd);
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  const date = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${date}`;
+}
+
+function computeAutoReturnDate(pickupDateStr: string, isFridayExtended = false): string {
+  if (!pickupDateStr) return pickupDateStr;
+  const day = getDayOfWeek(pickupDateStr);
+  if (day === 6) {
+    // Saturday pickup -> Mandatory Monday return
+    return getNextMondayISO(pickupDateStr);
+  }
+  if (day === 5 && isFridayExtended) {
+    // Friday + Weekend -> Monday return
+    return getNextMondayISO(pickupDateStr);
+  }
+  return addDaysISO(pickupDateStr, 1);
 }
 
 function maxDobISO() {
@@ -60,7 +93,13 @@ function formatDlNumber(val: string): string {
   return `${clean.slice(0, 4)} ${clean.slice(4, 15)}`;
 }
 
-function computeClientQuote(vehicle: Vehicle | null | undefined, pickupDateStr: string | null, returnDateStr: string | null) {
+function computeClientQuote(
+  vehicle: Vehicle | null | undefined,
+  pickupDateStr: string | null,
+  pickupTimeStr: string | null,
+  returnDateStr: string | null,
+  returnTimeStr: string | null
+) {
   if (!vehicle || !pickupDateStr || !returnDateStr) return null;
   const p = new Date(pickupDateStr);
   const r = new Date(returnDateStr);
@@ -82,17 +121,24 @@ function computeClientQuote(vehicle: Vehicle | null | undefined, pickupDateStr: 
     baseAmount += rate;
   }
 
+  const pTime = pickupTimeStr ?? "08:00";
+  const rTime = returnTimeStr ?? "08:00";
+  const isEarlyPickup = pTime < "08:00";
+  const isLateDrop = rTime > pTime;
+  const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
+
   const depositAmount = Number(vehicle.deposit ?? 1000);
   const gstPct = 6;
-  const gstAmount = Math.round(baseAmount * 0.06);
-  const totalAmount = baseAmount + depositAmount + gstAmount;
+  const taxableAmount = baseAmount + timingFee;
+  const gstAmount = Math.round(taxableAmount * 0.06);
+  const totalAmount = taxableAmount + depositAmount + gstAmount;
 
   return {
     days,
     dayBreakdown,
     weekendDaysCount,
     baseAmount,
-    offSchedulePickupFee: 0,
+    offSchedulePickupFee: timingFee,
     gstAmount,
     gstPct,
     gatewayFeeAmount: 0,
@@ -100,8 +146,8 @@ function computeClientQuote(vehicle: Vehicle | null | undefined, pickupDateStr: 
     depositAmount,
     includedKm: (vehicle.included_km ?? 100) * days,
     extraKmRate: vehicle.extra_km_rate ?? 5,
-    afterHours: false,
-    offSchedulePickup: false,
+    afterHours: isEarlyPickup,
+    offSchedulePickup: timingFee > 0,
     weekendMinDays: 1,
     belowWeekendMinimum: false,
     appliedRuleName: null,
@@ -123,11 +169,22 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
   const [categoryKind, setCategoryKind] = useState(search.get("kind") ?? "");
   const [location, setLocation] = useState("");
-  const [pickupDate, setPickupDate] = useState(search.get("pickup") ?? todayISO());
+  const initialPickup = search.get("pickup") ?? todayISO();
+  const [pickupDate, setPickupDate] = useState(initialPickup);
   const [pickupTime, setPickupTime] = useState(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
-  const [returnDate, setReturnDate] = useState(search.get("return") ?? computeAutoReturnDate(search.get("pickup") ?? todayISO()));
+  const [fridayWeekendExtension, setFridayWeekendExtension] = useState(false);
+  const [returnDate, setReturnDate] = useState(search.get("return") ?? computeAutoReturnDate(initialPickup));
   const [returnTime, setReturnTime] = useState(search.get("returnTime") ?? STANDARD_PICKUP_TIME);
   const [passengers, setPassengers] = useState("");
+
+  const isFriday = useMemo(() => getDayOfWeek(pickupDate) === 5, [pickupDate]);
+  const isSaturday = useMemo(() => getDayOfWeek(pickupDate) === 6, [pickupDate]);
+
+  const minReturnDate = useMemo(() => {
+    if (isSaturday) return getNextMondayISO(pickupDate);
+    if (isFriday && fridayWeekendExtension) return getNextMondayISO(pickupDate);
+    return addDaysISO(pickupDate, 1);
+  }, [pickupDate, isSaturday, isFriday, fridayWeekendExtension]);
 
   const pickupAt = combineIso(pickupDate, pickupTime);
   const returnAt = combineIso(returnDate, returnTime);
@@ -158,12 +215,39 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
   const handlePickupDateChange = (newDate: string) => {
     setPickupDate(newDate);
-    setReturnDate(computeAutoReturnDate(newDate));
+    const day = getDayOfWeek(newDate);
+    if (day === 6) {
+      setReturnDate(getNextMondayISO(newDate));
+    } else if (day === 5) {
+      if (fridayWeekendExtension) {
+        setReturnDate(getNextMondayISO(newDate));
+      } else {
+        setReturnDate(addDaysISO(newDate, 1));
+      }
+    } else {
+      setReturnDate(addDaysISO(newDate, 1));
+    }
+  };
+
+  const handleFridayExtensionChange = (checked: boolean) => {
+    setFridayWeekendExtension(checked);
+    if (checked) {
+      setReturnDate(getNextMondayISO(pickupDate));
+    } else {
+      setReturnDate(addDaysISO(pickupDate, 1));
+    }
   };
 
   const handlePickupTimeChange = (newTime: string) => {
     setPickupTime(newTime);
-    setReturnTime(newTime);
+  };
+
+  const handleReturnDateChange = (newReturnDate: string) => {
+    if (newReturnDate < minReturnDate) {
+      setReturnDate(minReturnDate);
+    } else {
+      setReturnDate(newReturnDate);
+    }
   };
 
   // Resume from a draft token in the URL, or restore from localStorage.
@@ -264,8 +348,8 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   );
 
   const clientQuote = useMemo(() => {
-    return computeClientQuote(selectedVehicle, pickupAt, returnAt);
-  }, [selectedVehicle, pickupAt, returnAt]);
+    return computeClientQuote(selectedVehicle, pickupDate, pickupTime, returnDate, returnTime);
+  }, [selectedVehicle, pickupDate, pickupTime, returnDate, returnTime]);
 
   const activeQuote = quote ?? clientQuote;
 
@@ -434,28 +518,77 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
               <div>
                 <label className="label">Pickup date *</label>
-                <input className="input" type="date" min={todayISO()} value={pickupDate} onChange={(e) => handlePickupDateChange(e.target.value)} aria-invalid={!!errors.pickupDate} />
+                <input
+                  className="input"
+                  type="date"
+                  min={todayISO()}
+                  value={pickupDate}
+                  onChange={(e) => handlePickupDateChange(e.target.value)}
+                  aria-invalid={!!errors.pickupDate}
+                />
                 {errors.pickupDate && <p className="field-error">{errors.pickupDate}</p>}
               </div>
               <div>
                 <label className="label">Pickup time</label>
                 <select className="input" value={pickupTime} onChange={(e) => handlePickupTimeChange(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => (
-                    <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard)" : formatTimeLabel(t)}</option>
+                    <option key={t} value={t}>
+                      {t === "08:00" ? "8:00 AM (Standard)" : t < "08:00" ? `${formatTimeLabel(t)} (+₹250 Early Pickup)` : formatTimeLabel(t)}
+                    </option>
                   ))}
                 </select>
               </div>
 
+              {/* Friday Weekend Extension Checkbox - ONLY visible when Friday is selected as Pickup */}
+              {isFriday && (
+                <div className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50/90 p-4 shadow-xs">
+                  <label className="flex items-start gap-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={fridayWeekendExtension}
+                      onChange={(e) => handleFridayExtensionChange(e.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-amber-400 text-brand-600 focus:ring-brand-500"
+                    />
+                    <div>
+                      <span className="text-sm font-bold text-ink-900">Include Weekend Rental (Friday + Saturday + Sunday → Drop on Monday)</span>
+                      <p className="text-xs text-ink-600 mt-0.5">
+                        Priced as standard Friday rate + weekend rates for Saturday &amp; Sunday (3 days rental). Return date automatically sets to Monday.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {/* Saturday Mandatory Notice */}
+              {isSaturday && (
+                <div className="sm:col-span-2 rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-xs text-blue-900 font-medium">
+                  <strong>Saturday Weekend Policy:</strong> Saturday rentals require a 2-day weekend package with vehicle drop-off on Monday 8:00 AM.
+                </div>
+              )}
+
               <div>
                 <label className="label">Drop date (Return date) *</label>
-                <input className="input" type="date" min={pickupDate} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} aria-invalid={!!errors.returnDate} />
+                <input
+                  className="input"
+                  type="date"
+                  min={minReturnDate}
+                  value={returnDate}
+                  onChange={(e) => handleReturnDateChange(e.target.value)}
+                  disabled={isSaturday || (isFriday && fridayWeekendExtension)}
+                  aria-invalid={!!errors.returnDate}
+                />
                 {errors.returnDate && <p className="field-error">{errors.returnDate}</p>}
+                {(isSaturday || (isFriday && fridayWeekendExtension)) && (
+                  <p className="text-[11px] text-ink-500 mt-1">Locked to Monday for weekend rental period.</p>
+                )}
               </div>
               <div>
                 <label className="label">Drop time (Return time)</label>
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => (
-                    <option key={t} value={t}>{t === "08:00" ? "8:00 AM (Standard)" : formatTimeLabel(t)}</option>
+                    <option key={t} value={t}>
+                      {t === "08:00" ? "8:00 AM (Standard)" : t > pickupTime ? `${formatTimeLabel(t)} (+₹250 Late Drop)` : formatTimeLabel(t)}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -469,7 +602,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               Calculated Duration: {days} day{days > 1 ? "s" : ""} · Standard Daily Limit: 100 km/day (Bikes/Scooters) / 300 km/day (Cars) / Unlimited (Tempo) · Extra KM: ₹4/km (Bikes &amp; Scooters) / ₹8/km (Cars)
             </p>
             <p className="mt-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900 shadow-xs">
-              <strong>NOTE:</strong> Upon the pickup of the vehicle there will be an extra charge of ₹250. Upon late drop-off, even by 1 minute, you will be charged for 1 full extra day.
+              <strong>NOTE:</strong> Standard pickup is 8:00 AM. Early pickup (before 8:00 AM) or drop-off after your scheduled 24-hr cycle incurs a ₹250 off-schedule fee.
             </p>
           </div>
         )}
@@ -535,16 +668,25 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               );
             })()}
             {errors.vehicle && <p className="field-error">{errors.vehicle}</p>}
-            {quote && selectedVehicle && (
+            {activeQuote && selectedVehicle && (
               <div className="rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm">
-                <p className="font-semibold text-ink-900">Estimated total: {formatINR(quote.totalAmount)}</p>
-                <p className="text-ink-600">
-                  {quote.days} day{quote.days > 1 ? "s" : ""} ({formatINR(quote.baseAmount)}) + GST {formatINR(quote.gstAmount)}
-                  {quote.gatewayFeeAmount > 0 && <> + gateway fee {formatINR(quote.gatewayFeeAmount)}</>}
-                  {quote.depositAmount > 0 && <> + refundable security deposit {formatINR(quote.depositAmount)}</>}.
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold text-ink-900">Estimated total: {formatINR(activeQuote.totalAmount)}</p>
+                  {activeQuote.weekendDaysCount && activeQuote.weekendDaysCount > 0 ? (
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                      +₹50 Weekend Rate ({activeQuote.weekendDaysCount} day{activeQuote.weekendDaysCount > 1 ? "s" : ""})
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-ink-600">
+                  {activeQuote.days} day{activeQuote.days > 1 ? "s" : ""} ({formatINR(activeQuote.baseAmount)})
+                  {activeQuote.offSchedulePickupFee > 0 && <> + timing surcharge {formatINR(activeQuote.offSchedulePickupFee)}</>}
+                  {" "}+ GST {formatINR(activeQuote.gstAmount)}
+                  {activeQuote.gatewayFeeAmount > 0 && <> + gateway fee {formatINR(activeQuote.gatewayFeeAmount)}</>}
+                  {activeQuote.depositAmount > 0 && <> + refundable security deposit {formatINR(activeQuote.depositAmount)}</>}.
                 </p>
-                {quote.belowWeekendMinimum && (
-                  <p className="mt-2 font-medium text-red-700">Weekend bookings need a minimum of {quote.weekendMinDays} days for this vehicle — please add more days on the previous step.</p>
+                {activeQuote.belowWeekendMinimum && (
+                  <p className="mt-2 font-medium text-red-700">Weekend bookings need a minimum of {activeQuote.weekendMinDays} days for this vehicle — please add more days on the previous step.</p>
                 )}
               </div>
             )}
@@ -668,7 +810,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 <div className="flex items-center gap-2">
                   {activeQuote && activeQuote.weekendDaysCount && activeQuote.weekendDaysCount > 0 ? (
                     <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
-                      Includes +₹50 Weekend Rate
+                      Includes +₹50 Weekend Rate ({activeQuote.weekendDaysCount} day{activeQuote.weekendDaysCount > 1 ? "s" : ""})
                     </span>
                   ) : null}
                   <span className="text-xs font-semibold text-brand-800 bg-brand-100 px-2.5 py-0.5 rounded-full">
@@ -680,6 +822,12 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 <span>Base rental rate ({activeQuote?.days || days} day{((activeQuote?.days || days) > 1) ? "s" : ""})</span>
                 <span className="font-semibold text-ink-900">{formatINR(activeQuote?.baseAmount ?? 0)}</span>
               </div>
+              {activeQuote && activeQuote.offSchedulePickupFee > 0 && (
+                <div className="flex justify-between text-amber-800">
+                  <span>Off-schedule timing surcharge (Early pickup / Late return)</span>
+                  <span className="font-semibold">{formatINR(activeQuote.offSchedulePickupFee)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-ink-700">
                 <span>Security deposit (Fully refundable upon vehicle return)</span>
                 <span className="font-semibold text-ink-900">{formatINR(activeQuote?.depositAmount ?? (selectedVehicle?.deposit ?? 0))}</span>
