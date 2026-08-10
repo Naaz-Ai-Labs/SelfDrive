@@ -169,17 +169,14 @@ export function RazorpayCheckout({
 
       {error && <p className="field-error" role="alert">{error}</p>}
 
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div>
         <button
           type="button"
           onClick={payNow}
           disabled={status === "loading"}
-          className="btn-shine inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-brand-500 px-8 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98] disabled:opacity-60"
+          className="btn-shine inline-flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-8 py-4 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98] disabled:opacity-60"
         >
           {status === "loading" ? "Opening secure checkout…" : "Pay with Razorpay"}
-        </button>
-        <button type="button" onClick={onPayLater} className="btn-secondary flex-1">
-          Pay at pickup instead
         </button>
       </div>
     </div>

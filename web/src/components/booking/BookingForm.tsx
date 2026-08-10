@@ -295,7 +295,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
         {!paid ? (
           <div className="card p-6 sm:p-8">
             <h1 className="font-display text-2xl font-semibold text-ink-900">Booking received — {result.bookingNo}</h1>
-            <p className="mt-2 text-sm text-ink-600">You can pay online now to confirm instantly, or pay at pickup — either way, your booking is held.</p>
+            <p className="mt-2 text-sm text-ink-600">Complete your online payment now to confirm your vehicle reservation instantly.</p>
             <div className="mt-6">
               {(() => {
                 const effectiveAmountDue = quote?.totalAmount ?? (selectedVehicle ? ((selectedVehicle.rate_24h * days) + selectedVehicle.deposit + Math.round(selectedVehicle.rate_24h * days * 0.06)) : 0);
