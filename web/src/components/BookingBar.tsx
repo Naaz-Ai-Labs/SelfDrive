@@ -23,8 +23,17 @@ export function BookingBar({
   const [kind, setKind] = useState(initialValues?.kind ?? "");
   const [pickupDate, setPickupDate] = useState(initialValues?.pickup ?? today);
   const [pickupTime, setPickupTime] = useState(initialValues?.pickupTime ?? "08:00");
-  const [returnDate, setReturnDate] = useState(initialValues?.return ?? today);
-  const [returnTime, setReturnTime] = useState(initialValues?.returnTime ?? "08:00");
+  const initialRetDate = initialValues?.return ?? today;
+  const isInitialSunday = (() => {
+    if (!initialRetDate) return false;
+    const parts = initialRetDate.split("-").map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return false;
+    const d = parts[0] > 1000 ? new Date(parts[0], parts[1] - 1, parts[2]) : new Date(parts[2], parts[1] - 1, parts[0]);
+    return d.getDay() === 0;
+  })();
+
+  const [returnDate, setReturnDate] = useState(initialRetDate);
+  const [returnTime, setReturnTime] = useState(initialValues?.returnTime ?? (isInitialSunday ? "09:00" : "08:00"));
 
   const isSundayReturn = (() => {
     if (!returnDate) return false;

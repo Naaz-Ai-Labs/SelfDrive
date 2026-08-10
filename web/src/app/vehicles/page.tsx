@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/ui";
 import { Reveal } from "@/components/ui/Reveal";
 import { isWeekend } from "@/lib/pricing";
 import { BookingBar } from "@/components/BookingBar";
-import { getCachedVehicleSearchPrice } from "@/lib/search-pricing";
+import { getCachedVehicleSearchPrice, parseDateParts } from "@/lib/search-pricing";
 
 export const metadata: Metadata = {
   title: "Browse Vehicles",
@@ -25,7 +25,10 @@ export default async function VehiclesPage(
   const pickupDate = searchParams.pickup;
   const pickupTime = searchParams.pickupTime || "08:00";
   const returnDate = searchParams.return;
-  const returnTime = searchParams.returnTime || "08:00";
+  const returnParts = returnDate ? parseDateParts(returnDate) : null;
+  const isSundayReturn = returnParts?.dateObj.getDay() === 0;
+  const defaultReturnTime = isSundayReturn ? "09:00" : "08:00";
+  const returnTime = searchParams.returnTime || defaultReturnTime;
 
   const [categories, vehicles] = await Promise.all([
     getVehicleCategories(),

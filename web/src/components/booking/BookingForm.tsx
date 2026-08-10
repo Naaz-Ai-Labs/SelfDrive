@@ -249,8 +249,10 @@ export function BookingForm({
   const [pickupDate, setPickupDate] = useState(initialPickup);
   const [pickupTime, setPickupTime] = useState(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
   const [fridayWeekendExtension, setFridayWeekendExtension] = useState(false);
-  const [returnDate, setReturnDate] = useState(search.get("return") ?? computeAutoReturnDate(initialPickup));
-  const [returnTime, setReturnTime] = useState(search.get("returnTime") ?? STANDARD_PICKUP_TIME);
+  const initialReturn = search.get("return") ?? computeAutoReturnDate(initialPickup);
+  const isInitialReturnSunday = getDayOfWeek(initialReturn) === 0;
+  const [returnDate, setReturnDate] = useState(initialReturn);
+  const [returnTime, setReturnTime] = useState(search.get("returnTime") ?? (isInitialReturnSunday ? "09:00" : STANDARD_PICKUP_TIME));
   const [passengers, setPassengers] = useState("");
 
   const isFriday = useMemo(() => getDayOfWeek(pickupDate) === 5, [pickupDate]);
