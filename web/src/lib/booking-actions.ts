@@ -230,82 +230,65 @@ export async function getAvailableVehicles(kind: string | null, pickupAt: string
 }
 
 export async function getQuoteEstimate(vehicleId: number, pickupAt: string, returnAt: string): Promise<Quote | null> {
+  // Reliable unified quote calculation synced with Redis search cache
+  try {
+    const { getVehicles } = await import("@/lib/data");
+    const { getCachedVehicleSearchPrice } = await import("@/lib/search-pricing");
+
+    const all = await getVehicles();
+    const v = all.find((item) => Number(item.id) === Number(vehicleId));
+
+    if (v && pickupAt && returnAt) {
+      const pParts = pickupAt.split("T");
+      const rParts = returnAt.split("T");
+      const pickupDateStr = pParts[0];
+      const pickupTimeStr = pParts[1] || "08:00";
+      const returnDateStr = rParts[0];
+      const returnTimeStr = rParts[1] || "08:00";
+
+      const searchQuote = await getCachedVehicleSearchPrice(
+        v,
+        pickupDateStr,
+        pickupTimeStr,
+        returnDateStr,
+        returnTimeStr
+      );
+
+      if (searchQuote) {
+        return {
+          days: searchQuote.days,
+          weekendDaysCount: searchQuote.weekendDaysCount,
+          dayBreakdown: searchQuote.dayBreakdown.map((d) => ({ date: d.date, isWeekend: d.isWeekend, rate: d.rate })),
+          baseAmount: searchQuote.baseAmount,
+          offSchedulePickupFee: searchQuote.earlyPickupFee,
+          gstAmount: searchQuote.gstAmount,
+          gstPct: 6,
+          gatewayFeeAmount: 0,
+          gatewayFeePct: 0,
+          depositAmount: searchQuote.depositAmount,
+          includedKm: (v.included_km ?? 100) * searchQuote.days,
+          extraKmRate: v.extra_km_rate ?? 5,
+          afterHours: searchQuote.earlyPickupFee > 0,
+          offSchedulePickup: searchQuote.earlyPickupFee > 0,
+          weekendMinDays: 1,
+          belowWeekendMinimum: false,
+          appliedRuleName: null,
+          totalAmount: searchQuote.totalAmount,
+          payableNow: searchQuote.totalAmount,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("Unified quote estimate error:", err);
+  }
+
+  // Gateway API proxy fallback if needed
   try {
     const res = await gatewayPost<{ quote: Quote | null }>("/api/gateway/v1/booking/quote", { vehicleId, pickupAt, returnAt });
     if (res && res.quote) return res.quote;
   } catch (err) {
     console.warn("Gateway quote estimate fetch warning:", err);
   }
-
-  // Reliable instant fallback quote calculation
-  try {
-    const { getVehicles } = await import("@/lib/data");
-    const all = await getVehicles();
-    const v = all.find((item) => Number(item.id) === Number(vehicleId));
-    if (v && pickupAt && returnAt) {
-      const p = new Date(pickupAt);
-      const r = new Date(returnAt);
-      const msPerDay = 24 * 60 * 60 * 1000;
-      const isSameDay = p.getFullYear() === r.getFullYear() && p.getMonth() === r.getMonth() && p.getDate() === r.getDate();
-
-      let days = 1;
-      if (isSameDay) {
-        days = 1; // Same-day pickup and drop is always charged as 1 full day rental
-      } else {
-        const isSundayReturn = r.getDay() === 0;
-        const diffMs = Math.max(0, r.getTime() - p.getTime());
-        const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-        const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : "08:00";
-        const isLateDrop = returnTimeStr > "08:00";
-        days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
-      }
-
-      let baseAmount = 0;
-      const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
-
-      let weekendDaysCount = 0;
-      for (let i = 0; i < days; i++) {
-        const day = new Date(p.getTime() + i * msPerDay);
-        const dayOfWeek = day.getDay();
-        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
-        if (isWeekend) weekendDaysCount++;
-        const rate = isWeekend ? Number(v.weekend_rate_24h ?? (v.rate_24h + 50)) : Number(v.rate_24h);
-        dayBreakdown.push({ date: day.toISOString().slice(0, 10), isWeekend, rate });
-        baseAmount += rate;
-      }
-
-      const pickupTimeStr = pickupAt.includes("T") ? pickupAt.split("T")[1] : "08:00";
-      const isEarlyPickup = pickupTimeStr < "08:00";
-      const timingFee = isEarlyPickup ? 250 : 0;
-
-      const depositAmount = Number(v.deposit ?? 1000);
-      const gstPct = 6;
-      const taxableAmount = baseAmount + timingFee;
-      const gstAmount = Math.round(taxableAmount * 0.06);
-      const totalAmount = taxableAmount + depositAmount + gstAmount;
-      return {
-        days,
-        weekendDaysCount,
-        dayBreakdown,
-        baseAmount,
-        offSchedulePickupFee: timingFee,
-        gstAmount,
-        gstPct,
-        gatewayFeeAmount: 0,
-        gatewayFeePct: 0,
-        depositAmount,
-        includedKm: (v.included_km ?? 100) * days,
-        extraKmRate: v.extra_km_rate ?? 5,
-        afterHours: isEarlyPickup,
-        offSchedulePickup: timingFee > 0,
-        weekendMinDays: 1,
-        belowWeekendMinimum: false,
-        appliedRuleName: null,
-        totalAmount,
-        payableNow: totalAmount,
-      };
-    }
-  } catch {}
 
   return null;
 }
