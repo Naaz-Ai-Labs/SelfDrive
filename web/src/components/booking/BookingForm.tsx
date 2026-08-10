@@ -249,10 +249,16 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     setPickupDate(newDate);
     const day = getDayOfWeek(newDate);
     if (day === 6) {
-      setReturnDate(getNextMondayISO(newDate));
+      const mondayISO = getNextMondayISO(newDate);
+      if (returnDate < mondayISO) {
+        setReturnDate(mondayISO);
+      }
     } else if (day === 5) {
       if (fridayWeekendExtension) {
-        setReturnDate(getNextMondayISO(newDate));
+        const mondayISO = getNextMondayISO(newDate);
+        if (returnDate < mondayISO) {
+          setReturnDate(mondayISO);
+        }
       } else {
         setReturnDate(addDaysISO(newDate, 1));
       }
@@ -263,10 +269,15 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
   const handleFridayExtensionChange = (checked: boolean) => {
     setFridayWeekendExtension(checked);
+    const mondayISO = getNextMondayISO(pickupDate);
     if (checked) {
-      setReturnDate(getNextMondayISO(pickupDate));
+      if (returnDate < mondayISO) {
+        setReturnDate(mondayISO);
+      }
     } else {
-      setReturnDate(addDaysISO(pickupDate, 1));
+      if (returnDate === mondayISO) {
+        setReturnDate(addDaysISO(pickupDate, 1));
+      }
     }
   };
 
@@ -623,12 +634,13 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                   min={minReturnDate}
                   value={returnDate}
                   onChange={(e) => handleReturnDateChange(e.target.value)}
-                  disabled={isSaturday || (isFriday && fridayWeekendExtension)}
                   aria-invalid={!!errors.returnDate}
                 />
                 {errors.returnDate && <p className="field-error">{errors.returnDate}</p>}
                 {(isSaturday || (isFriday && fridayWeekendExtension)) && (
-                  <p className="text-[11px] text-ink-600 font-medium mt-1">Locked to Monday for weekend rental period.</p>
+                  <p className="text-[11px] text-ink-600 font-medium mt-1">
+                    Minimum drop-off date is Monday (you can choose Monday or any date after).
+                  </p>
                 )}
               </div>
               <div>
