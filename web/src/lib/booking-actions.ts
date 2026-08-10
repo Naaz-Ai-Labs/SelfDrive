@@ -294,8 +294,34 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
 }
 
 export async function getVehicleById(id: number): Promise<Vehicle | null> {
-  const res = await gatewayGet<{ vehicle: Vehicle | null }>(`/api/gateway/v1/booking/vehicle?id=${id}`);
-  if (res && res.vehicle) return res.vehicle;
+  // 1. Try Gateway API
+  try {
+    const res = await gatewayGet<{ vehicle: Vehicle | null }>(`/api/gateway/v1/booking/vehicle?id=${id}`);
+    if (res && res.vehicle) return res.vehicle;
+  } catch {}
+
+  // 2. Direct Supabase Lookup
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      const { data: v } = await supabase.from("vehicles").select("*").eq("id", id).single();
+      if (v) {
+        return {
+          ...v,
+          category_name: v.category_name || "Vehicle",
+          category_kind: v.category_kind || "car",
+          category_slug: v.category_slug || "cars",
+          photos: Array.isArray(v.photos) ? v.photos : [v.primary_photo || "/vehicles/baleno-manual.avif"],
+          primary_photo: v.primary_photo || (Array.isArray(v.photos) ? v.photos[0] : "/vehicles/baleno-manual.avif"),
+          available_units: v.available_units ?? v.total_units ?? 1,
+        };
+      }
+    } catch {}
+  }
+
+  // 3. Fallback to static dataset
   const { getVehicles } = await import("@/lib/data");
   const all = await getVehicles();
   return all.find((v) => Number(v.id) === Number(id)) ?? null;

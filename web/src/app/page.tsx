@@ -9,9 +9,7 @@ import { Marquee } from "@/components/ui/Marquee";
 import { OurStories } from "@/components/OurStories";
 
 const HERO_IMG = "/hero-poster.jpg";
-const HERO_VIDEO =
-  process.env.NEXT_PUBLIC_BLOB_HERO_VIDEO ||
-  "https://obbnjsertzjfu0v6.public.blob.vercel-storage.com/videos/hero-background.mp4";
+const HERO_VIDEO = process.env.NEXT_PUBLIC_BLOB_HERO_VIDEO || null;
 
 
 const SPEC_ICONS: Record<string, string> = {
@@ -66,21 +64,23 @@ export default async function HomePage() {
           prefers-reduced-motion set. */}
       <section className="relative flex min-h-screen flex-col justify-between overflow-hidden bg-ink-950 -mt-20 sm:-mt-24 pt-20 sm:pt-24 text-white">
         <Image src={HERO_IMG} alt="" aria-hidden fill priority className="object-cover" sizes="100vw" />
-        <video
-          className="hero-video absolute inset-0 h-full w-full object-cover brightness-125 contrast-105"
-          autoPlay
-          muted
-          loop
-          playsInline
-          disablePictureInPicture
-          disableRemotePlayback
-          preload="auto"
-          poster={HERO_IMG}
-          aria-hidden
-          tabIndex={-1}
-        >
-          <source src={HERO_VIDEO} type="video/mp4" />
-        </video>
+        {HERO_VIDEO && (
+          <video
+            className="hero-video absolute inset-0 h-full w-full object-cover brightness-125 contrast-105"
+            autoPlay
+            muted
+            loop
+            playsInline
+            disablePictureInPicture
+            disableRemotePlayback
+            preload="auto"
+            poster={HERO_IMG}
+            aria-hidden
+            tabIndex={-1}
+          >
+            <source src={HERO_VIDEO} type="video/mp4" />
+          </video>
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/40 to-ink-950/25" aria-hidden />
 
         <div className="container-x relative z-10 flex flex-1 flex-col justify-center items-center text-center py-12 sm:py-16">
