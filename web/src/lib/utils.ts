@@ -138,3 +138,115 @@ export function initials(name: string): string {
 export function cn(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
+
+/**
+ * Calculates live-clock constraints for pickup date & time.
+ * If pickupDate is TODAY, time slots that have already passed (or are less than 1 hour from now)
+ * are marked invalid / disabled.
+ * If all slots today are past, minPickupDate defaults to tomorrow.
+ */
+export function getLiveClockMinPickup(pickupDateStr?: string | null): {
+  todayISO: string;
+  minPickupDate: string;
+  isTimeDisabled: (timeStr: string) => boolean;
+  getValidPickupTime: (currentTimeStr: string) => string;
+} {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const todayISO = `${y}-${m}-${d}`;
+
+  // Vehicle availability starts at least 1 hour from the current live clock
+  const currentHour = now.getHours();
+  const minHourToday = currentHour + 1;
+
+  let minPickupDate = todayISO;
+  // If all hours for today have passed (minHourToday >= 24), minimum pickup date is tomorrow
+  if (minHourToday >= 24) {
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const ty = tomorrow.getFullYear();
+    const tm = String(tomorrow.getMonth() + 1).padStart(2, "0");
+    const td = String(tomorrow.getDate()).padStart(2, "0");
+    minPickupDate = `${ty}-${tm}-${td}`;
+  }
+
+  const effectivePickupDate = !pickupDateStr || pickupDateStr < minPickupDate ? minPickupDate : pickupDateStr;
+  const isToday = effectivePickupDate === todayISO;
+
+  const isTimeDisabled = (timeStr: string): boolean => {
+    if (!isToday) return false;
+    const hour = parseInt(timeStr.split(":")[0], 10);
+    return hour < minHourToday;
+  };
+
+  const getValidPickupTime = (currentTimeStr: string): string => {
+    if (!isToday) return currentTimeStr || "08:00";
+    if (isTimeDisabled(currentTimeStr)) {
+      const validHour = Math.min(23, minHourToday);
+      return `${String(validHour).padStart(2, "0")}:00`;
+    }
+    return currentTimeStr || "08:00";
+  };
+
+  return { todayISO, minPickupDate, isTimeDisabled, getValidPickupTime };
+}
+
+/**
+ * Calculates return date and time automatically by projecting +25 hours forward,
+ * while respecting Friday & Saturday weekend package rules.
+ */
+export function compute25HourAutoReturn(
+  pickupDateStr: string,
+  pickupTimeStr: string,
+  options?: { isFridayExt?: boolean; isSatSunDrop?: boolean }
+): { returnDate: string; returnTime: string } {
+  if (!pickupDateStr) return { returnDate: pickupDateStr, returnTime: pickupTimeStr || "08:00" };
+  const parts = pickupDateStr.split("-").map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) {
+    return { returnDate: pickupDateStr, returnTime: pickupTimeStr || "08:00" };
+  }
+  const [y, m, d] = parts;
+  const pDate = new Date(y, m - 1, d);
+  const dayOfWeek = pDate.getDay(); // 0=Sun, 5=Fri, 6=Sat
+
+  // Friday extension check
+  if (dayOfWeek === 5 && options?.isFridayExt) {
+    const mon = new Date(y, m - 1, d + 3);
+    const ry = mon.getFullYear();
+    const rm = String(mon.getMonth() + 1).padStart(2, "0");
+    const rd = String(mon.getDate()).padStart(2, "0");
+    return { returnDate: `${ry}-${rm}-${rd}`, returnTime: "08:00" };
+  }
+
+  // Saturday check
+  if (dayOfWeek === 6) {
+    if (options?.isSatSunDrop) {
+      // Sunday drop
+      const sun = new Date(y, m - 1, d + 1);
+      const ry = sun.getFullYear();
+      const rm = String(sun.getMonth() + 1).padStart(2, "0");
+      const rd = String(sun.getDate()).padStart(2, "0");
+      return { returnDate: `${ry}-${rm}-${rd}`, returnTime: "08:00" };
+    } else {
+      // Monday drop (default for Saturday weekend package)
+      const mon = new Date(y, m - 1, d + 2);
+      const ry = mon.getFullYear();
+      const rm = String(mon.getMonth() + 1).padStart(2, "0");
+      const rd = String(mon.getDate()).padStart(2, "0");
+      return { returnDate: `${ry}-${rm}-${rd}`, returnTime: "08:00" };
+    }
+  }
+
+  // Standard days (Sun, Mon, Tue, Wed, Thu, Fri without ext): +25 hours forward
+  const pHour = parseInt((pickupTimeStr || "08:00").split(":")[0], 10) || 8;
+  const pDateTime = new Date(y, m - 1, d, pHour, 0, 0);
+  const rDateTime = new Date(pDateTime.getTime() + 25 * 60 * 60 * 1000);
+
+  const ry = rDateTime.getFullYear();
+  const rm = String(rDateTime.getMonth() + 1).padStart(2, "0");
+  const rd = String(rDateTime.getDate()).padStart(2, "0");
+  const rh = String(rDateTime.getHours()).padStart(2, "0");
+
+  return { returnDate: `${ry}-${rm}-${rd}`, returnTime: `${rh}:00` };
+}

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { formatINR, formatDate, formatTimeLabel, waLink } from "@/lib/utils";
+import { formatINR, formatDate, formatTimeLabel, waLink, getLiveClockMinPickup, compute25HourAutoReturn } from "@/lib/utils";
 import { saveBookingDraft, getDraft, submitBooking, getAvailableVehicles, getQuoteEstimate, getVehicleById } from "@/lib/booking-actions";
 import { RazorpayCheckout } from "./RazorpayCheckout";
 import type { Vehicle } from "@/lib/data";
@@ -247,13 +247,22 @@ export function BookingForm({
 
   const [categoryKind, setCategoryKind] = useState(search.get("kind") ?? "");
   const [location, setLocation] = useState(search.get("location") ?? "HASSAN");
-  const initialPickup = search.get("pickup") ?? todayISO();
+
+  const liveClock = useMemo(() => getLiveClockMinPickup(), []);
+
+  const rawSearchPickup = search.get("pickup") ?? todayISO();
+  const initialPickup = rawSearchPickup < liveClock.minPickupDate ? liveClock.minPickupDate : rawSearchPickup;
+  const initialPickupTime = liveClock.getValidPickupTime(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
+
+  const initialAutoReturn = compute25HourAutoReturn(initialPickup, initialPickupTime);
+  const initialReturnDate = search.get("return") ?? initialAutoReturn.returnDate;
+  const initialReturnTime = search.get("returnTime") ?? initialAutoReturn.returnTime;
+
   const [pickupDate, setPickupDate] = useState(initialPickup);
-  const [pickupTime, setPickupTime] = useState(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
+  const [pickupTime, setPickupTime] = useState(initialPickupTime);
   const [fridayWeekendExtension, setFridayWeekendExtension] = useState(false);
-  const initialReturn = search.get("return") ?? computeAutoReturnDate(initialPickup);
-  const [returnDate, setReturnDate] = useState(initialReturn);
-  const [returnTime, setReturnTime] = useState(search.get("returnTime") ?? STANDARD_PICKUP_TIME);
+  const [returnDate, setReturnDate] = useState(initialReturnDate);
+  const [returnTime, setReturnTime] = useState(initialReturnTime);
   const [passengers, setPassengers] = useState("");
 
   const isFriday = useMemo(() => getDayOfWeek(pickupDate) === 5, [pickupDate]);
@@ -300,40 +309,30 @@ export function BookingForm({
   const [paid, setPaid] = useState(false);
 
   const handlePickupDateChange = (newDate: string) => {
-    setPickupDate(newDate);
-    const day = getDayOfWeek(newDate);
-    if (day === 6) {
-      // Default to Monday for Saturday pickup
-      const mondayISO = getNextMondayISO(newDate);
-      setReturnDate(mondayISO);
-    } else if (day === 5) {
-      if (fridayWeekendExtension) {
-        const mondayISO = getNextMondayISO(newDate);
-        setReturnDate(mondayISO);
-      } else {
-        setReturnDate(addDaysISO(newDate, 1));
-      }
-    } else {
-      setReturnDate(addDaysISO(newDate, 1));
-    }
+    const validDate = newDate < liveClock.minPickupDate ? liveClock.minPickupDate : newDate;
+    setPickupDate(validDate);
+    const validTime = liveClock.getValidPickupTime(pickupTime);
+    setPickupTime(validTime);
+
+    const auto = compute25HourAutoReturn(validDate, validTime, { isFridayExt: fridayWeekendExtension });
+    setReturnDate(auto.returnDate);
+    setReturnTime(auto.returnTime);
   };
 
   const handleFridayExtensionChange = (checked: boolean) => {
     setFridayWeekendExtension(checked);
-    const mondayISO = getNextMondayISO(pickupDate);
-    if (checked) {
-      if (returnDate < mondayISO) {
-        setReturnDate(mondayISO);
-      }
-    } else {
-      if (returnDate === mondayISO) {
-        setReturnDate(addDaysISO(pickupDate, 1));
-      }
-    }
+    const auto = compute25HourAutoReturn(pickupDate, pickupTime, { isFridayExt: checked });
+    setReturnDate(auto.returnDate);
+    setReturnTime(auto.returnTime);
   };
 
   const handlePickupTimeChange = (newTime: string) => {
-    setPickupTime(newTime);
+    const validTime = liveClock.getValidPickupTime(newTime);
+    setPickupTime(validTime);
+
+    const auto = compute25HourAutoReturn(pickupDate, validTime, { isFridayExt: fridayWeekendExtension });
+    setReturnDate(auto.returnDate);
+    setReturnTime(auto.returnTime);
   };
 
   const handleReturnDateChange = (newReturnDate: string) => {
@@ -648,7 +647,7 @@ export function BookingForm({
                 <input
                   className="input"
                   type="date"
-                  min={todayISO()}
+                  min={liveClock.minPickupDate}
                   value={pickupDate}
                   onChange={(e) => handlePickupDateChange(e.target.value)}
                   aria-invalid={!!errors.pickupDate}
@@ -658,11 +657,14 @@ export function BookingForm({
               <div>
                 <label className="label">Pickup time</label>
                 <select className="input" value={pickupTime} onChange={(e) => handlePickupTimeChange(e.target.value)}>
-                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => (
-                    <option key={t} value={t}>
-                      {t === "08:00" ? "8:00 AM (Standard)" : t < "08:00" ? `${formatTimeLabel(t)} (+₹250 Early Pickup)` : formatTimeLabel(t)}
-                    </option>
-                  ))}
+                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => {
+                    const disabled = liveClock.isTimeDisabled(t);
+                    return (
+                      <option key={t} value={t} disabled={disabled} className={disabled ? "opacity-30 text-ink-300 bg-ink-50" : ""}>
+                        {t === "08:00" ? "8:00 AM (Standard)" : t < "08:00" ? `${formatTimeLabel(t)} (+₹250 Early Pickup)` : formatTimeLabel(t)} {disabled ? " (Passed)" : ""}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 

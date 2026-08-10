@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { getLiveClockMinPickup, compute25HourAutoReturn } from "@/lib/utils";
 
 const TIME_SLOTS = Array.from({ length: 24 }, (_, i) => {
   const value = `${String(i).padStart(2, "0")}:00`;
@@ -19,21 +20,48 @@ export function BookingBar({
   initialValues?: { kind?: string; location?: string; pickup?: string; pickupTime?: string; return?: string; returnTime?: string };
 }) {
   const router = useRouter();
-  const today = new Date().toISOString().slice(0, 10);
+  
+  const { minPickupDate, isTimeDisabled, getValidPickupTime } = useMemo(() => getLiveClockMinPickup(), []);
+
+  const initialPickupDate = initialValues?.pickup && initialValues.pickup >= minPickupDate ? initialValues.pickup : minPickupDate;
+  const initialPickupTime = getValidPickupTime(initialValues?.pickupTime ?? "08:00");
+  
+  const initialAutoReturn = compute25HourAutoReturn(initialPickupDate, initialPickupTime);
+  const initialReturnDate = initialValues?.return ?? initialAutoReturn.returnDate;
+  const initialReturnTime = initialValues?.returnTime ?? initialAutoReturn.returnTime;
+
   const [kind, setKind] = useState(initialValues?.kind ?? "");
   const [location, setLocation] = useState(initialValues?.location ?? "HASSAN");
-  const [pickupDate, setPickupDate] = useState(initialValues?.pickup ?? today);
-  const [pickupTime, setPickupTime] = useState(initialValues?.pickupTime ?? "08:00");
-  const [returnDate, setReturnDate] = useState(initialValues?.return ?? today);
-  const [returnTime, setReturnTime] = useState(initialValues?.returnTime ?? "08:00");
+  const [pickupDate, setPickupDate] = useState(initialPickupDate);
+  const [pickupTime, setPickupTime] = useState(initialPickupTime);
+  const [returnDate, setReturnDate] = useState(initialReturnDate);
+  const [returnTime, setReturnTime] = useState(initialReturnTime);
 
-  const isSundayReturn = (() => {
+  const isSundayReturn = useMemo(() => {
     if (!returnDate) return false;
     const parts = returnDate.split("-").map(Number);
     if (parts.length !== 3 || parts.some(isNaN)) return false;
     const d = parts[0] > 1000 ? new Date(parts[0], parts[1] - 1, parts[2]) : new Date(parts[2], parts[1] - 1, parts[0]);
     return d.getDay() === 0;
-  })();
+  }, [returnDate]);
+
+  const handlePickupDateChange = (newDate: string) => {
+    const validDate = newDate < minPickupDate ? minPickupDate : newDate;
+    setPickupDate(validDate);
+    const validTime = getValidPickupTime(pickupTime);
+    setPickupTime(validTime);
+    const auto = compute25HourAutoReturn(validDate, validTime);
+    setReturnDate(auto.returnDate);
+    setReturnTime(auto.returnTime);
+  };
+
+  const handlePickupTimeChange = (newTime: string) => {
+    const validTime = getValidPickupTime(newTime);
+    setPickupTime(validTime);
+    const auto = compute25HourAutoReturn(pickupDate, validTime);
+    setReturnDate(auto.returnDate);
+    setReturnTime(auto.returnTime);
+  };
 
   const handleReturnDateChange = (newDate: string) => {
     setReturnDate(newDate);
@@ -91,8 +119,8 @@ export function BookingBar({
           <input
             type="date"
             value={pickupDate}
-            min={today}
-            onChange={(e) => setPickupDate(e.target.value)}
+            min={minPickupDate}
+            onChange={(e) => handlePickupDateChange(e.target.value)}
             className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [color-scheme:dark]"
           />
         </label>
@@ -101,14 +129,17 @@ export function BookingBar({
           <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.2em] text-white/60">Pickup time</span>
           <select
             value={pickupTime}
-            onChange={(e) => setPickupTime(e.target.value)}
+            onChange={(e) => handlePickupTimeChange(e.target.value)}
             className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
           >
-            {TIME_SLOTS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.value === "08:00" ? "8:00 AM (Standard)" : t.label}
-              </option>
-            ))}
+            {TIME_SLOTS.map((t) => {
+              const disabled = isTimeDisabled(t.value);
+              return (
+                <option key={t.value} value={t.value} disabled={disabled} className={disabled ? "opacity-30 text-white/30" : ""}>
+                  {t.value === "08:00" ? "8:00 AM (Standard)" : t.label} {disabled ? " (Past)" : ""}
+                </option>
+              );
+            })}
           </select>
         </label>
       </div>
