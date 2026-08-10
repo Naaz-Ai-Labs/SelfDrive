@@ -161,7 +161,7 @@ function seedSync(targetDb: any) {
       (18, '/vehicles/tempo-traveller.jpg', 1),
       (19, '/vehicles/cta-tempo-banner.jpg', 1);
 
-      INSERT OR IGNORE INTO terms_versions (version, content, is_active) VALUES
+      INSERT OR IGNORE INTO terms_versions (version, content, active) VALUES
       (1, '["Valid original Driving Licence & Government ID (Aadhaar/Passport) mandatory for vehicle handover.","Included drive limit per day. Driving beyond this limit is charged per KM.","Fuel policy: Return the vehicle with the same fuel level as provided at pickup.","Security deposit is fully refundable upon safe vehicle return inspection.","Late returns exceeding 1 minute add full 24-hour additional day rental charges."]', 1);
     `);
   } catch (err) {

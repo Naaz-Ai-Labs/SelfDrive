@@ -29,6 +29,24 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const isAdmin = user.role === "admin";
   const navItems = NAV.filter((item) => canAccessModule(user.role, item.href));
 
+  // Serialize to pure plain objects for React Server Components -> Client Components boundary
+  const plainUser = {
+    id: Number(user.id),
+    name: String(user.name ?? ""),
+    email: String(user.email ?? ""),
+    role: String(user.role ?? "staff"),
+  };
+
+  const plainNotifications = notifications.map((n) => ({
+    id: Number(n.id),
+    title: String(n.title ?? ""),
+    body: n.body ? String(n.body) : null,
+    read: Number(n.read),
+    enquiry_id: n.enquiry_id ? Number(n.enquiry_id) : null,
+    booking_id: n.booking_id ? Number(n.booking_id) : null,
+    created_at: String(n.created_at ?? ""),
+  }));
+
   return (
     <div className="flex min-h-screen bg-ink-50">
       {/* Full-height dark frosted-glass sidebar */}
@@ -57,13 +75,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
       <div className="min-w-0 flex-1">
         <div className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-white/50 bg-white/70 px-4 py-3 backdrop-blur-xl sm:px-6">
-          <MobileNav items={navItems} user={user} />
+          <MobileNav items={navItems} user={plainUser} />
           <div className="hidden flex-1 lg:flex items-center gap-3">
             <SearchBox />
             <CommandBar />
           </div>
           <div className="flex items-center gap-3">
-            <NotificationBell initialItems={notifications} initialUnread={unread} />
+            <NotificationBell initialItems={plainNotifications} initialUnread={unread} />
             <LogoutButton />
           </div>
         </div>

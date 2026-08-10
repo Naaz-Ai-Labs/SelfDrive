@@ -102,7 +102,15 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
         const userRow = db
           .prepare("SELECT id, name, email, role, branch FROM users WHERE (id = ? OR email = ?) AND is_active = 1")
           .get(userId, email.toLowerCase().trim()) as SessionUser | undefined;
-        if (userRow) return userRow;
+        if (userRow) {
+          return {
+            id: Number(userRow.id),
+            name: String(userRow.name),
+            email: String(userRow.email),
+            role: String(userRow.role) as SessionUser["role"],
+            branch: userRow.branch ? String(userRow.branch) : null,
+          };
+        }
       } catch {}
 
       // Bulletproof stateless session return: token is HMAC verified and unexpired
@@ -110,7 +118,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
         id: userId,
         name: name || (role === "admin" ? "Administrator" : "Staff User"),
         email: email || "admin@darshhrentals.in",
-        role: role || "staff",
+        role: (role || "staff") as SessionUser["role"],
         branch: null,
       };
     }
@@ -123,12 +131,20 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       .prepare(
         `SELECT u.id, u.name, u.email, u.role, u.branch FROM sessions s
          JOIN users u ON u.id = s.user_id
-         WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1`
+         WHERE s.token = ? AND datetime(s.expires_at) > datetime('now') AND u.is_active = 1`
       )
       .get(rawToken) as SessionUser | undefined;
-    if (row) return row;
+    if (row) {
+      return {
+        id: Number(row.id),
+        name: String(row.name),
+        email: String(row.email),
+        role: String(row.role) as SessionUser["role"],
+        branch: row.branch ? String(row.branch) : null,
+      };
+    }
   } catch {}
-
+  
   console.log("[AUTH_DEBUG] getCurrentUser returned null");
   return null;
 }
