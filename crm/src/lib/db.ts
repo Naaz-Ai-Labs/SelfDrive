@@ -115,8 +115,7 @@ function seedSync(targetDb: any) {
       (13, 'maruti-dzire', 'Maruti Dzire', 'Maruti Suzuki', 'Dzire', 2023, 1, 1, 'KA-46-C-1122', 1197, 'Petrol', 'Manual', 5, '23 km/l', 300, 8, 2000, 3500, 200, 3550, 2000, 150, 2, 'Fuel-efficient compact sedan.', 'available', 1),
       (14, 'maruti-ciaz', 'Maruti Ciaz', 'Maruti Suzuki', 'Ciaz', 2023, 1, 1, 'KA-46-C-3344', 1462, 'Petrol', 'Manual', 5, '20 km/l', 300, 8, 2400, 4000, 240, 4050, 2500, 180, 1, 'Spacious premium sedan for highway trips.', 'available', 1),
       (15, 'maruti-ertiga-7-seater', 'Maruti Ertiga 7 Seater', 'Maruti Suzuki', 'Ertiga', 2023, 1, 1, 'KA-46-C-5566', 1462, 'Petrol', 'Manual', 7, '19 km/l', 300, 8, 2800, 4500, 280, 4550, 3000, 200, 1, 'Spacious 7-seater MPV for family trips.', 'available', 1),
-      (16, 'mahindra-thar-manual', 'Mahindra Thar 4x4 (Manual)', 'Mahindra', 'Thar Manual', 2023, 1, 1, 'KA-46-C-9999', 2184, 'Diesel', 'Manual', 4, '15 km/l', 300, 8, 3000, 5000, 300, 5500, 3000, 250, 1, 'Iconic 4x4 SUV for offroad exploration.', 'available', 1),
-      (17, 'mahindra-thar-automatic', 'Mahindra Thar 4x4 (Automatic)', 'Mahindra', 'Thar Automatic', 2023, 1, 1, 'KA-46-C-9998', 2184, 'Diesel', 'Automatic', 4, '14 km/l', 300, 8, 3500, 5500, 350, 6000, 3000, 250, 1, 'Premium automatic 4x4 SUV.', 'available', 1),
+      (16, 'mahindra-thar-manual', 'Mahindra Thar 4x4', 'Mahindra', 'Thar', 2023, 1, 1, 'KA-46-C-9999', 2184, 'Diesel', 'Manual', 4, '15 km/l', 300, 8, 3000, 5000, 300, 5500, 3000, 250, 1, 'Iconic 4x4 SUV for offroad exploration.', 'available', 1),
 
       (18, 'tempo-traveller-12', 'Tempo Traveller — Sakleshpura Sightseeing', 'Force Motors', 'Traveller', 2023, 4, 1, 'KA-46-V-1212', 2596, 'Diesel', 'Manual', 12, '12 km/l', 999, 0, 8000, 12000, 500, 12050, 2000, 250, 1, 'Chauffeur driven 12 seater for day trips.', 'available', 1),
       (19, 'tempo-traveller-2days', 'Tempo Traveller — Sakleshpura & Chikmagalur (2 Days)', 'Force Motors', 'Traveller', 2023, 4, 1, 'KA-46-V-1213', 2596, 'Diesel', 'Manual', 12, '12 km/l', 999, 0, 8000, 12000, 500, 12050, 2000, 250, 1, 'Chauffeur driven 12 seater for 2-day hill station tours.', 'available', 1);
@@ -137,7 +136,6 @@ function seedSync(targetDb: any) {
       (14, '/vehicles/baleno-manual.avif', 1),
       (15, '/vehicles/mahindra-thar.avif', 1),
       (16, '/vehicles/mahindra-thar.avif', 1),
-      (17, '/vehicles/mahindra-thar.avif', 1),
       (18, '/vehicles/tempo-traveller.jpg', 1),
       (19, '/vehicles/tempo-traveller.jpg', 1);
 
@@ -746,7 +744,6 @@ function applySchema(database: DatabaseSync) {
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 14;"); // Ciaz
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 15;"); // Ertiga
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 16;"); // Thar
-    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 17 OR id = 18;"); // Tempo Traveller
     database.exec(`
       UPDATE terms_versions SET content = '${JSON.stringify([
         "A valid driving licence and government photo ID are required at pickup.",
@@ -759,7 +756,8 @@ function applySchema(database: DatabaseSync) {
         "This is a fixed-price rental — no bargaining on listed rates.",
         "Sub-letting the vehicle to a third party is strictly prohibited.",
         "Cancellations made more than 24 hours before pickup are eligible for a full refund minus a small processing fee.",
-        "In case of breakdown or accident, contact us immediately — do not attempt repairs without approval."
+        "In case of breakdown or accident, contact us immediately — do not attempt repairs without approval.",
+        "In case of any accident or damage, notify the vehicle owner immediately. Do not take any action or arrange repairs on your own."
       ])}' WHERE active = 1;
     `);
   } catch {
