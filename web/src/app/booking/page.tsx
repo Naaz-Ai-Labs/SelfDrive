@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { getVehicleCategories, getActiveTermsVersion } from "@/lib/data";
+import { getVehicleCategories, getActiveTermsVersion, getVehicles } from "@/lib/data";
 import { businessInfo } from "@/lib/settings";
 import { BookingForm } from "@/components/booking/BookingForm";
 
@@ -10,12 +10,22 @@ export const metadata: Metadata = {
 };
 
 export default async function BookingPage() {
-  const [categories, info, terms] = await Promise.all([getVehicleCategories(), businessInfo(), getActiveTermsVersion()]);
+  const [categories, info, terms, vehicles] = await Promise.all([
+    getVehicleCategories(),
+    businessInfo(),
+    getActiveTermsVersion(),
+    getVehicles(),
+  ]);
 
   return (
     <section className="container-x py-12 sm:py-16">
       <Suspense fallback={<p className="text-center text-sm text-ink-400">Loading…</p>}>
-        <BookingForm categories={categories} businessWhatsapp={String(info.whatsapp ?? "")} terms={terms?.content ?? []} />
+        <BookingForm
+          categories={categories}
+          businessWhatsapp={String(info.whatsapp ?? "")}
+          terms={terms?.content ?? []}
+          initialVehicles={vehicles}
+        />
       </Suspense>
     </section>
   );

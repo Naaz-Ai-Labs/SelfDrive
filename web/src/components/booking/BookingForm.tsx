@@ -196,7 +196,28 @@ function computeClientQuote(
   };
 }
 
-export function BookingForm({ categories, businessWhatsapp, terms }: { categories: Category[]; businessWhatsapp: string; terms: string[] }) {
+function formatDisplayDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—";
+  const parts = parseDateParts(dateStr);
+  if (!parts) return dateStr;
+  return parts.dateObj.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function BookingForm({
+  categories,
+  businessWhatsapp,
+  terms,
+  initialVehicles = [],
+}: {
+  categories: Category[];
+  businessWhatsapp: string;
+  terms: string[];
+  initialVehicles?: Vehicle[];
+}) {
   const router = useRouter();
   const search = useSearchParams();
   // If the user already provided search query details and selected a vehicle,
@@ -253,7 +274,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   }, [pickupDate, pickupTime, returnDate, returnTime]);
 
   const [vehicleId, setVehicleId] = useState<number | null>(search.get("vehicle") ? Number(search.get("vehicle")) : null);
-  const [availableVehicles, setAvailableVehicles] = useState<Vehicle[]>([]);
+  const [availableVehicles, setAvailableVehicles] = useState<Vehicle[]>(initialVehicles);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
 
@@ -365,9 +386,9 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
         if (!search.get("kind") && draft.categoryKind) setCategoryKind(draft.categoryKind);
         if (draft.location) setLocation(draft.location);
         if (!search.get("pickup") && draft.pickupDate) setPickupDate(draft.pickupDate);
-        if (draft.pickupTime) setPickupTime(draft.pickupTime);
+        if (!search.get("pickupTime") && draft.pickupTime) setPickupTime(draft.pickupTime);
         if (!search.get("return") && draft.returnDate) setReturnDate(draft.returnDate);
-        if (draft.returnTime) setReturnTime(draft.returnTime);
+        if (!search.get("returnTime") && draft.returnTime) setReturnTime(draft.returnTime);
         if (draft.passengers) setPassengers(draft.passengers);
         if (!search.get("vehicle") && draft.vehicleId) setVehicleId(draft.vehicleId);
         if (draft.contact) setContact(draft.contact);
@@ -401,14 +422,16 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryKind, location, pickupDate, pickupTime, returnDate, returnTime, passengers, vehicleId, contact, step]);
 
-  // Load available vehicles when period/category changes (step 2).
+  // Load available vehicles when period/category changes (step 2 or step 3).
   useEffect(() => {
-    if (step !== 2) return;
+    if (availableVehicles.length > 0 && availableVehicles.some((v) => Number(v.id) === Number(vehicleId))) return;
     setLoadingVehicles(true);
     getAvailableVehicles(categoryKind || null, pickupAt || null, returnAt || null)
-      .then(setAvailableVehicles)
+      .then((res) => {
+        if (res && res.length > 0) setAvailableVehicles(res);
+      })
       .finally(() => setLoadingVehicles(false));
-  }, [step, categoryKind, pickupAt, returnAt]);
+  }, [step, categoryKind, pickupAt, returnAt, vehicleId, availableVehicles]);
 
   // Live quote when vehicle + dates are known.
   useEffect(() => {
@@ -425,8 +448,8 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   }, [vehicleId]);
 
   const selectedVehicle = useMemo(
-    () => availableVehicles.find((v) => v.id === vehicleId) ?? (fetchedVehicle?.id === vehicleId ? fetchedVehicle : undefined),
-    [availableVehicles, vehicleId, fetchedVehicle]
+    () => availableVehicles.find((v) => Number(v.id) === Number(vehicleId)) ?? (Number(fetchedVehicle?.id) === Number(vehicleId) ? fetchedVehicle : undefined) ?? initialVehicles.find((v) => Number(v.id) === Number(vehicleId)),
+    [availableVehicles, vehicleId, fetchedVehicle, initialVehicles]
   );
 
   const clientQuote = useMemo(() => {
@@ -950,10 +973,46 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             
             {/* Booking Summary */}
             <div className="space-y-2.5 text-sm">
-              <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Vehicle</span><span className="font-medium text-ink-900">{selectedVehicle?.name ?? "—"} <button type="button" onClick={() => setStep(2)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
-              <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Pickup</span><span className="font-medium text-ink-900">{formatDate(pickupAt)}, {formatTimeLabel(pickupTime)} {location && `· ${location}`} <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
-              <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Return (Drop)</span><span className="font-medium text-ink-900">{formatDate(returnAt)}, {formatTimeLabel(returnTime)}</span></div>
-              <div className="flex justify-between border-b border-ink-100 pb-2"><span className="text-ink-500">Customer</span><span className="font-medium text-ink-900">{contact.name} · {contact.phone} <button type="button" onClick={() => setStep(3)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button></span></div>
+              <div className="flex justify-between border-b border-ink-100 pb-2">
+                <span className="text-ink-500">Vehicle</span>
+                <span className="font-medium text-ink-900">
+                  {selectedVehicle ? `${selectedVehicle.name} (${selectedVehicle.category_name ?? selectedVehicle.category_kind})` : "—"}
+                  <button type="button" onClick={() => setStep(2)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button>
+                </span>
+              </div>
+              <div className="flex justify-between border-b border-ink-100 pb-2">
+                <span className="text-ink-500">Pickup</span>
+                <span className="font-medium text-ink-900">
+                  {formatDisplayDate(pickupDate)}, {formatTimeLabel(pickupTime)} {location && `· ${location}`}
+                  <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button>
+                </span>
+              </div>
+              <div className="flex justify-between border-b border-ink-100 pb-2">
+                <span className="text-ink-500">Return (Drop)</span>
+                <span className="font-medium text-ink-900">
+                  {formatDisplayDate(returnDate)}, {formatTimeLabel(returnTime)}
+                  <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button>
+                </span>
+              </div>
+              <div className="flex justify-between border-b border-ink-100 pb-2">
+                <span className="text-ink-500">Customer</span>
+                <span className="font-medium text-ink-900">
+                  {contact.name || "—"} · {contact.phone || "—"}
+                  <button type="button" onClick={() => setStep(3)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button>
+                </span>
+              </div>
+              {contact.email && (
+                <div className="flex justify-between border-b border-ink-100 pb-2">
+                  <span className="text-ink-500">Email</span>
+                  <span className="font-medium text-ink-900">{contact.email}</span>
+                </div>
+              )}
+              {documents.licence?.number && (
+                <div className="flex justify-between border-b border-ink-100 pb-2">
+                  <span className="text-ink-500">Driving Licence</span>
+                  <span className="font-mono font-medium text-ink-900">{documents.licence.number}</span>
+                </div>
+              )}
             </div>
 
             {/* Dedicated Price Breakup Box */}
