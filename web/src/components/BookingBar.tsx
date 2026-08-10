@@ -57,6 +57,10 @@ export function BookingBar({
         if (pickupTime) params.set("pickupTime", pickupTime);
         if (returnDate) params.set("return", returnDate);
         if (returnTime) params.set("returnTime", returnTime);
+        // Cache search context so BookingForm can read it reliably
+        try {
+          sessionStorage.setItem("darshh_search_context", JSON.stringify({ pickupDate, pickupTime, returnDate, returnTime, kind }));
+        } catch {}
         router.push(`/vehicles?${params.toString()}`);
       }}
       className="grid gap-4 rounded-2xl border border-white/15 bg-ink-950/70 p-4 shadow-lift backdrop-blur-xl sm:grid-cols-2 lg:grid-cols-5 lg:items-end lg:p-5"

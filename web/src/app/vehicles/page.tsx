@@ -148,8 +148,9 @@ export default async function VehiclesPage(
               const weekendActive = isWeekend();
               const quote = searchQuotes[i];
 
+              const bookingParams = queryParamsStr.toString() ? `&${queryParamsStr.toString()}` : "";
               const cardHref = hasSearchQuery
-                ? `/booking?vehicle=${v.id}${queryString}&step=3`
+                ? `/booking?vehicle=${v.id}${bookingParams}&step=3`
                 : `/vehicles/${v.slug}${queryString}`;
 
               return (

@@ -353,7 +353,7 @@ export function BookingForm({
     }
   };
 
-  // Resume from a draft token in the URL, or restore from localStorage.
+  // Resume from a draft token in the URL, or restore from sessionStorage/localStorage.
   useEffect(() => {
     const resumeToken = search.get("resume");
     if (resumeToken) {
@@ -379,6 +379,20 @@ export function BookingForm({
       });
       return;
     }
+
+    // URL params are the primary source. For anything NOT in URL, try sessionStorage search context first, then localStorage draft.
+    try {
+      const cached = sessionStorage.getItem("darshh_search_context");
+      if (cached) {
+        const ctx = JSON.parse(cached);
+        if (!search.get("pickup") && ctx.pickupDate) setPickupDate(ctx.pickupDate);
+        if (!search.get("pickupTime") && ctx.pickupTime) setPickupTime(ctx.pickupTime);
+        if (!search.get("return") && ctx.returnDate) setReturnDate(ctx.returnDate);
+        if (!search.get("returnTime") && ctx.returnTime) setReturnTime(ctx.returnTime);
+        if (!search.get("kind") && ctx.kind) setCategoryKind(ctx.kind);
+      }
+    } catch {}
+
     const local = localStorage.getItem("darshh_booking_draft");
     if (local) {
       try {
@@ -422,16 +436,17 @@ export function BookingForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryKind, location, pickupDate, pickupTime, returnDate, returnTime, passengers, vehicleId, contact, step]);
 
-  // Load available vehicles when period/category changes (step 2 or step 3).
+  // Load available vehicles for step 2 vehicle picker.
+  const vehiclesFetchedRef = useRef(false);
   useEffect(() => {
-    if (availableVehicles.length > 0 && availableVehicles.some((v) => Number(v.id) === Number(vehicleId))) return;
-    setLoadingVehicles(true);
-    getAvailableVehicles(categoryKind || null, pickupAt || null, returnAt || null)
-      .then((res) => {
-        if (res && res.length > 0) setAvailableVehicles(res);
-      })
-      .finally(() => setLoadingVehicles(false));
-  }, [step, categoryKind, pickupAt, returnAt, vehicleId, availableVehicles]);
+    if (step === 2 || (!vehiclesFetchedRef.current && vehicleId)) {
+      vehiclesFetchedRef.current = true;
+      setLoadingVehicles(true);
+      getAvailableVehicles(categoryKind || null, pickupAt || null, returnAt || null)
+        .then((res) => { if (res && res.length > 0) setAvailableVehicles(res); })
+        .finally(() => setLoadingVehicles(false));
+    }
+  }, [step, categoryKind, pickupAt, returnAt, vehicleId]);
 
   // Live quote when vehicle + dates are known.
   useEffect(() => {
@@ -447,10 +462,14 @@ export function BookingForm({
     getVehicleById(vehicleId).then(setFetchedVehicle);
   }, [vehicleId]);
 
-  const selectedVehicle = useMemo(
-    () => availableVehicles.find((v) => Number(v.id) === Number(vehicleId)) ?? (Number(fetchedVehicle?.id) === Number(vehicleId) ? fetchedVehicle : undefined) ?? initialVehicles.find((v) => Number(v.id) === Number(vehicleId)),
-    [availableVehicles, vehicleId, fetchedVehicle, initialVehicles]
-  );
+  // Resolve selectedVehicle: initialVehicles (instant SSR), then availableVehicles, then fetchedVehicle
+  const selectedVehicle = useMemo(() => {
+    const numId = Number(vehicleId);
+    if (!numId || isNaN(numId)) return undefined;
+    return initialVehicles.find((v) => Number(v.id) === numId)
+      ?? availableVehicles.find((v) => Number(v.id) === numId)
+      ?? (Number(fetchedVehicle?.id) === numId ? fetchedVehicle : undefined);
+  }, [vehicleId, initialVehicles, availableVehicles, fetchedVehicle]);
 
   const clientQuote = useMemo(() => {
     return computeClientQuote(selectedVehicle, pickupDate, pickupTime, returnDate, returnTime);
