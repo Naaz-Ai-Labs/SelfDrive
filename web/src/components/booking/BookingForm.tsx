@@ -345,6 +345,11 @@ export function BookingForm({
   const handleReturnDateChange = (newReturnDate: string) => {
     const targetDate = newReturnDate < minReturnDate ? minReturnDate : newReturnDate;
     setReturnDate(targetDate);
+    const isSameDay = pickupDate && targetDate && pickupDate === targetDate;
+    if (isSameDay && returnTime <= pickupTime) {
+      const validReturnHour = Math.min(23, parseInt(pickupTime.split(":")[0], 10) + 1);
+      setReturnTime(`${String(validReturnHour).padStart(2, "0")}:00`);
+    }
   };
 
   // Resume from a draft token in the URL, or restore from sessionStorage/localStorage.
@@ -771,21 +776,29 @@ export function BookingForm({
                   </span>
                 </label>
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
-                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`).map((t) => {
-                    const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
-                    const isStandard = t === "08:00";
-                    const isLate = !isSameDay && t > "08:00";
+                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`)
+                    .filter((t) => {
+                      const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
+                      if (isSameDay) {
+                        return t > pickupTime;
+                      }
+                      return true;
+                    })
+                    .map((t) => {
+                      const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
+                      const isStandard = t === "08:00";
+                      const isLate = !isSameDay && t > "08:00";
 
-                    return (
-                      <option key={t} value={t}>
-                        {isStandard
-                          ? "8:00 AM (Standard Drop)"
-                          : isLate
-                          ? `${formatTimeLabel(t)} (+1 Day Extra Charge)`
-                          : formatTimeLabel(t)}
-                      </option>
-                    );
-                  })}
+                      return (
+                        <option key={t} value={t}>
+                          {isStandard
+                            ? "8:00 AM (Standard Drop)"
+                            : isLate
+                            ? `${formatTimeLabel(t)} (+1 Day Extra Charge)`
+                            : formatTimeLabel(t)}
+                        </option>
+                      );
+                    })}
                 </select>
                 {!(pickupDate && returnDate && pickupDate === returnDate) && returnTime > "08:00" && (
                   <p className="mt-1 text-[11px] font-semibold text-amber-800">

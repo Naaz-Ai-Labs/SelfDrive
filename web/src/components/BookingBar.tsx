@@ -65,6 +65,11 @@ export function BookingBar({
 
   const handleReturnDateChange = (newDate: string) => {
     setReturnDate(newDate);
+    const isSameDay = pickupDate && newDate && pickupDate === newDate;
+    if (isSameDay && returnTime <= pickupTime) {
+      const validReturnHour = Math.min(23, parseInt(pickupTime.split(":")[0], 10) + 1);
+      setReturnTime(`${String(validReturnHour).padStart(2, "0")}:00`);
+    }
   };
 
   return (
@@ -165,7 +170,13 @@ export function BookingBar({
             onChange={(e) => setReturnTime(e.target.value)}
             className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
           >
-            {TIME_SLOTS.map((t) => {
+            {TIME_SLOTS.filter((t) => {
+              const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
+              if (isSameDay) {
+                return t.value > pickupTime;
+              }
+              return true;
+            }).map((t) => {
               const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
               const isStandard = t.value === "08:00";
               const isLate = !isSameDay && t.value > "08:00";
