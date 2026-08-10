@@ -21,7 +21,7 @@ export function BookingBar({
   const router = useRouter();
   const today = new Date().toISOString().slice(0, 10);
   const [kind, setKind] = useState(initialValues?.kind ?? "");
-  const [location, setLocation] = useState(initialValues?.location ?? "SAKLESHPURA");
+  const [location, setLocation] = useState(initialValues?.location ?? "HASSAN");
   const [pickupDate, setPickupDate] = useState(initialValues?.pickup ?? today);
   const [pickupTime, setPickupTime] = useState(initialValues?.pickupTime ?? "08:00");
   const [returnDate, setReturnDate] = useState(initialValues?.return ?? today);
@@ -66,8 +66,8 @@ export function BookingBar({
           onChange={(e) => setLocation(e.target.value)}
           className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
         >
+          <option value="HASSAN">Hassan (Main Branch)</option>
           <option value="SAKLESHPURA">Sakleshpura</option>
-          <option value="HASSAN">Hassan</option>
         </select>
       </label>
 

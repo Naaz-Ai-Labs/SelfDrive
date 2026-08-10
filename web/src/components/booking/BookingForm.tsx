@@ -246,7 +246,7 @@ export function BookingForm({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [categoryKind, setCategoryKind] = useState(search.get("kind") ?? "");
-  const [location, setLocation] = useState(search.get("location") ?? "SAKLESHPURA");
+  const [location, setLocation] = useState(search.get("location") ?? "HASSAN");
   const initialPickup = search.get("pickup") ?? todayISO();
   const [pickupDate, setPickupDate] = useState(initialPickup);
   const [pickupTime, setPickupTime] = useState(search.get("pickupTime") ?? STANDARD_PICKUP_TIME);
@@ -631,8 +631,8 @@ export function BookingForm({
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                 >
-                  <option value="SAKLESHPURA">Sakleshpura (Main Branch)</option>
-                  <option value="HASSAN">Hassan (Branch)</option>
+                  <option value="HASSAN">Hassan (Main Branch)</option>
+                  <option value="SAKLESHPURA">Sakleshpura</option>
                 </select>
               </div>
 
@@ -1057,7 +1057,7 @@ export function BookingForm({
               <div className="flex justify-between border-b border-ink-100 pb-2">
                 <span className="text-ink-500">Location</span>
                 <span className="font-medium text-ink-900">
-                  {location === "HASSAN" ? "Hassan (Branch)" : "Sakleshpura (Main Branch)"}
+                  {location === "SAKLESHPURA" ? "Sakleshpura" : "Hassan (Main Branch)"}
                   <button type="button" onClick={() => setStep(1)} className="ml-2 text-xs text-brand-700 hover:underline">Edit</button>
                 </span>
               </div>
