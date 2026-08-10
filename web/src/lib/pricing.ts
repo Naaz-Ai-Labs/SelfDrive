@@ -26,11 +26,16 @@ export function calculateRentalPrice(
   const isSameDay = pickupAt.getFullYear() === returnAt.getFullYear() &&
                     pickupAt.getMonth() === returnAt.getMonth() &&
                     pickupAt.getDate() === returnAt.getDate();
-  const isSaturdayPickup = pickupAt.getDay() === 6;
+  const pDayOfWeek = pickupAt.getDay();
+  const rDayOfWeek = returnAt.getDay();
 
   let daysCount = 1;
   if (isSameDay) {
-    daysCount = isSaturdayPickup ? 2 : 1; // Saturday same-day pickup & drop is charged as 2 full days
+    daysCount = pDayOfWeek === 6 ? 2 : 1;
+  } else if (pDayOfWeek === 5 && (rDayOfWeek === 6 || rDayOfWeek === 0)) {
+    daysCount = 3; // Fri+Sat or Fri+Sat+Sun = 3 days
+  } else if (pDayOfWeek === 6 && rDayOfWeek === 0) {
+    daysCount = 2; // Sat+Sun = 2 days
   } else {
     const ms = Math.max(0, returnAt.getTime() - pickupAt.getTime());
     const hours = Math.ceil(ms / (1000 * 3600));

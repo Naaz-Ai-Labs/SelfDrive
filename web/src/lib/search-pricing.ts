@@ -63,14 +63,19 @@ export function calculateVehicleSearchPrice(
 
   const msPerDay = 24 * 60 * 60 * 1000;
   const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
-  const isSaturdayPickup = pParts.dateObj.getDay() === 6;
+  const pDayOfWeek = pParts.dateObj.getDay();
+  const rDayOfWeek = rParts.dateObj.getDay();
+
   let days = 1;
   if (isSameDay) {
-    days = isSaturdayPickup ? 2 : 1; // Saturday same-day pickup & drop is charged as 2 full days
+    days = pDayOfWeek === 6 ? 2 : 1;
+  } else if (pDayOfWeek === 5 && (rDayOfWeek === 6 || rDayOfWeek === 0)) {
+    days = 3; // Fri+Sat or Fri+Sat+Sun = 3 days
+  } else if (pDayOfWeek === 6 && rDayOfWeek === 0) {
+    days = 2; // Sat+Sun = 2 days
   } else {
     const diffMs = Math.max(0, rDate.getTime() - pDate.getTime());
     const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-    // If drop-off time is after standard 08:00 AM, charge for 1 more day
     const isLateDrop = rTime > "08:00";
     days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
   }
