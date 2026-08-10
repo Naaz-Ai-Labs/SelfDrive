@@ -736,7 +736,7 @@ export function BookingForm({
                         <span className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">2 Days (Weekend)</span>
                       </div>
                       <span className="text-[11px] text-ink-600 mt-1">
-                        {formatDate(addDaysISO(pickupDate, 1))} · Standard 9:00 AM Drop (Includes Sunday full day)
+                        {formatDate(addDaysISO(pickupDate, 1))} · Standard 9:00 AM Drop (Weekend Package)
                       </span>
                     </button>
                   </div>
