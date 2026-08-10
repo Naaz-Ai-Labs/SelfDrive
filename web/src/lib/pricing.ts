@@ -26,10 +26,11 @@ export function calculateRentalPrice(
   const isSameDay = pickupAt.getFullYear() === returnAt.getFullYear() &&
                     pickupAt.getMonth() === returnAt.getMonth() &&
                     pickupAt.getDate() === returnAt.getDate();
+  const isSaturdayPickup = pickupAt.getDay() === 6;
 
   let daysCount = 1;
   if (isSameDay) {
-    daysCount = 1; // Same-day pickup and drop is always charged as 1 full day rental
+    daysCount = isSaturdayPickup ? 2 : 1; // Saturday same-day pickup & drop is charged as 2 full days
   } else {
     const ms = Math.max(0, returnAt.getTime() - pickupAt.getTime());
     const hours = Math.ceil(ms / (1000 * 3600));

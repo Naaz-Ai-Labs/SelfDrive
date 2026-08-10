@@ -90,13 +90,14 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
   const isSameDay = pickupAt.getFullYear() === returnAt.getFullYear() &&
                     pickupAt.getMonth() === returnAt.getMonth() &&
                     pickupAt.getDate() === returnAt.getDate();
+  const isSaturdayPickup = pickupAt.getDay() === 6;
 
   const pickupTimeStr = pickupTimeHM || (pickupAt.toISOString().slice(11, 16));
   const returnTimeStr = returnTimeHM || (returnAt.toISOString().slice(11, 16));
 
   let days = 1;
   if (isSameDay) {
-    days = 1; // Same-day pickup and drop is always charged as 1 full day rental
+    days = isSaturdayPickup ? 2 : 1; // Saturday same-day pickup & drop is charged as 2 full days
   } else {
     const baseDays = Math.max(1, Math.round((returnAt.getTime() - pickupAt.getTime()) / msPerDay));
     const isSundayReturn = returnAt.getDay() === 0;

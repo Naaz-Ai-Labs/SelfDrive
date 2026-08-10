@@ -144,10 +144,11 @@ function computeClientQuote(
   const r = new Date(rParts.year, rParts.month - 1, rParts.day);
   const msPerDay = 24 * 60 * 60 * 1000;
   const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
+  const isSaturdayPickup = p.getDay() === 6;
 
   let days = 1;
   if (isSameDay) {
-    days = 1; // Same-day pickup and drop is always charged as 1 full day rental
+    days = isSaturdayPickup ? 2 : 1; // Saturday same-day pickup & drop is charged as 2 full days
   } else {
     const diffMs = Math.max(0, r.getTime() - p.getTime());
     const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
@@ -288,9 +289,11 @@ export function BookingForm({
     const rParts = parseDateParts(returnDate);
     if (!pParts || !rParts) return 1;
     const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
-    if (isSameDay) return 1; // Same-day pickup and drop is always charged as 1 full day rental
-
     const p = new Date(pParts.year, pParts.month - 1, pParts.day);
+    const isSaturdayPickup = p.getDay() === 6;
+
+    if (isSameDay) return isSaturdayPickup ? 2 : 1; // Saturday same-day pickup & drop is charged as 2 full days
+
     const r = new Date(rParts.year, rParts.month - 1, rParts.day);
     const rawDiff = Math.max(0, r.getTime() - p.getTime());
     const baseDays = Math.max(1, Math.round(rawDiff / (24 * 60 * 60 * 1000)));

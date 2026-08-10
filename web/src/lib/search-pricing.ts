@@ -63,9 +63,10 @@ export function calculateVehicleSearchPrice(
 
   const msPerDay = 24 * 60 * 60 * 1000;
   const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
+  const isSaturdayPickup = pParts.dateObj.getDay() === 6;
   let days = 1;
   if (isSameDay) {
-    days = 1; // Same-day pickup and drop is always charged as 1 full day rental
+    days = isSaturdayPickup ? 2 : 1; // Saturday same-day pickup & drop is charged as 2 full days
   } else {
     const diffMs = Math.max(0, rDate.getTime() - pDate.getTime());
     const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
