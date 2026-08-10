@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
 
   const form = await req.formData().catch(() => null);
   const file = form?.get("file");
+  const folderParam = (form?.get("folder") as string | null) || undefined;
+  const categoryParam = (form?.get("category") as string | null) || undefined;
+
   if (!file || !(file instanceof File)) {
     return NextResponse.json({ error: "No file provided." }, { status: 400 });
   }
@@ -32,31 +35,50 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "File is too large (max 8MB)." }, { status: 400 });
   }
 
-  const uploadDir = getWritableUploadsDir();
-  const ext = file.type === "application/pdf" ? "pdf" : file.type.split("/")[1];
-  const name = `${randomToken(16)}.${ext}`;
+  // Generate structured path: e.g. "inspections/2026-08/front_1723289000_abc123.jpg" or "documents/12/licence_1723289000.jpg"
+  const dateStr = new Date().toISOString().slice(0, 7);
+  const ext = file.type === "application/pdf" ? "pdf" : file.type.split("/")[1] || "jpg";
+  const cleanRandom = randomToken(12);
+  const nowStamp = Date.now();
+
+  let targetSubfolder = "";
+  if (folderParam && folderParam.trim()) {
+    targetSubfolder = folderParam.trim().replace(/^\/+|\/+$/g, "");
+  } else if (categoryParam && categoryParam.trim()) {
+    targetSubfolder = `${categoryParam.trim().toLowerCase()}s/${dateStr}`;
+  } else {
+    targetSubfolder = `uploads/${dateStr}`;
+  }
+
+  const rawBaseName = file.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 24) : "image";
+  const fileName = `${rawBaseName}_${nowStamp}_${cleanRandom}.${ext}`;
+  const structuredPath = `${targetSubfolder}/${fileName}`;
+
+  const baseUploadDir = getWritableUploadsDir();
+  const localTargetDir = path.join(baseUploadDir, targetSubfolder);
+  fs.mkdirSync(localTargetDir, { recursive: true });
+
   const buf = Buffer.from(await file.arrayBuffer());
-  fs.writeFileSync(path.join(/*turbopackIgnore: true*/ uploadDir, name), buf);
+  fs.writeFileSync(path.join(localTargetDir, fileName), buf);
 
   let supabasePublicUrl: string | null = null;
   const { supabaseAdmin } = await import("@/lib/supabase");
 
   if (supabaseAdmin) {
     try {
-      // Ensure storage bucket exists
       const bucketName = "vehicle-photos";
       const { data: buckets } = await supabaseAdmin.storage.listBuckets();
       if (!buckets?.some((b) => b.name === bucketName)) {
         await supabaseAdmin.storage.createBucket(bucketName, { public: true });
       }
 
-      // Upload file to Supabase Storage
+      // Upload file to Supabase Storage at structured path
       const { data: uploadData, error: uploadErr } = await supabaseAdmin.storage
         .from(bucketName)
-        .upload(name, buf, { contentType: file.type, upsert: true });
+        .upload(structuredPath, buf, { contentType: file.type, upsert: true });
 
       if (!uploadErr && uploadData) {
-        const { data: pubUrl } = supabaseAdmin.storage.from(bucketName).getPublicUrl(name);
+        const { data: pubUrl } = supabaseAdmin.storage.from(bucketName).getPublicUrl(structuredPath);
         if (pubUrl?.publicUrl) {
           supabasePublicUrl = pubUrl.publicUrl;
         }
@@ -66,7 +88,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Return local path and Supabase public URL
-  const finalPath = supabasePublicUrl ?? `/api/files/${name}`;
-  return NextResponse.json({ ok: true, path: finalPath, localPath: `/api/files/${name}`, supabaseUrl: supabasePublicUrl });
+  const relativeLocalPath = `/api/files/${structuredPath}`;
+  const finalPath = supabasePublicUrl ?? relativeLocalPath;
+
+  return NextResponse.json({
+    ok: true,
+    path: finalPath,
+    localPath: relativeLocalPath,
+    structuredPath,
+    supabaseUrl: supabasePublicUrl,
+  });
 }

@@ -20,6 +20,9 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData().catch(() => null);
     const file = form?.get("file");
+    const folderParam = (form?.get("folder") as string | null) || undefined;
+    const categoryParam = (form?.get("category") as string | null) || undefined;
+
     if (!file || !(file instanceof File)) {
       return NextResponse.json({ error: "No file provided." }, { status: 400 });
     }
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "File is too large (max 8MB)." }, { status: 400 });
     }
 
-    // 1. Direct Supabase Storage Upload (Primary)
+    // 1. Direct Supabase Storage Upload with Structured Path
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey =
       process.env.SUPABASE_SECRET_KEY ||
@@ -38,12 +41,28 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_PUBLISHABLE_KEY ||
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
+    const dateStr = new Date().toISOString().slice(0, 7);
+    const ext = file.type === "application/pdf" ? "pdf" : file.type.split("/")[1] || "jpg";
+    const cleanRandom = Math.random().toString(36).substring(2, 12);
+    const nowStamp = Date.now();
+
+    let targetSubfolder = "";
+    if (folderParam && folderParam.trim()) {
+      targetSubfolder = folderParam.trim().replace(/^\/+|\/+$/g, "");
+    } else if (categoryParam && categoryParam.trim()) {
+      targetSubfolder = `${categoryParam.trim().toLowerCase()}s/${dateStr}`;
+    } else {
+      targetSubfolder = `customer-documents/${dateStr}`;
+    }
+
+    const rawBaseName = file.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 24) : "document";
+    const fileName = `${rawBaseName}_${nowStamp}_${cleanRandom}.${ext}`;
+    const structuredPath = `${targetSubfolder}/${fileName}`;
+
     if (supabaseUrl && supabaseKey) {
       try {
         const supabase = createClient(supabaseUrl, supabaseKey);
         const bucketName = "vehicle-photos";
-        const ext = file.type === "application/pdf" ? "pdf" : file.type.split("/")[1] || "jpg";
-        const randomName = `${Math.random().toString(36).substring(2, 15)}_${Date.now()}.${ext}`;
         const buf = Buffer.from(await file.arrayBuffer());
 
         // Ensure bucket exists
@@ -54,12 +73,12 @@ export async function POST(req: NextRequest) {
 
         const { data: uploadData, error: uploadErr } = await supabase.storage
           .from(bucketName)
-          .upload(randomName, buf, { contentType: file.type, upsert: true });
+          .upload(structuredPath, buf, { contentType: file.type, upsert: true });
 
         if (!uploadErr && uploadData) {
-          const { data: pubUrl } = supabase.storage.from(bucketName).getPublicUrl(randomName);
+          const { data: pubUrl } = supabase.storage.from(bucketName).getPublicUrl(structuredPath);
           if (pubUrl?.publicUrl) {
-            return NextResponse.json({ ok: true, path: pubUrl.publicUrl });
+            return NextResponse.json({ ok: true, path: pubUrl.publicUrl, structuredPath });
           }
         }
       } catch (supaErr) {
@@ -71,6 +90,8 @@ export async function POST(req: NextRequest) {
     const crmUrl = getBaseUrl();
     const proxied = new FormData();
     proxied.append("file", file, file.name);
+    if (folderParam) proxied.append("folder", folderParam);
+    if (categoryParam) proxied.append("category", categoryParam);
 
     const res = await fetch(`${crmUrl}/api/gateway/v1/upload`, {
       method: "POST",

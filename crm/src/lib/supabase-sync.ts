@@ -191,4 +191,18 @@ export async function syncTableRecordToSupabase(table: string, record: Record<st
   }
 }
 
+/** Fetches a row from local SQLite by ID and syncs it live to Supabase. */
+export async function syncEntityToSupabase(table: string, id: number | string): Promise<boolean> {
+  try {
+    const db = getDb();
+    const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) return false;
+    return await syncTableRecordToSupabase(table, row);
+  } catch (err: any) {
+    console.warn(`⚠️ Supabase entity sync error for [${table}:${id}]:`, err?.message || err);
+    return false;
+  }
+}
+
+
 

@@ -10,6 +10,7 @@ import { getSetting, setSetting } from "./settings";
 import { calculateLateFee, calculateExtraKm } from "./pricing";
 import type { SessionUser } from "./auth";
 import { issueRazorpayRefund } from "./razorpay";
+import { syncEntityToSupabase } from "./supabase-sync";
 
 function refresh(path = "/dashboard") {
   revalidatePath(path, "layout");
@@ -405,8 +406,12 @@ export async function recordInspection(input: {
     input.bookingId, input.kind, user.id, input.odometer ?? null, input.fuelLevel ?? null, input.notes ?? null
   );
   const inspectionId = Number(result.lastInsertRowid);
+  syncEntityToSupabase("inspections", inspectionId).catch(() => {});
+
   for (const p of input.photos) {
-    db.prepare("INSERT INTO inspection_photos (inspection_id, side, url, notes) VALUES (?, ?, ?, ?)").run(inspectionId, p.side, p.url, p.notes ?? null);
+    const photoResult = db.prepare("INSERT INTO inspection_photos (inspection_id, side, url, notes) VALUES (?, ?, ?, ?)").run(inspectionId, p.side, p.url, p.notes ?? null);
+    const photoId = Number(photoResult.lastInsertRowid);
+    syncEntityToSupabase("inspection_photos", photoId).catch(() => {});
   }
 
   if (input.kind === "handover") {
@@ -431,6 +436,7 @@ export async function recordInspection(input: {
       input.bookingId, user.id, JSON.stringify({ lateFee: late, extraKm: km })
     );
   }
+  syncEntityToSupabase("bookings", input.bookingId).catch(() => {});
   logActivity(user.id, `inspection_${input.kind}`, "booking", input.bookingId, { inspection_id: inspectionId });
   refresh();
   return { ok: true, inspectionId };

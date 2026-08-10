@@ -4,6 +4,7 @@ import { randomToken, parseJSON, normalizePhone } from "./utils";
 import { createBooking, checkVehicleAvailable } from "./bookings";
 import { calculateQuote } from "./pricing";
 import { getVehicleById, getVehicles } from "./data";
+import { syncEntityToSupabase } from "./supabase-sync";
 import { z } from "zod";
 
 export type DraftPayload = {
@@ -133,15 +134,22 @@ export async function submitBooking(input: {
       db.prepare(
         "UPDATE enquiries SET status = 'submitted', stage = 'Confirmed', submitted_at = datetime('now'), draft_token = NULL WHERE id = ?"
       ).run(existing.id);
+      syncEntityToSupabase("enquiries", existing.id).catch(() => {});
     }
 
     if (input.documents && input.documents.length > 0) {
       for (const d of input.documents) {
-        db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
+        const docRes = db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
           customerId, bookingId, normalizeDocKind(d.kind), d.number ?? null, d.expiry ?? null, d.url
         );
+        const docId = Number(docRes.lastInsertRowid);
+        syncEntityToSupabase("customer_documents", docId).catch(() => {});
       }
     }
+
+    // Live sync customer and booking entities to Supabase
+    syncEntityToSupabase("customers", customerId).catch(() => {});
+    syncEntityToSupabase("bookings", bookingId).catch(() => {});
 
     try {
       revalidatePath("/dashboard", "layout");
