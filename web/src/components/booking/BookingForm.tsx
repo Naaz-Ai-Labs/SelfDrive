@@ -34,18 +34,49 @@ function combineIso(dateStr: string, timeStr: string) {
   return `${dateStr}T${timeStr}`;
 }
 
+function parseDateParts(dateStr: string): { year: number; month: number; day: number; dateObj: Date } | null {
+  if (!dateStr) return null;
+  const clean = dateStr.includes("T") ? dateStr.split("T")[0] : dateStr;
+  const parts = clean.split(/[-/.]/).map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return null;
+
+  let y: number, m: number, d: number;
+  if (parts[0] > 1000) {
+    // YYYY-MM-DD
+    y = parts[0];
+    m = parts[1];
+    d = parts[2];
+  } else if (parts[2] > 1000) {
+    // DD-MM-YYYY
+    y = parts[2];
+    m = parts[1];
+    d = parts[0];
+  } else {
+    y = parts[0];
+    m = parts[1];
+    d = parts[2];
+  }
+  const dateObj = new Date(y, m - 1, d);
+  return { year: y, month: m, day: d, dateObj };
+}
+
 function getDayOfWeek(dateStr: string): number {
-  if (!dateStr) return 0;
-  const parts = dateStr.split("-").map(Number);
-  if (parts.length !== 3) return 0;
-  return new Date(parts[0], parts[1] - 1, parts[2]).getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
+  const p = parseDateParts(dateStr);
+  if (!p) return -1;
+  return p.dateObj.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
+}
+
+function getDayName(dateStr: string): string {
+  const day = getDayOfWeek(dateStr);
+  if (day < 0 || day > 6) return "";
+  const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return names[day] ?? "";
 }
 
 function addDaysISO(dateStr: string, numDays: number): string {
-  if (!dateStr) return dateStr;
-  const parts = dateStr.split("-").map(Number);
-  if (parts.length !== 3) return dateStr;
-  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  const p = parseDateParts(dateStr);
+  if (!p) return dateStr;
+  const d = new Date(p.year, p.month - 1, p.day);
   d.setDate(d.getDate() + numDays);
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -54,10 +85,9 @@ function addDaysISO(dateStr: string, numDays: number): string {
 }
 
 function getNextMondayISO(dateStr: string): string {
-  if (!dateStr) return dateStr;
-  const parts = dateStr.split("-").map(Number);
-  if (parts.length !== 3) return dateStr;
-  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  const p = parseDateParts(dateStr);
+  if (!p) return dateStr;
+  const d = new Date(p.year, p.month - 1, p.day);
   const day = d.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
   const daysToAdd = day === 0 ? 1 : day === 6 ? 2 : day === 5 ? 3 : (8 - day);
   d.setDate(d.getDate() + daysToAdd);
@@ -179,6 +209,8 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
   const isFriday = useMemo(() => getDayOfWeek(pickupDate) === 5, [pickupDate]);
   const isSaturday = useMemo(() => getDayOfWeek(pickupDate) === 6, [pickupDate]);
+  const pickupDayLabel = useMemo(() => getDayName(pickupDate), [pickupDate]);
+  const returnDayLabel = useMemo(() => getDayName(returnDate), [returnDate]);
 
   const minReturnDate = useMemo(() => {
     if (isSaturday) return getNextMondayISO(pickupDate);
@@ -517,7 +549,14 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               </div>
 
               <div>
-                <label className="label">Pickup date *</label>
+                <div className="flex items-center justify-between">
+                  <label className="label">Pickup date *</label>
+                  {pickupDayLabel && (
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${isFriday ? "bg-amber-100 text-amber-800 border border-amber-300" : isSaturday ? "bg-blue-100 text-blue-800 border border-blue-300" : "bg-ink-100 text-ink-700"}`}>
+                      {pickupDayLabel}
+                    </span>
+                  )}
+                </div>
                 <input
                   className="input"
                   type="date"
@@ -541,17 +580,20 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
 
               {/* Friday Weekend Extension Checkbox - ONLY visible when Friday is selected as Pickup */}
               {isFriday && (
-                <div className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50/90 p-4 shadow-xs">
+                <div className="sm:col-span-2 rounded-xl border-2 border-amber-400 bg-amber-50 p-4 shadow-sm">
                   <label className="flex items-start gap-3 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={fridayWeekendExtension}
                       onChange={(e) => handleFridayExtensionChange(e.target.checked)}
-                      className="mt-1 h-4 w-4 rounded border-amber-400 text-brand-600 focus:ring-brand-500"
+                      className="mt-1 h-5 w-5 rounded border-amber-500 text-brand-600 focus:ring-brand-500 accent-brand-600"
                     />
                     <div>
-                      <span className="text-sm font-bold text-ink-900">Include Weekend Rental (Friday + Saturday + Sunday → Drop on Monday)</span>
-                      <p className="text-xs text-ink-600 mt-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-ink-950">Include Weekend Rental (Fri + Sat + Sun → Drop on Monday)</span>
+                        <span className="rounded bg-brand-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">3 Days</span>
+                      </div>
+                      <p className="text-xs text-ink-700 mt-1 font-medium">
                         Priced as standard Friday rate + weekend rates for Saturday &amp; Sunday (3 days rental). Return date automatically sets to Monday.
                       </p>
                     </div>
@@ -567,7 +609,14 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
               )}
 
               <div>
-                <label className="label">Drop date (Return date) *</label>
+                <div className="flex items-center justify-between">
+                  <label className="label">Drop date (Return date) *</label>
+                  {returnDayLabel && (
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-ink-100 text-ink-700">
+                      {returnDayLabel}
+                    </span>
+                  )}
+                </div>
                 <input
                   className="input"
                   type="date"
@@ -579,7 +628,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 />
                 {errors.returnDate && <p className="field-error">{errors.returnDate}</p>}
                 {(isSaturday || (isFriday && fridayWeekendExtension)) && (
-                  <p className="text-[11px] text-ink-500 mt-1">Locked to Monday for weekend rental period.</p>
+                  <p className="text-[11px] text-ink-600 font-medium mt-1">Locked to Monday for weekend rental period.</p>
                 )}
               </div>
               <div>
