@@ -23,17 +23,8 @@ export function BookingBar({
   const [kind, setKind] = useState(initialValues?.kind ?? "");
   const [pickupDate, setPickupDate] = useState(initialValues?.pickup ?? today);
   const [pickupTime, setPickupTime] = useState(initialValues?.pickupTime ?? "08:00");
-  const initialRetDate = initialValues?.return ?? today;
-  const isInitialSunday = (() => {
-    if (!initialRetDate) return false;
-    const parts = initialRetDate.split("-").map(Number);
-    if (parts.length !== 3 || parts.some(isNaN)) return false;
-    const d = parts[0] > 1000 ? new Date(parts[0], parts[1] - 1, parts[2]) : new Date(parts[2], parts[1] - 1, parts[0]);
-    return d.getDay() === 0;
-  })();
-
-  const [returnDate, setReturnDate] = useState(initialRetDate);
-  const [returnTime, setReturnTime] = useState(initialValues?.returnTime ?? (isInitialSunday ? "09:00" : "08:00"));
+  const [returnDate, setReturnDate] = useState(initialValues?.return ?? today);
+  const [returnTime, setReturnTime] = useState(initialValues?.returnTime ?? "08:00");
 
   const isSundayReturn = (() => {
     if (!returnDate) return false;
@@ -45,15 +36,6 @@ export function BookingBar({
 
   const handleReturnDateChange = (newDate: string) => {
     setReturnDate(newDate);
-    const parts = newDate.split("-").map(Number);
-    if (parts.length === 3 && !parts.some(isNaN)) {
-      const d = parts[0] > 1000 ? new Date(parts[0], parts[1] - 1, parts[2]) : new Date(parts[2], parts[1] - 1, parts[0]);
-      if (d.getDay() === 0 && returnTime === "08:00") {
-        setReturnTime("09:00");
-      } else if (d.getDay() !== 0 && returnTime === "09:00") {
-        setReturnTime("08:00");
-      }
-    }
   };
 
   return (
@@ -138,15 +120,11 @@ export function BookingBar({
             onChange={(e) => setReturnTime(e.target.value)}
             className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-3 text-xs text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
           >
-            {TIME_SLOTS.map((t) => {
-              const isStdSun = isSundayReturn && t.value === "09:00";
-              const isStdWk = !isSundayReturn && t.value === "08:00";
-              return (
-                <option key={t.value} value={t.value}>
-                  {isStdSun ? "9:00 AM (Standard Sunday)" : isStdWk ? "8:00 AM (Standard)" : t.label}
-                </option>
-              );
-            })}
+            {TIME_SLOTS.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.value === "08:00" ? "8:00 AM (Standard)" : t.label}
+              </option>
+            ))}
           </select>
         </label>
       </div>

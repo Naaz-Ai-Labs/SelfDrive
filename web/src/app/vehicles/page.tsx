@@ -25,10 +25,7 @@ export default async function VehiclesPage(
   const pickupDate = searchParams.pickup;
   const pickupTime = searchParams.pickupTime || "08:00";
   const returnDate = searchParams.return;
-  const returnParts = returnDate ? parseDateParts(returnDate) : null;
-  const isSundayReturn = returnParts?.dateObj.getDay() === 0;
-  const defaultReturnTime = isSundayReturn ? "09:00" : "08:00";
-  const returnTime = searchParams.returnTime || defaultReturnTime;
+  const returnTime = searchParams.returnTime || "08:00";
 
   const [categories, vehicles] = await Promise.all([
     getVehicleCategories(),
