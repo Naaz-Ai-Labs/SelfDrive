@@ -143,13 +143,19 @@ function computeClientQuote(
   const p = new Date(pParts.year, pParts.month - 1, pParts.day);
   const r = new Date(rParts.year, rParts.month - 1, rParts.day);
   const msPerDay = 24 * 60 * 60 * 1000;
-  const diffMs = Math.max(0, r.getTime() - p.getTime());
-  const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-  // If drop-off time is after standard 08:00 AM, charge for 1 more day
-  const isLateDrop = rTime > "08:00";
-  const sundayExtra = isSundayReturn ? 1 : 0;
-  const lateDropExtra = isLateDrop ? 1 : 0;
-  const days = baseDays + sundayExtra + lateDropExtra;
+  const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
+
+  let days = 1;
+  if (isSameDay) {
+    days = 1; // Same-day pickup and drop is always charged as 1 full day rental
+  } else {
+    const diffMs = Math.max(0, r.getTime() - p.getTime());
+    const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
+    const isLateDrop = rTime > "08:00";
+    const sundayExtra = isSundayReturn ? 1 : 0;
+    const lateDropExtra = isLateDrop ? 1 : 0;
+    days = baseDays + sundayExtra + lateDropExtra;
+  }
 
   let baseAmount = 0;
   let weekendDaysCount = 0;
@@ -168,7 +174,7 @@ function computeClientQuote(
     baseAmount += rate;
   }
 
-  const isEarlyPickup = pTime < "08:00";
+  const isEarlyPickup = !isSameDay && pTime < "08:00";
   const timingFee = isEarlyPickup ? 250 : 0;
 
   const depositAmount = Number(vehicle.deposit ?? 1000);
@@ -271,8 +277,7 @@ export function BookingForm({
   const returnDayLabel = useMemo(() => getDayName(returnDate), [returnDate]);
 
   const minReturnDate = useMemo(() => {
-    // Drop date is minimum next day (for Saturday pickup, Sunday is selectable)
-    return addDaysISO(pickupDate, 1);
+    return pickupDate;
   }, [pickupDate]);
 
   const pickupAt = combineIso(pickupDate, pickupTime);
