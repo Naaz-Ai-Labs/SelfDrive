@@ -10,30 +10,49 @@ import { FleetGanttCalendar } from "@/components/dashboard/FleetGanttCalendar";
 export const metadata: Metadata = { title: "Vehicles Management", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function VehiclesAdminPage() {
-  const vehicles = getVehicles({}, false);
-  const categories = getVehicleCategories(false);
-  const branches = getBranches(false);
+export default async function VehiclesAdminPage() {
+  let vehicles: ReturnType<typeof getVehicles> = [];
+  let categories: ReturnType<typeof getVehicleCategories> = [];
+  let branches: ReturnType<typeof getBranches> = [];
+  let rawBookings: Array<{
+    id: number;
+    bookingNo: string;
+    customerName: string;
+    vehicleId: number;
+    pickupAt: string;
+    returnAt: string;
+    status: string;
+  }> = [];
 
-  const db = getDb();
-  const rawBookings = (
-    db
-      .prepare(
-        `SELECT b.id, b.booking_no, b.vehicle_id, b.pickup_at, b.return_at, b.status, c.name AS customer_name
-         FROM bookings b
-         LEFT JOIN customers c ON c.id = b.customer_id
-         WHERE b.status NOT IN ('Cancelled', 'Draft')`
-      )
-      .all() as Array<Record<string, unknown>>
-  ).map((r) => ({
-    id: Number(r.id),
-    bookingNo: String(r.booking_no),
-    customerName: String(r.customer_name ?? "Guest"),
-    vehicleId: Number(r.vehicle_id),
-    pickupAt: String(r.pickup_at),
-    returnAt: String(r.return_at),
-    status: String(r.status),
-  }));
+  try {
+    vehicles = getVehicles({}, false);
+    categories = getVehicleCategories(false);
+    branches = getBranches(false);
+
+    const db = getDb();
+    const rows = (
+      db
+        .prepare(
+          `SELECT b.id, b.booking_no, b.vehicle_id, b.pickup_at, b.return_at, b.status, c.name AS customer_name
+           FROM bookings b
+           LEFT JOIN customers c ON c.id = b.customer_id
+           WHERE b.status NOT IN ('Cancelled', 'Draft')`
+        )
+        .all() as Array<Record<string, unknown>>
+    );
+
+    rawBookings = rows.map((r) => ({
+      id: Number(r.id),
+      bookingNo: String(r.booking_no),
+      customerName: String(r.customer_name ?? "Guest"),
+      vehicleId: Number(r.vehicle_id),
+      pickupAt: String(r.pickup_at),
+      returnAt: String(r.return_at),
+      status: String(r.status),
+    }));
+  } catch (err: any) {
+    console.error("VehiclesAdminPage data load error:", err?.message || err);
+  }
 
   const ganttVehicles = vehicles.map((v) => ({
     id: v.id,

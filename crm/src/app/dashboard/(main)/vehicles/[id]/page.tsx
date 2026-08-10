@@ -13,15 +13,26 @@ export const revalidate = 0;
 
 export default async function VehicleAdminDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: paramId } = await params;
-  const vehicle = getVehicleById(Number(paramId));
-  if (!vehicle) notFound();
-  const categories = getVehicleCategories(false);
-  const branches = getBranches(false);
-  const db = getDb();
-  const rules = (db.prepare("SELECT * FROM pricing_rules WHERE vehicle_id = ? ORDER BY priority DESC").all(vehicle.id) as Array<Record<string, unknown>>).map((r) => ({ ...r })) as unknown as Array<{ id: number; name: string; day_type: string; start_date: string; end_date: string; rate_24h: number | null; deposit: number | null; priority: number }>;
-  const bookings = db
-    .prepare("SELECT b.*, c.name AS customer_name FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id WHERE b.vehicle_id = ? ORDER BY b.pickup_at DESC LIMIT 10")
-    .all(vehicle.id) as Array<Record<string, unknown>>;
+  let vehicle: ReturnType<typeof getVehicleById> = null;
+  let categories: ReturnType<typeof getVehicleCategories> = [];
+  let branches: ReturnType<typeof getBranches> = [];
+  let rules: Array<{ id: number; name: string; day_type: string; start_date: string; end_date: string; rate_24h: number | null; deposit: number | null; priority: number }> = [];
+  let bookings: Array<Record<string, unknown>> = [];
+
+  try {
+    vehicle = getVehicleById(Number(paramId));
+    if (!vehicle) notFound();
+    categories = getVehicleCategories(false);
+    branches = getBranches(false);
+    const db = getDb();
+    rules = (db.prepare("SELECT * FROM pricing_rules WHERE vehicle_id = ? ORDER BY priority DESC").all(vehicle.id) as Array<Record<string, unknown>>).map((r) => ({ ...r })) as unknown as typeof rules;
+    bookings = db
+      .prepare("SELECT b.*, c.name AS customer_name FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id WHERE b.vehicle_id = ? ORDER BY b.pickup_at DESC LIMIT 10")
+      .all(vehicle.id) as Array<Record<string, unknown>>;
+  } catch (err: any) {
+    if (!vehicle) notFound();
+    console.error("VehicleAdminDetailPage load error:", err?.message || err);
+  }
 
   return (
     <div className="space-y-6">
