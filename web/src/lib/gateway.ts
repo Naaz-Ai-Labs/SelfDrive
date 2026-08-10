@@ -4,7 +4,7 @@ function getBaseUrl(): string {
   if (process.env.CRM_API_URL) return process.env.CRM_API_URL.replace(/\/$/, "");
   if (process.env.NEXT_PUBLIC_CRM_API_URL) return process.env.NEXT_PUBLIC_CRM_API_URL.replace(/\/$/, "");
   if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
-    return "https://darshan-tours-crm-papadon.vercel.app";
+    return "https://darshan-tours-crm.vercel.app";
   }
   return "http://localhost:3001";
 }

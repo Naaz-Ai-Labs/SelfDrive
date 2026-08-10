@@ -297,16 +297,31 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
             <h1 className="font-display text-2xl font-semibold text-ink-900">Booking received — {result.bookingNo}</h1>
             <p className="mt-2 text-sm text-ink-600">You can pay online now to confirm instantly, or pay at pickup — either way, your booking is held.</p>
             <div className="mt-6">
-              <RazorpayCheckout
-                bookingId={result.bookingId}
-                amountDue={quote?.totalAmount ?? 0}
-                customerName={contact.name}
-                customerPhone={contact.phone}
-                customerEmail={contact.email}
-                quote={quote}
-                onPaid={() => setPaid(true)}
-                onPayLater={() => setPaid(true)}
-              />
+              {(() => {
+                const effectiveAmountDue = quote?.totalAmount ?? (selectedVehicle ? ((selectedVehicle.rate_24h * days) + selectedVehicle.deposit + Math.round(selectedVehicle.rate_24h * days * 0.06)) : 0);
+                const effectiveQuote = quote ?? (selectedVehicle ? {
+                  days,
+                  baseAmount: selectedVehicle.rate_24h * days,
+                  gstPct: 6,
+                  gstAmount: Math.round(selectedVehicle.rate_24h * days * 0.06),
+                  depositAmount: selectedVehicle.deposit,
+                  gatewayFeeAmount: 0,
+                  totalAmount: effectiveAmountDue,
+                } : null);
+
+                return (
+                  <RazorpayCheckout
+                    bookingId={result.bookingId}
+                    amountDue={effectiveAmountDue}
+                    customerName={contact.name}
+                    customerPhone={contact.phone}
+                    customerEmail={contact.email}
+                    quote={effectiveQuote}
+                    onPaid={() => setPaid(true)}
+                    onPayLater={() => setPaid(true)}
+                  />
+                );
+              })()}
             </div>
           </div>
         ) : (
