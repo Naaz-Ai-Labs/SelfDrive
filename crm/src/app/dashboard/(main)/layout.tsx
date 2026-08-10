@@ -57,7 +57,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
       <div className="min-w-0 flex-1">
         <div className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-white/50 bg-white/70 px-4 py-3 backdrop-blur-xl sm:px-6">
-          <MobileNav items={navItems} />
+          <MobileNav items={navItems} user={user} />
           <div className="hidden flex-1 lg:flex items-center gap-3">
             <SearchBox />
             <CommandBar />
