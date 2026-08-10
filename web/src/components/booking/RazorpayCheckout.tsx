@@ -83,6 +83,14 @@ export function RazorpayCheckout({
       },
       prefill: { name: customerName, contact: customerPhone, email: customerEmail || undefined },
       theme: { color: "#f2b705" },
+      config: {
+        display: {
+          hide: [
+            { method: "emi" },
+            { method: "paylater" },
+          ],
+        },
+      },
       handler: async (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
         setStatus("loading");
         const verify = await verifyBookingPayment({
