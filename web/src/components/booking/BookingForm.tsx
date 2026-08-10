@@ -144,7 +144,9 @@ function computeClientQuote(
   const r = new Date(rParts.year, rParts.month - 1, rParts.day);
   const msPerDay = 24 * 60 * 60 * 1000;
   const diffMs = Math.max(0, r.getTime() - p.getTime());
-  const days = Math.max(1, Math.round(diffMs / msPerDay));
+  const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
+  // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
+  const days = isSundayReturn ? baseDays + 1 : baseDays;
 
   let baseAmount = 0;
   let weekendDaysCount = 0;
@@ -270,7 +272,9 @@ export function BookingForm({
     const r = new Date(`${returnDate}T${returnTime}`);
     const diffMs = r.getTime() - p.getTime();
     if (Number.isNaN(diffMs) || diffMs <= 0) return 1;
-    return Math.max(1, Math.round(diffMs / (24 * 60 * 60 * 1000)));
+    const baseDays = Math.max(1, Math.round(diffMs / (24 * 60 * 60 * 1000)));
+    const isSunday = getDayOfWeek(returnDate) === 0;
+    return isSunday ? baseDays + 1 : baseDays;
   }, [pickupDate, pickupTime, returnDate, returnTime]);
 
   const [vehicleId, setVehicleId] = useState<number | null>(search.get("vehicle") ? Number(search.get("vehicle")) : null);
@@ -729,10 +733,10 @@ export function BookingForm({
                     >
                       <div className="flex items-center gap-1.5 w-full justify-between">
                         <span className="text-xs font-bold text-ink-950">Sunday Drop-off</span>
-                        <span className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">1 Day (Sunday)</span>
+                        <span className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">2 Days (Weekend)</span>
                       </div>
                       <span className="text-[11px] text-ink-600 mt-1">
-                        {formatDate(addDaysISO(pickupDate, 1))} · Standard 9:00 AM Drop
+                        {formatDate(addDaysISO(pickupDate, 1))} · Standard 9:00 AM Drop (Includes Sunday full day)
                       </span>
                     </button>
                   </div>

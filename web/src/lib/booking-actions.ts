@@ -112,9 +112,12 @@ export async function submitBooking(input: {
       if (v) {
         const p = new Date(input.pickupAt);
         const r = new Date(input.returnAt);
+        const isSundayReturn = r.getDay() === 0;
         const msPerDay = 24 * 60 * 60 * 1000;
         const diffMs = Math.max(0, r.getTime() - p.getTime());
-        const days = Math.max(1, Math.round(diffMs / msPerDay));
+        const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
+        // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
+        const days = isSundayReturn ? baseDays + 1 : baseDays;
 
         baseAmount = 0;
         for (let i = 0; i < days; i++) {
@@ -126,7 +129,6 @@ export async function submitBooking(input: {
         }
 
         const pickupTimeStr = input.pickupAt.includes("T") ? input.pickupAt.split("T")[1] : "08:00";
-        const isSundayReturn = r.getDay() === 0;
         const returnTimeStr = input.returnAt.includes("T") ? input.returnAt.split("T")[1] : (isSundayReturn ? "09:00" : "08:00");
         const isEarlyPickup = pickupTimeStr < "08:00";
         const isLateDrop = isSundayReturn ? returnTimeStr > "09:00" : returnTimeStr > pickupTimeStr;
@@ -243,9 +245,12 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
     if (v && pickupAt && returnAt) {
       const p = new Date(pickupAt);
       const r = new Date(returnAt);
+      const isSundayReturn = r.getDay() === 0;
       const msPerDay = 24 * 60 * 60 * 1000;
       const diffMs = Math.max(0, r.getTime() - p.getTime());
-      const days = Math.max(1, Math.round(diffMs / msPerDay));
+      const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
+      // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
+      const days = isSundayReturn ? baseDays + 1 : baseDays;
 
       let baseAmount = 0;
       const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
@@ -262,7 +267,6 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
       }
 
       const pickupTimeStr = pickupAt.includes("T") ? pickupAt.split("T")[1] : "08:00";
-      const isSundayReturn = r.getDay() === 0;
       const returnTimeStr = returnAt.includes("T") ? returnAt.split("T")[1] : (isSundayReturn ? "09:00" : "08:00");
       const isEarlyPickup = pickupTimeStr < "08:00";
       const isLateDrop = isSundayReturn ? returnTimeStr > "09:00" : returnTimeStr > pickupTimeStr;

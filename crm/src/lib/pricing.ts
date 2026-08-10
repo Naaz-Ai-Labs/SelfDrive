@@ -87,7 +87,10 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
   const lateDropFee = Number(rentalRules.late_drop_fee ?? 250);
 
   const msPerDay = 24 * 60 * 60 * 1000;
-  const days = Math.max(1, Math.round((returnAt.getTime() - pickupAt.getTime()) / msPerDay));
+  const baseDays = Math.max(1, Math.round((returnAt.getTime() - pickupAt.getTime()) / msPerDay));
+  const isSundayReturn = returnAt.getDay() === 0;
+  // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
+  const days = isSundayReturn ? baseDays + 1 : baseDays;
 
   const seasonalRule = findSeasonalRule(vehicle, pickupAt, returnAt);
   const dayBreakdown: Quote["dayBreakdown"] = [];
@@ -114,7 +117,6 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
 
   // Off-schedule timing fees: ₹250 for early pickup (< 08:00), ₹250 for late dropoff (> pickup time or > 09:00 on Sundays)
   const pickupTimeStr = pickupTimeHM || (pickupAt.toISOString().slice(11, 16));
-  const isSundayReturn = returnAt.getDay() === 0;
   const returnTimeStr = returnTimeHM || (returnAt.toISOString().slice(11, 16));
 
   const isEarlyPickup = pickupTimeStr < "08:00";

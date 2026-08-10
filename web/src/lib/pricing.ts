@@ -25,7 +25,9 @@ export function calculateRentalPrice(
 ): { totalAmount: number; daysCount: number; weekendDaysCount: number; rateUsed: number } {
   const ms = Math.max(0, returnAt.getTime() - pickupAt.getTime());
   const hours = Math.ceil(ms / (1000 * 3600));
-  const daysCount = Math.max(1, Math.ceil(hours / 24));
+  const baseDays = Math.max(1, Math.round(hours / 24));
+  const isSundayReturn = returnAt.getDay() === 0;
+  const daysCount = isSundayReturn ? baseDays + 1 : baseDays;
 
   let totalAmount = 0;
   let weekendDaysCount = 0;

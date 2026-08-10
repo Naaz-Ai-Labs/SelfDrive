@@ -63,7 +63,9 @@ export function calculateVehicleSearchPrice(
 
   const msPerDay = 24 * 60 * 60 * 1000;
   const diffMs = Math.max(0, rDate.getTime() - pDate.getTime());
-  const days = Math.max(1, Math.round(diffMs / msPerDay));
+  const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
+  // Sunday drop-off includes one extra day rental charge (Sunday weekend rate)
+  const days = isSundayReturn ? baseDays + 1 : baseDays;
 
   let baseAmount = 0;
   let weekendDaysCount = 0;
