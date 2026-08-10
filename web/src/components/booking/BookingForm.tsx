@@ -216,10 +216,9 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
   const returnDayLabel = useMemo(() => getDayName(returnDate), [returnDate]);
 
   const minReturnDate = useMemo(() => {
-    if (isSaturday) return getNextMondayISO(pickupDate);
-    if (isFriday && fridayWeekendExtension) return getNextMondayISO(pickupDate);
+    // Drop date is minimum next day (for Saturday pickup, Sunday is selectable)
     return addDaysISO(pickupDate, 1);
-  }, [pickupDate, isSaturday, isFriday, fridayWeekendExtension]);
+  }, [pickupDate]);
 
   const pickupAt = combineIso(pickupDate, pickupTime);
   const returnAt = combineIso(returnDate, returnTime);
@@ -253,18 +252,15 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     const day = getDayOfWeek(newDate);
     let newReturn = returnDate;
     if (day === 6) {
+      // Default to Monday for Saturday pickup
       const mondayISO = getNextMondayISO(newDate);
-      if (returnDate < mondayISO) {
-        newReturn = mondayISO;
-        setReturnDate(mondayISO);
-      }
+      newReturn = mondayISO;
+      setReturnDate(mondayISO);
     } else if (day === 5) {
       if (fridayWeekendExtension) {
         const mondayISO = getNextMondayISO(newDate);
-        if (returnDate < mondayISO) {
-          newReturn = mondayISO;
-          setReturnDate(mondayISO);
-        }
+        newReturn = mondayISO;
+        setReturnDate(mondayISO);
       } else {
         newReturn = addDaysISO(newDate, 1);
         setReturnDate(newReturn);
@@ -634,10 +630,49 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                 </div>
               )}
 
-              {/* Saturday Mandatory Notice */}
+              {/* Saturday Drop-off Options (Sunday in-between selectable) */}
               {isSaturday && (
-                <div className="sm:col-span-2 rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-xs text-blue-900 font-medium">
-                  <strong>Saturday Weekend Policy:</strong> Saturday rentals require a 2-day weekend package with vehicle drop-off on Monday 8:00 AM.
+                <div className="sm:col-span-2 rounded-xl border border-brand-200 bg-brand-50/70 p-4 shadow-xs">
+                  <span className="text-xs font-bold uppercase tracking-wider text-brand-900 block mb-2.5">
+                    Select Drop-off Day:
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => handleReturnDateChange(getNextMondayISO(pickupDate))}
+                      className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer ${
+                        returnDate === getNextMondayISO(pickupDate)
+                          ? "border-brand-600 bg-white ring-2 ring-brand-500 shadow-sm"
+                          : "border-ink-200 bg-white/70 hover:bg-white hover:border-brand-300"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 w-full justify-between">
+                        <span className="text-xs font-bold text-ink-950">Monday Drop-off</span>
+                        <span className="rounded bg-brand-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">2 Days (Weekend)</span>
+                      </div>
+                      <span className="text-[11px] text-ink-600 mt-1">
+                        {formatDate(getNextMondayISO(pickupDate))} · Standard 8:00 AM Drop
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleReturnDateChange(addDaysISO(pickupDate, 1))}
+                      className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer ${
+                        returnDate === addDaysISO(pickupDate, 1)
+                          ? "border-amber-500 bg-white ring-2 ring-amber-500 shadow-sm"
+                          : "border-ink-200 bg-white/70 hover:bg-white hover:border-amber-300"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 w-full justify-between">
+                        <span className="text-xs font-bold text-ink-950">Sunday Drop-off</span>
+                        <span className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">1 Day (Sunday)</span>
+                      </div>
+                      <span className="text-[11px] text-ink-600 mt-1">
+                        {formatDate(addDaysISO(pickupDate, 1))} · Standard 9:00 AM Drop
+                      </span>
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -659,11 +694,6 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
                   aria-invalid={!!errors.returnDate}
                 />
                 {errors.returnDate && <p className="field-error">{errors.returnDate}</p>}
-                {(isSaturday || (isFriday && fridayWeekendExtension)) && (
-                  <p className="text-[11px] text-ink-600 font-medium mt-1">
-                    Minimum drop-off date is Monday (you can choose Monday or any date after).
-                  </p>
-                )}
               </div>
               <div>
                 <label className="label">
