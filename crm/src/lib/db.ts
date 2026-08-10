@@ -111,8 +111,7 @@ function seedSync(targetDb: any) {
       (9, 'bajaj-pulsar-ns', 'Bajaj Pulsar NS200', 'Bajaj', 'Pulsar NS', 2023, 2, 1, 'KA-46-M-3344', 200, 'Petrol', 'Manual', 2, '35 km/l', 100, 4, 800, 1300, 120, 1350, 1000, 100, 2, 'Naked streetfighter performance.', 'available', 1),
       (10, 'honda-shine', 'Honda Shine 125', 'Honda', 'Shine', 2023, 2, 1, 'KA-46-M-5566', 125, 'Petrol', 'Manual', 2, '55 km/l', 100, 4, 600, 1000, 100, 1050, 1000, 100, 2, 'Reliable and comfortable commuter.', 'available', 1),
 
-      (11, 'maruti-baleno-manual', 'Maruti Suzuki Baleno (Manual)', 'Maruti Suzuki', 'Baleno Manual', 2023, 1, 1, 'KA-46-C-7890', 1197, 'Petrol', 'Manual', 5, '21 km/l', 300, 8, 2000, 3500, 200, 3550, 2000, 150, 2, 'Comfortable premium manual hatchback.', 'available', 1),
-      (12, 'maruti-baleno-automatic', 'Maruti Suzuki Baleno (Automatic)', 'Maruti Suzuki', 'Baleno Automatic', 2023, 1, 1, 'KA-46-C-7891', 1197, 'Petrol', 'Automatic', 5, '22 km/l', 300, 8, 2200, 3800, 220, 3850, 2000, 150, 2, 'Smooth automatic premium hatchback.', 'available', 1),
+      (11, 'maruti-baleno-manual', 'Maruti Suzuki Baleno', 'Maruti Suzuki', 'Baleno', 2023, 1, 1, 'KA-46-C-7890', 1197, 'Petrol', 'Manual', 5, '21 km/l', 300, 8, 2000, 3500, 200, 3550, 2000, 150, 2, 'Comfortable premium hatchback.', 'available', 1),
       (13, 'maruti-dzire', 'Maruti Dzire', 'Maruti Suzuki', 'Dzire', 2023, 1, 1, 'KA-46-C-1122', 1197, 'Petrol', 'Manual', 5, '23 km/l', 300, 8, 2000, 3500, 200, 3550, 2000, 150, 2, 'Fuel-efficient compact sedan.', 'available', 1),
       (14, 'maruti-ciaz', 'Maruti Ciaz', 'Maruti Suzuki', 'Ciaz', 2023, 1, 1, 'KA-46-C-3344', 1462, 'Petrol', 'Manual', 5, '20 km/l', 300, 8, 2400, 4000, 240, 4050, 2500, 180, 1, 'Spacious premium sedan for highway trips.', 'available', 1),
       (15, 'maruti-ertiga-7-seater', 'Maruti Ertiga 7 Seater', 'Maruti Suzuki', 'Ertiga', 2023, 1, 1, 'KA-46-C-5566', 1462, 'Petrol', 'Manual', 7, '19 km/l', 300, 8, 2800, 4500, 280, 4550, 3000, 200, 1, 'Spacious 7-seater MPV for family trips.', 'available', 1),
@@ -134,7 +133,6 @@ function seedSync(targetDb: any) {
       (9, '/vehicles/honda-cb200x.jpg', 1),
       (10, '/vehicles/tvs-ronin.avif', 1),
       (11, '/vehicles/baleno-manual.avif', 1),
-      (12, '/vehicles/baleno-manual.avif', 1),
       (13, '/vehicles/baleno-manual.avif', 1),
       (14, '/vehicles/baleno-manual.avif', 1),
       (15, '/vehicles/mahindra-thar.avif', 1),
@@ -743,8 +741,7 @@ function applySchema(database: DatabaseSync) {
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 8;"); // TVS Ronin
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 9;"); // Honda CB200X
     database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 10;"); // Honda Shine
-    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 11;"); // Baleno Manual
-    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 12;"); // Baleno Automatic
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 11;"); // Baleno
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 13;"); // Dzire
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 14;"); // Ciaz
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 15;"); // Ertiga
