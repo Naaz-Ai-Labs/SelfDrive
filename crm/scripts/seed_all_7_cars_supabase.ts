@@ -74,27 +74,25 @@ async function seedAllCarsToSupabase() {
   }
 
   const photosToUpsert = [
-    { vehicle_id: 1, photo_url: "/vehicles/honda-dio.avif", is_primary: true },
-    { vehicle_id: 2, photo_url: "/vehicles/honda-activa.webp", is_primary: true },
-    { vehicle_id: 3, photo_url: "/vehicles/honda-activa.webp", is_primary: true },
-    { vehicle_id: 4, photo_url: "/vehicles/honda-dio.avif", is_primary: true },
-    { vehicle_id: 5, photo_url: "/vehicles/honda-dio.avif", is_primary: true },
-    { vehicle_id: 6, photo_url: "/vehicles/tvs-ronin.avif", is_primary: true },
-    { vehicle_id: 7, photo_url: "/vehicles/honda-cb200x.jpg", is_primary: true },
-    { vehicle_id: 8, photo_url: "/vehicles/tvs-ronin.avif", is_primary: true },
-    { vehicle_id: 9, photo_url: "/vehicles/honda-cb200x.jpg", is_primary: true },
-    { vehicle_id: 10, photo_url: "/vehicles/tvs-ronin.avif", is_primary: true },
-    { vehicle_id: 11, photo_url: "/vehicles/baleno-manual.avif", is_primary: true },
-    { vehicle_id: 12, photo_url: "/vehicles/baleno-manual.avif", is_primary: true },
-    { vehicle_id: 13, photo_url: "/vehicles/baleno-manual.avif", is_primary: true },
-    { vehicle_id: 14, photo_url: "/vehicles/baleno-manual.avif", is_primary: true },
-    { vehicle_id: 15, photo_url: "/vehicles/mahindra-thar.avif", is_primary: true },
-    { vehicle_id: 16, photo_url: "/vehicles/mahindra-thar.avif", is_primary: true },
-    { vehicle_id: 17, photo_url: "/vehicles/mahindra-thar.avif", is_primary: true },
-    { vehicle_id: 18, photo_url: "/vehicles/tempo-traveller.jpg", is_primary: true },
-    { vehicle_id: 19, photo_url: "/vehicles/tempo-traveller.jpg", is_primary: true },
+    { vehicle_id: 1, url: "/vehicles/honda-dio.avif", is_primary: 1 },
+    { vehicle_id: 2, url: "/vehicles/honda-activa.webp", is_primary: 1 },
+    { vehicle_id: 3, url: "/vehicles/tvs-jupiter.webp", is_primary: 1 },
+    { vehicle_id: 4, url: "/vehicles/yamaha-rayzr.avif", is_primary: 1 },
+    { vehicle_id: 5, url: "/vehicles/tvs-ntorq.webp", is_primary: 1 },
+    { vehicle_id: 6, url: "/vehicles/tvs-ronin.avif", is_primary: 1 },
+    { vehicle_id: 7, url: "/vehicles/honda-cb200x.jpg", is_primary: 1 },
+    { vehicle_id: 8, url: "/vehicles/tvs-radar.avif", is_primary: 1 },
+    { vehicle_id: 9, url: "/vehicles/bajaj-pulsar-ns.png", is_primary: 1 },
+    { vehicle_id: 10, url: "/vehicles/honda-shine.avif", is_primary: 1 },
+    { vehicle_id: 11, url: "/vehicles/baleno-manual.avif", is_primary: 1 },
+    { vehicle_id: 13, url: "/vehicles/maruti-dzire.avif", is_primary: 1 },
+    { vehicle_id: 14, url: "/vehicles/maruti-ciaz.jpg", is_primary: 1 },
+    { vehicle_id: 15, url: "/vehicles/maruti-ertiga.avif", is_primary: 1 },
+    { vehicle_id: 16, url: "/vehicles/mahindra-thar.avif", is_primary: 1 },
+    { vehicle_id: 18, url: "/vehicles/tempo-traveller.jpg", is_primary: 1 },
+    { vehicle_id: 19, url: "/vehicles/cta-tempo-banner.jpg", is_primary: 1 },
   ];
-  await supabase.from("vehicle_photos").upsert(photosToUpsert);
+  await supabase.from("vehicle_photos").upsert(photosToUpsert, { onConflict: "id" });
   console.log("✅ Successfully upserted vehicle photos to Supabase PostgreSQL!");
 }
 

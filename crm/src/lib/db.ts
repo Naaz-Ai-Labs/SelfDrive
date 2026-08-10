@@ -123,21 +123,21 @@ function seedSync(targetDb: any) {
       INSERT OR IGNORE INTO vehicle_photos (vehicle_id, url, is_primary) VALUES
       (1, '/vehicles/honda-dio.avif', 1),
       (2, '/vehicles/honda-activa.webp', 1),
-      (3, '/vehicles/honda-activa.webp', 1),
-      (4, '/vehicles/honda-dio.avif', 1),
-      (5, '/vehicles/honda-dio.avif', 1),
+      (3, '/vehicles/tvs-jupiter.webp', 1),
+      (4, '/vehicles/yamaha-rayzr.avif', 1),
+      (5, '/vehicles/tvs-ntorq.webp', 1),
       (6, '/vehicles/tvs-ronin.avif', 1),
       (7, '/vehicles/honda-cb200x.jpg', 1),
-      (8, '/vehicles/tvs-ronin.avif', 1),
-      (9, '/vehicles/honda-cb200x.jpg', 1),
-      (10, '/vehicles/tvs-ronin.avif', 1),
+      (8, '/vehicles/tvs-radar.avif', 1),
+      (9, '/vehicles/bajaj-pulsar-ns.png', 1),
+      (10, '/vehicles/honda-shine.avif', 1),
       (11, '/vehicles/baleno-manual.avif', 1),
-      (13, '/vehicles/baleno-manual.avif', 1),
-      (14, '/vehicles/baleno-manual.avif', 1),
-      (15, '/vehicles/mahindra-thar.avif', 1),
+      (13, '/vehicles/maruti-dzire.avif', 1),
+      (14, '/vehicles/maruti-ciaz.jpg', 1),
+      (15, '/vehicles/maruti-ertiga.avif', 1),
       (16, '/vehicles/mahindra-thar.avif', 1),
       (18, '/vehicles/tempo-traveller.jpg', 1),
-      (19, '/vehicles/tempo-traveller.jpg', 1);
+      (19, '/vehicles/cta-tempo-banner.jpg', 1);
 
       INSERT OR IGNORE INTO terms_versions (version, content, is_active) VALUES
       (1, '["Valid original Driving Licence & Government ID (Aadhaar/Passport) mandatory for vehicle handover.","Included drive limit per day. Driving beyond this limit is charged per KM.","Fuel policy: Return the vehicle with the same fuel level as provided at pickup.","Security deposit is fully refundable upon safe vehicle return inspection.","Late returns exceeding 1 minute add full 24-hour additional day rental charges."]', 1);
