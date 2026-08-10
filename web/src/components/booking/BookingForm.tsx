@@ -270,7 +270,7 @@ export function BookingForm({
     const r = new Date(`${returnDate}T${returnTime}`);
     const diffMs = r.getTime() - p.getTime();
     if (Number.isNaN(diffMs) || diffMs <= 0) return 1;
-    return Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000)));
+    return Math.max(1, Math.round(diffMs / (24 * 60 * 60 * 1000)));
   }, [pickupDate, pickupTime, returnDate, returnTime]);
 
   const [vehicleId, setVehicleId] = useState<number | null>(search.get("vehicle") ? Number(search.get("vehicle")) : null);
