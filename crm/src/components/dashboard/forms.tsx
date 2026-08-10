@@ -9,6 +9,7 @@ import {
   decideRefund, completeRefund, updateProblemTicket,
 } from "@/lib/actions";
 import { compressImageFile } from "@/lib/image-compression";
+import { VehicleCameraScanner, type CapturedPhoto } from "./VehicleCameraScanner";
 
 function useAction() {
   const router = useRouter();
@@ -186,38 +187,56 @@ export function InspectionForm({ bookingId, kind }: { bookingId: number; kind: "
   const [odometer, setOdometer] = useState("");
   const [fuelLevel, setFuelLevel] = useState("Full");
   const [notes, setNotes] = useState("");
-  const [photos, setPhotos] = useState<Record<string, string>>({});
-  const [uploading, setUploading] = useState<string | null>(null);
+  const [capturedPhotos, setCapturedPhotos] = useState<Record<string, CapturedPhoto>>({});
 
-  async function upload(side: string, file: File) {
-    setUploading(side);
-    const compressed = await compressImageFile(file, 1600, 0.8);
-    const fd = new FormData();
-    fd.append("file", compressed);
-    const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json()).catch(() => null);
-    setUploading(null);
-    if (res?.path) setPhotos((p) => ({ ...p, [side]: res.path }));
-  }
+  const handlePhotoCaptured = (photo: CapturedPhoto) => {
+    setCapturedPhotos((prev) => ({ ...prev, [photo.side]: photo }));
+  };
+
+  const handleRemovePhoto = (side: string) => {
+    setCapturedPhotos((prev) => {
+      const next = { ...prev };
+      delete next[side];
+      return next;
+    });
+  };
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
+    const mandatoryKeys = ["front", "rear", "left", "right"];
+    const missingKeys = mandatoryKeys.filter((k) => !capturedPhotos[k]?.url);
+
+    if (missingKeys.length > 0) {
+      if (!confirm(`Missing mandatory scans for: ${missingKeys.join(", ").toUpperCase()}. Are you sure you want to proceed without all 4 vehicle sides?`)) {
+        return;
+      }
+    }
+
     run(async () => {
+      const photoPayload = Object.values(capturedPhotos).map((p) => ({
+        side: p.side,
+        url: p.url,
+        notes: p.notes,
+      }));
+
       const res = await recordInspection({
-        bookingId, kind,
+        bookingId,
+        kind,
         odometer: odometer ? Number(odometer) : undefined,
-        fuelLevel, notes: notes || undefined,
-        photos: Object.entries(photos).map(([side, url]) => ({ side, url })),
+        fuelLevel,
+        notes: notes || undefined,
+        photos: photoPayload,
       });
       return res;
     });
   }
 
   return (
-    <form onSubmit={submit} className="space-y-3">
+    <form onSubmit={submit} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="label">Odometer reading (km)</label>
-          <input className="input" type="number" min={0} value={odometer} onChange={(e) => setOdometer(e.target.value)} />
+          <input className="input" type="number" min={0} value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder="e.g. 24500" />
         </div>
         <div>
           <label className="label">Fuel level</label>
@@ -226,35 +245,24 @@ export function InspectionForm({ bookingId, kind }: { bookingId: number; kind: "
           </select>
         </div>
       </div>
+
       <div>
-        <label className="label">Notes</label>
-        <textarea className="input min-h-14" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Existing scratches, condition remarks…" />
+        <label className="label">Inspection notes</label>
+        <textarea className="input min-h-14" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Existing scratches, clean interior, tire condition, etc." />
       </div>
-      <div>
-        <p className="label mb-2">Four-side + odometer + fuel photos</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {PHOTO_SIDES.map((side) => (
-            <label key={side} className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-3 text-center text-xs capitalize text-ink-500 hover:border-brand-500">
-              {photos[side] ? <span className="font-semibold text-emerald-700">✓ {side}</span> : <span>{uploading === side ? "Uploading…" : side}</span>}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    upload(side, file).catch(console.error);
-                    e.target.value = "";
-                  }
-                }}
-              />
-            </label>
-          ))}
-        </div>
+
+      {/* Live Camera Scanner & Geotagged Photo Capture */}
+      <div className="rounded-xl border border-ink-200 bg-white p-3 shadow-sm">
+        <VehicleCameraScanner
+          capturedPhotos={capturedPhotos}
+          onPhotoCaptured={handlePhotoCaptured}
+          onRemovePhoto={handleRemovePhoto}
+        />
       </div>
+
       {error && <p className="field-error">{error}</p>}
-      <button type="submit" disabled={pending} className="btn-primary px-4 py-2 text-xs">
-        {pending ? "Saving…" : kind === "handover" ? "Record handover" : "Record return & calculate charges"}
+      <button type="submit" disabled={pending} className="btn-primary w-full py-2.5 text-xs font-semibold shadow">
+        {pending ? "Saving Inspection Record..." : kind === "handover" ? "✓ Record Handover Inspection" : "✓ Record Return Inspection & Calculate Charges"}
       </button>
     </form>
   );

@@ -130,12 +130,27 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
 
           {inspectionPhotos.length > 0 && (
             <div className="card p-5">
-              <h2 className="font-display text-lg font-semibold text-ink-900">Inspection photos</h2>
-              <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-lg font-semibold text-ink-900">Inspection & Geotagged Photos</h2>
+                <span className="badge bg-brand-100 text-brand-800 font-semibold text-xs">
+                  📍 {inspectionPhotos.length} Photos Captured
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {inspectionPhotos.map((p) => (
-                  <a key={Number(p.id)} href={String(p.url)} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-ink-100">
-                    <img src={String(p.url)} alt={String(p.side)} className="aspect-square w-full object-cover" />
-                    <p className="p-1 text-center text-[10px] capitalize text-ink-500">{String(p.side)}</p>
+                  <a key={Number(p.id)} href={String(p.url)} target="_blank" rel="noreferrer" className="group relative block overflow-hidden rounded-xl border border-ink-200 bg-black shadow-sm transition hover:border-brand-500 hover:shadow-md">
+                    <img src={String(p.url)} alt={String(p.side)} className="aspect-video w-full object-cover transition group-hover:scale-105" />
+                    <div className="p-2 bg-ink-900/90 text-white">
+                      <div className="flex items-center justify-between text-xs font-semibold capitalize text-brand-400">
+                        <span>📍 {String(p.side)} View</span>
+                        <span className="text-[10px] text-ink-300">View Full ↗</span>
+                      </div>
+                      {p.notes ? (
+                        <p className="mt-0.5 truncate text-[10px] text-ink-300 font-mono" title={String(p.notes)}>
+                          {String(p.notes)}
+                        </p>
+                      ) : null}
+                    </div>
                   </a>
                 ))}
               </div>
