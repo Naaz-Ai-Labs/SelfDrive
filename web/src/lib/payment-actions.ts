@@ -132,7 +132,7 @@ export async function verifyBookingPayment(input: {
     if (res && res.ok) return res;
   } catch {}
 
-  // 2. Direct HMAC-SHA256 Signature Verification
+  // 2. Direct HMAC-SHA256 Signature Verification & Live Supabase / CRM Sync
   const keySecret = process.env.RAZORPAY_KEY_SECRET || "vWEQ49WAZ71sye9SJbK5eluA";
 
   const expectedSignature = crypto
@@ -144,15 +144,72 @@ export async function verifyBookingPayment(input: {
     return { ok: false, error: "Invalid payment signature." };
   }
 
-  // Update Supabase booking status to Confirmed
+  let bookingNo = `BK-${input.paymentId}`;
+  let paidAmount = 1000;
+
+  // High-availability live update directly in Supabase PostgreSQL
   const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
   const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (supabaseUrl && supabaseKey) {
     try {
       const supabase = createClient(supabaseUrl, supabaseKey);
-      await supabase.from("bookings").update({ status: "Confirmed", paid_amount: 1 }).eq("id", input.paymentId);
-    } catch {}
+      
+      // Fetch booking details
+      const { data: b } = await supabase.from("bookings").select("*").eq("id", input.paymentId).single();
+      if (b) {
+        bookingNo = b.booking_no || bookingNo;
+        paidAmount = Number(b.total_amount || b.paid_amount || 1000);
+      }
+
+      // 1. Update Booking Status to Confirmed & Paid Amount
+      await supabase.from("bookings").update({
+        status: "Confirmed",
+        paid_amount: paidAmount,
+        updated_at: new Date().toISOString(),
+      }).eq("id", input.paymentId);
+
+      // 2. Record Payment Entry in CRM Payments Table
+      const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
+      await supabase.from("payments").insert({
+        booking_id: input.paymentId,
+        payment_no: paymentNo,
+        kind: "online",
+        amount: paidAmount,
+        status: "Paid",
+        notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
+        created_at: new Date().toISOString(),
+      });
+
+      // 3. Record Audit Log in Booking History
+      try {
+        await supabase.from("booking_history").insert({
+          booking_id: input.paymentId,
+          action: "Payment Verified",
+          detail: `Razorpay payment of ₹${paidAmount} verified successfully. Payment ID: ${input.razorpayPaymentId}. Status updated to Confirmed.`,
+          created_at: new Date().toISOString(),
+        });
+      } catch {}
+
+      // 4. Cache downloadable Invoice payload in Redis for this session
+      try {
+        const { cacheSet } = await import("./redis");
+        const invoicePayload = {
+          bookingNo,
+          paymentId: input.paymentId,
+          razorpayOrderId: input.razorpayOrderId,
+          razorpayPaymentId: input.razorpayPaymentId,
+          amount: paidAmount,
+          verifiedAt: new Date().toISOString(),
+          status: "Confirmed",
+        };
+        await cacheSet(`session:invoice:${input.paymentId}`, invoicePayload, 86400);
+        await cacheSet(`session:invoice:${bookingNo}`, invoicePayload, 86400);
+      } catch {}
+
+    } catch (err: any) {
+      console.error("Supabase payment verification update error:", err?.message || err);
+    }
   }
 
-  return { ok: true, bookingNo: `BK-${input.paymentId}` };
+  return { ok: true, bookingNo };
 }

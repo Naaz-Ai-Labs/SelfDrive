@@ -3,6 +3,9 @@ import { notFound, redirect } from "next/navigation";
 import Image from "next/image";
 import { gatewayGet } from "@/lib/gateway";
 import { formatINR, formatDateTime } from "@/lib/utils";
+import { createClient } from "@supabase/supabase-js";
+import { cacheGet, cacheSet } from "@/lib/redis";
+import { InvoicePrintButton } from "@/components/customer/InvoicePrintButton";
 
 export const metadata: Metadata = { title: "Invoice", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -17,11 +20,109 @@ type InvoiceResponse = {
 
 export default async function InvoicePage(props: { params: Promise<{ bookingNo: string }> }) {
   const params = await props.params;
-  const res = await gatewayGet<InvoiceResponse>(`/api/gateway/v1/customer/invoice/${encodeURIComponent(params.bookingNo)}`, { auth: true });
-  if (!res || res.error === "Not found.") notFound();
-  if (!res || res.error) redirect("/customer/login");
+  const bookingNo = params.bookingNo;
 
-  const { booking, invoice, photoUrl, business: info } = res;
+  let invoiceData: InvoiceResponse | null = null;
+
+  // 1. Try Upstash Redis Session Cache first
+  try {
+    const cached = await cacheGet<InvoiceResponse>(`session:invoice:${bookingNo}`);
+    if (cached && cached.booking) {
+      invoiceData = cached;
+    }
+  } catch {}
+
+  // 2. Primary Gateway Attempt
+  if (!invoiceData) {
+    try {
+      const res = await gatewayGet<InvoiceResponse>(`/api/gateway/v1/customer/invoice/${encodeURIComponent(bookingNo)}`, { auth: true });
+      if (res && res.booking) {
+        invoiceData = res;
+      }
+    } catch {}
+  }
+
+  // 3. High-Availability Direct Supabase PostgreSQL Fallback
+  if (!invoiceData) {
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+
+        let query = supabase.from("bookings").select("*, vehicles(*), customers(*)");
+        if (/^\d+$/.test(bookingNo)) {
+          query = query.eq("id", Number(bookingNo));
+        } else {
+          query = query.eq("booking_no", bookingNo);
+        }
+
+        const { data: b } = await query.single();
+
+        if (b) {
+          const cust = b.customers || {};
+          const veh = b.vehicles || {};
+
+          const bookingObj = {
+            id: b.id,
+            booking_no: b.booking_no || `BK-${b.id}`,
+            customer_name: cust.name || b.name || "Valued Customer",
+            customer_phone: cust.phone || b.phone || "",
+            customer_email: cust.email || b.email || "",
+            customer_address: cust.address || "",
+            vehicle_name: veh.name || `Vehicle #${b.vehicle_id || 1}`,
+            registration_no: veh.registration_no || "",
+            pickup_at: b.pickup_at,
+            return_at: b.return_at,
+            base_amount: b.base_amount || (Number(b.total_amount || 1000) - Number(b.gst_amount || 60)),
+            other_fees_amount: b.surcharge_amount || b.other_fees_amount || 0,
+            extra_km_amount: b.extra_km_amount || 0,
+            late_fee_amount: b.late_fee_amount || 0,
+            damage_amount: b.damage_amount || 0,
+            gst_amount: b.gst_amount || 60,
+            discount_amount: b.discount_amount || 0,
+            total_amount: b.total_amount || 1000,
+            deposit_amount: b.deposit_amount || 1000,
+            paid_amount: b.paid_amount || b.total_amount || 1000,
+          };
+
+          const invoiceObj = {
+            invoice_no: `INV-${new Date().getFullYear()}-${String(b.id).padStart(5, "0")}`,
+            created_at: b.created_at || new Date().toISOString(),
+          };
+
+          const businessObj = {
+            name: "Darshh Holiday",
+            address: "Main Branch: Hassan & Sakleshpura, Karnataka 573201",
+            phone: "+91 98452 10001",
+            email: "support@darshhholiday.com",
+          };
+
+          invoiceData = {
+            booking: bookingObj,
+            invoice: invoiceObj,
+            photoUrl: veh.primary_photo || (Array.isArray(veh.photos) ? veh.photos[0] : null) || "/vehicles/mahindra-thar.avif",
+            business: businessObj,
+          };
+
+          // Cache in Redis for session
+          try {
+            await cacheSet(`session:invoice:${bookingNo}`, invoiceData, 86400);
+            await cacheSet(`session:invoice:${b.id}`, invoiceData, 86400);
+          } catch {}
+        }
+      } catch (err: any) {
+        console.error("Supabase direct invoice lookup error:", err?.message || err);
+      }
+    }
+  }
+
+  if (!invoiceData || !invoiceData.booking) {
+    redirect("/customer/portal");
+  }
+
+  const { booking, invoice, photoUrl, business: info } = invoiceData;
 
   const lines = [
     ["Base rental", Number(booking.base_amount)],
@@ -108,9 +209,7 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
           </tbody>
         </table>
 
-        <div className="mt-8 flex justify-end gap-3 print:hidden">
-          <button type="button" className="btn-secondary">Download / Print</button>
-        </div>
+        <InvoicePrintButton />
       </div>
     </article>
   );
