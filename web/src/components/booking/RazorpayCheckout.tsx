@@ -39,6 +39,7 @@ export function RazorpayCheckout({
   quote?: {
     days: number;
     baseAmount: number;
+    offSchedulePickupFee?: number;
     gstPct: number;
     gstAmount: number;
     depositAmount: number;
@@ -134,10 +135,12 @@ export function RazorpayCheckout({
                   <span>Base Vehicle Rental ({quote.days} day{quote.days > 1 ? "s" : ""})</span>
                   <span className="font-semibold text-ink-900">{formatINR(quote.baseAmount)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Mandatory Pickup Handover Charge</span>
-                  <span className="font-semibold text-ink-900">₹250</span>
-                </div>
+                {Boolean(quote.offSchedulePickupFee && quote.offSchedulePickupFee > 0) && (
+                  <div className="flex justify-between text-amber-800">
+                    <span>Off-schedule Timing Surcharge</span>
+                    <span className="font-semibold">{formatINR(quote.offSchedulePickupFee!)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span>GST ({quote.gstPct}%)</span>
                   <span className="font-semibold text-ink-900">{formatINR(quote.gstAmount)}</span>
@@ -159,7 +162,7 @@ export function RazorpayCheckout({
               </>
             ) : (
               <div className="flex justify-between font-medium">
-                <span>Rental + Pickup + GST + Refundable Security Deposit</span>
+                <span>Rental + GST + Refundable Security Deposit</span>
                 <span className="font-bold text-ink-900">{formatINR(amountDue)}</span>
               </div>
             )}

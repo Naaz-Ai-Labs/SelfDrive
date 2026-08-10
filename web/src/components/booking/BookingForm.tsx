@@ -131,8 +131,17 @@ function computeClientQuote(
   returnTimeStr: string | null
 ) {
   if (!vehicle || !pickupDateStr || !returnDateStr) return null;
-  const p = new Date(pickupDateStr);
-  const r = new Date(returnDateStr);
+  const pParts = parseDateParts(pickupDateStr);
+  const rParts = parseDateParts(returnDateStr);
+  if (!pParts || !rParts) return null;
+
+  const pTime = pickupTimeStr || "08:00";
+  const isSundayReturn = rParts.dateObj.getDay() === 0;
+  const standardReturnTime = isSundayReturn ? "09:00" : "08:00";
+  const rTime = returnTimeStr || standardReturnTime;
+
+  const p = new Date(pParts.year, pParts.month - 1, pParts.day);
+  const r = new Date(rParts.year, rParts.month - 1, rParts.day);
   const msPerDay = 24 * 60 * 60 * 1000;
   const diffMs = Math.max(0, r.getTime() - p.getTime());
   const days = Math.max(1, Math.round(diffMs / msPerDay));
@@ -142,19 +151,18 @@ function computeClientQuote(
   const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
 
   for (let i = 0; i < days; i++) {
-    const day = new Date(p.getTime() + i * msPerDay);
+    const day = new Date(p.getFullYear(), p.getMonth(), p.getDate() + i);
     const dayOfWeek = day.getDay();
     const isWknd = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
     if (isWknd) weekendDaysCount++;
     const rate = isWknd ? Number(vehicle.weekend_rate_24h ?? (vehicle.rate_24h + 50)) : Number(vehicle.rate_24h);
-    dayBreakdown.push({ date: day.toISOString().slice(0, 10), isWeekend: isWknd, rate });
+    const y = day.getFullYear();
+    const m = String(day.getMonth() + 1).padStart(2, "0");
+    const d = String(day.getDate()).padStart(2, "0");
+    dayBreakdown.push({ date: `${y}-${m}-${d}`, isWeekend: isWknd, rate });
     baseAmount += rate;
   }
 
-  const pTime = pickupTimeStr ?? "08:00";
-  const isSundayReturn = getDayOfWeek(returnDateStr) === 0;
-  const standardReturnTime = isSundayReturn ? "09:00" : "08:00";
-  const rTime = returnTimeStr ?? standardReturnTime;
   const isEarlyPickup = pTime < "08:00";
   const isLateDrop = isSundayReturn ? rTime > "09:00" : rTime > pTime;
   const timingFee = (isEarlyPickup ? 250 : 0) + (isLateDrop ? 250 : 0);
@@ -177,7 +185,7 @@ function computeClientQuote(
     gatewayFeePct: 0,
     depositAmount,
     includedKm: (vehicle.included_km ?? 100) * days,
-    extraKmRate: vehicle.extra_km_rate ?? 5,
+    extraKmRate: (vehicle.category_kind === "bike" || vehicle.category_kind === "scooter") ? 4 : (vehicle.extra_km_rate ?? 8),
     afterHours: isEarlyPickup,
     offSchedulePickup: timingFee > 0,
     weekendMinDays: 1,
@@ -412,7 +420,7 @@ export function BookingForm({ categories, businessWhatsapp, terms }: { categorie
     return computeClientQuote(selectedVehicle, pickupDate, pickupTime, returnDate, returnTime);
   }, [selectedVehicle, pickupDate, pickupTime, returnDate, returnTime]);
 
-  const activeQuote = quote ?? clientQuote;
+  const activeQuote = clientQuote ?? quote;
 
   const kycComplete = Boolean(
     (documents.licence?.url || documents.driver_licence?.url) &&
