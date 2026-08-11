@@ -7,6 +7,7 @@ import Image from "next/image";
 import { formatINR, formatDate, formatTimeLabel, waLink, getLiveClockMinPickup, compute25HourAutoReturn } from "@/lib/utils";
 import { saveBookingDraft, getDraft, submitBooking, getAvailableVehicles, getQuoteEstimate, getVehicleById } from "@/lib/booking-actions";
 import { RazorpayCheckout } from "./RazorpayCheckout";
+import { InlineInvoiceCard } from "./InlineInvoiceCard";
 import type { Vehicle } from "@/lib/data";
 import { compressImageFile } from "@/lib/image-compression";
 
@@ -586,14 +587,27 @@ export function BookingForm({
             </div>
           </div>
         ) : (
-          <div className="text-center">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-3xl">✓</div>
-            <h1 className="mt-6 font-display text-3xl font-semibold text-ink-900">You&apos;re all set!</h1>
-            <p className="mt-3 text-ink-600">Your booking number is <strong>{result.bookingNo}</strong>. Our team will verify your documents and confirm your pickup.</p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-              <a href={waLink(businessWhatsapp, `Hi, this is regarding my booking ${result.bookingNo}`)} target="_blank" rel="noopener noreferrer" className="btn-primary">Message us on WhatsApp</a>
-              <Link href="/customer/login" className="btn-secondary">Track this booking</Link>
+          <div>
+            <div className="text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl text-emerald-700">✓</div>
+              <h1 className="mt-4 font-display text-2xl font-semibold text-ink-900">You&apos;re all set!</h1>
+              <p className="mt-1.5 text-xs text-ink-600">Your booking number is <strong>{result.bookingNo}</strong>. Here is your official payment tax invoice.</p>
+              <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+                <a href={waLink(businessWhatsapp, `Hi, this is regarding my booking ${result.bookingNo}`)} target="_blank" rel="noopener noreferrer" className="btn-primary py-2 text-xs">Message us on WhatsApp</a>
+                <Link href="/customer/portal" className="btn-secondary py-2 text-xs">Track in Customer Portal</Link>
+              </div>
             </div>
+
+            {/* Official Itemized Tax Invoice Card with Download / Save PDF Option */}
+            <InlineInvoiceCard
+              bookingNo={result.bookingNo}
+              bookingId={result.bookingId}
+              customerName={contact.name}
+              customerPhone={contact.phone}
+              customerEmail={contact.email}
+              quote={activeQuote}
+              amountPaid={activeQuote?.totalAmount ?? 2219}
+            />
           </div>
         )}
       </div>
