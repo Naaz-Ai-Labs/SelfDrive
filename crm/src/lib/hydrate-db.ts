@@ -108,3 +108,50 @@ export async function hydrateSQLiteFromSupabase(db: DatabaseSync): Promise<boole
     return false;
   }
 }
+
+/** Live delta sync to fetch latest bookings, payments, and customers from Supabase into SQLite */
+export async function syncLatestFromSupabase(db: DatabaseSync): Promise<boolean> {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+  if (!url || !key) return false;
+
+  try {
+    const supabase = createClient(url, key, { auth: { persistSession: false } });
+
+    const syncTables = ["customers", "enquiries", "bookings", "payments", "booking_history"];
+    const results = await Promise.all(
+      syncTables.map((t) => supabase.from(t).select("*").order("created_at", { ascending: false }).limit(100))
+    );
+
+    for (let idx = 0; idx < syncTables.length; idx++) {
+      const table = syncTables[idx];
+      const res = results[idx];
+      if (res.error || !res.data || res.data.length === 0) continue;
+
+      const pragma = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      const sqliteCols = new Set(pragma.map((p) => p.name));
+
+      for (const row of res.data) {
+        const keys = Object.keys(row).filter((k) => sqliteCols.has(k) && row[k] !== undefined);
+        if (keys.length === 0) continue;
+
+        const colsStr = keys.join(", ");
+        const placeholdersStr = keys.map(() => "?").join(", ");
+        const values = keys.map((k) => row[k]);
+
+        try {
+          db.prepare(`INSERT OR REPLACE INTO ${table} (${colsStr}) VALUES (${placeholdersStr})`).run(...values);
+        } catch {}
+      }
+    }
+    return true;
+  } catch (err: any) {
+    console.warn("⚠️ Live Supabase sync warning:", err?.message || err);
+    return false;
+  }
+}

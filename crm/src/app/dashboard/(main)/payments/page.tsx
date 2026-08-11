@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { syncLatestFromSupabase } from "@/lib/hydrate-db";
 import { formatDate, formatINR } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
 
@@ -13,6 +14,7 @@ export default async function PaymentsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
   const db = getDb();
+  await syncLatestFromSupabase(db);
 
   const rows = db
     .prepare(

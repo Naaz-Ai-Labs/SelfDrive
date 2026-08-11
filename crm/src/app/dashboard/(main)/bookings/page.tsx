@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getDb } from "@/lib/db";
+import { syncLatestFromSupabase } from "@/lib/hydrate-db";
 import { formatDateTime, formatINR } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Bookings", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function BookingsPage() {
+export default async function BookingsPage() {
   const db = getDb();
+  await syncLatestFromSupabase(db);
   const rows = db
     .prepare(
       `SELECT b.*, c.name AS customer_name, v.name AS vehicle_name, u.name AS manager_name

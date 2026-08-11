@@ -147,14 +147,13 @@ export async function submitBooking(input: {
         booking_no: bookingNo,
         customer_id: customerId,
         vehicle_id: input.vehicleId,
-        pickup_date: input.pickupAt,
-        return_date: input.returnAt,
+        pickup_at: input.pickupAt,
+        return_at: input.returnAt,
         base_amount: baseAmount,
         deposit_amount: depositAmount,
         gst_amount: gstAmount,
         total_amount: totalAmount,
         status: "Pending",
-        source: "web",
         created_at: new Date().toISOString(),
       })
       .select("id")
