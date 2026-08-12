@@ -58,7 +58,7 @@ export function BookingsTableWithTabs({
   }, [initialBookings, activeTab, searchQuery]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" suppressHydrationWarning>
       {/* Search & Tabs Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Navigation Tabs */}
