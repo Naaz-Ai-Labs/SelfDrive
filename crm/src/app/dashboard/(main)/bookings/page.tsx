@@ -25,12 +25,16 @@ export default async function BookingsPage() {
 
   const bookingIds = rawRows.map((r) => Number(r.id)).filter(Boolean);
   let allDocs: CustomerDocument[] = [];
+  let allPayments: any[] = [];
   if (bookingIds.length > 0) {
     try {
       const placeholders = bookingIds.map(() => "?").join(",");
       allDocs = db
         .prepare(`SELECT * FROM customer_documents WHERE booking_id IN (${placeholders})`)
         .all(...bookingIds) as CustomerDocument[];
+      allPayments = db
+        .prepare(`SELECT * FROM payments WHERE booking_id IN (${placeholders}) ORDER BY created_at DESC`)
+        .all(...bookingIds);
     } catch {}
   }
 
@@ -39,6 +43,13 @@ export default async function BookingsPage() {
     const bId = Number((doc as any).booking_id);
     if (!docsByBookingId.has(bId)) docsByBookingId.set(bId, []);
     docsByBookingId.get(bId)!.push(doc);
+  }
+
+  const paymentsByBookingId = new Map<number, any[]>();
+  for (const pay of allPayments) {
+    const bId = Number((pay as any).booking_id);
+    if (!paymentsByBookingId.has(bId)) paymentsByBookingId.set(bId, []);
+    paymentsByBookingId.get(bId)!.push(pay);
   }
 
   const bookings: BookingReviewData[] = rawRows.map((r) => ({
@@ -63,6 +74,7 @@ export default async function BookingsPage() {
     notes: (r.notes as string) ?? null,
     created_at: String(r.created_at ?? ""),
     documents: docsByBookingId.get(Number(r.id)) ?? [],
+    payments: paymentsByBookingId.get(Number(r.id)) ?? [],
   }));
 
   return (

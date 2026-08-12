@@ -3,9 +3,10 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { formatINR, formatDateTime, waLink } from "@/lib/utils";
+import { formatINR, formatDateTime, formatDate, waLink } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
 import { quickApproveBooking, rejectBooking, reopenBooking, verifyCustomerDocument } from "@/lib/actions";
+import { PaymentDetailModal, type PaymentTransactionData } from "./PaymentDetailModal";
 
 export type CustomerDocument = {
   id: number;
@@ -41,16 +42,7 @@ export type BookingReviewData = {
   notes?: string | null;
   created_at?: string;
   documents?: CustomerDocument[];
-  payments?: Array<{
-    id: number;
-    payment_no: string;
-    amount: number;
-    kind: string;
-    method?: string | null;
-    status: string;
-    notes?: string | null;
-    paid_at?: string | null;
-  }>;
+  payments?: PaymentTransactionData[];
 };
 
 const DOC_KIND_INFO: Record<string, { label: string; icon: string }> = {
@@ -85,6 +77,7 @@ export function BookingReviewModal({
   const [pending, startTransition] = useTransition();
 
   const [selectedDoc, setSelectedDoc] = useState<CustomerDocument | null>(null);
+  const [selectedPaymentDetail, setSelectedPaymentDetail] = useState<PaymentTransactionData | null>(null);
   const [zoom, setZoom] = useState(1);
 
   // Rejection Dialog State
@@ -394,6 +387,61 @@ export function BookingReviewModal({
                 <span>{formatINR(booking.paid_amount || 0)}</span>
               </div>
             </div>
+
+            {/* Attached Payment Transactions List */}
+            {booking.payments && booking.payments.length > 0 && (
+              <div className="border-t border-ink-100 pt-3 space-y-2">
+                <p className="text-[11px] font-bold text-ink-500 uppercase tracking-wider">
+                  Payment Transactions ({booking.payments.length})
+                </p>
+                <div className="space-y-1.5">
+                  {booking.payments.map((p) => (
+                    <div
+                      key={p.id}
+                      onClick={() =>
+                        setSelectedPaymentDetail({
+                          ...p,
+                          booking_no: booking.booking_no,
+                          customer_name: booking.customer_name,
+                          customer_phone: booking.customer_phone,
+                          customer_email: booking.customer_email,
+                          vehicle_name: booking.vehicle_name,
+                          registration_no: booking.registration_no,
+                          pickup_at: booking.pickup_at,
+                          return_at: booking.return_at,
+                        })
+                      }
+                      className="group flex cursor-pointer items-center justify-between rounded-lg border border-ink-200 bg-white p-2 text-xs transition hover:border-brand-400 hover:bg-brand-50/20"
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-ink-900 group-hover:text-brand-700">
+                            {formatINR(p.amount)}
+                          </span>
+                          <span className="rounded bg-ink-100 px-1 py-0.2 text-[10px] font-semibold text-ink-700 capitalize">
+                            {p.kind}
+                          </span>
+                          {p.method && (
+                            <span className="text-[11px] text-ink-400">· {p.method}</span>
+                          )}
+                        </div>
+                        <p className="font-mono text-[10px] text-ink-400 mt-0.5">
+                          {p.payment_no}
+                          {p.razorpay_payment_id ? ` · Ref: ${p.razorpay_payment_id}` : ""}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <StatusBadge status={p.status} />
+                        <span className="rounded bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-800 border border-brand-200 group-hover:bg-brand-100">
+                          Inspect 🔍
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section 4: Customer ID Proofs & Verification */}
@@ -617,6 +665,13 @@ export function BookingReviewModal({
           </div>
         </div>
       )}
+
+      {/* Transaction Inspection Modal for Payments */}
+      <PaymentDetailModal
+        payment={selectedPaymentDetail}
+        isOpen={Boolean(selectedPaymentDetail)}
+        onClose={() => setSelectedPaymentDetail(null)}
+      />
     </div>
   );
 }

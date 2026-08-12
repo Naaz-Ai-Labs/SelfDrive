@@ -12,6 +12,7 @@ import {
 } from "@/components/dashboard/forms";
 import { DocumentVerifier } from "@/components/dashboard/DocumentVerifier";
 import { BookingHeaderActions } from "@/components/dashboard/BookingHeaderActions";
+import { BookingPaymentsList } from "@/components/dashboard/BookingPaymentsList";
 
 export const metadata: Metadata = { title: "Booking detail", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -172,21 +173,24 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
           )}
 
           <div className="card p-5">
-            <h2 className="font-display text-lg font-semibold text-ink-900">Payments</h2>
-            <div className="mt-3 space-y-2">
-              {payments.map((p) => (
-                <div key={Number(p.id)} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ink-100 p-3 text-sm">
-                  <div>
-                    <p className="font-medium text-ink-800">{formatINR(Number(p.amount))} · {String(p.kind)} · {String(p.method ?? "—")}</p>
-                    <p className="text-xs text-ink-400">{String(p.payment_no)} {p.due_date ? `· due ${String(p.due_date)}` : ""}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={String(p.status)} />
-                    {p.status !== "Paid" && <MarkPaidButton id={Number(p.id)} />}
-                  </div>
-                </div>
-              ))}
-              {payments.length === 0 && <p className="text-sm text-ink-400">No payment entries yet.</p>}
+            <div className="flex items-center justify-between border-b border-ink-100 pb-3">
+              <h2 className="font-display text-lg font-semibold text-ink-900">Payments & Transactions</h2>
+              <span className="text-xs text-ink-500">Click any transaction to view gateway & audit details</span>
+            </div>
+            <div className="mt-3">
+              <BookingPaymentsList
+                payments={payments}
+                bookingInfo={{
+                  booking_no: String(booking.booking_no),
+                  customer_name: booking.customer_name as string,
+                  customer_phone: booking.customer_phone as string,
+                  customer_email: booking.customer_email as string,
+                  vehicle_name: booking.vehicle_name as string,
+                  registration_no: booking.registration_no as string,
+                  pickup_at: String(booking.pickup_at),
+                  return_at: String(booking.return_at),
+                }}
+              />
             </div>
             <div className="mt-4 border-t border-ink-100 pt-4"><PaymentForm bookingId={id} /></div>
           </div>
