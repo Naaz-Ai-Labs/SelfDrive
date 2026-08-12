@@ -51,6 +51,9 @@ export function PaymentsTableWithDrawer({
           (p.customer_phone && p.customer_phone.toLowerCase().includes(q)) ||
           (p.booking_no && p.booking_no.toLowerCase().includes(q)) ||
           (p.razorpay_payment_id && p.razorpay_payment_id.toLowerCase().includes(q)) ||
+          (p.gateway_ref && p.gateway_ref.toLowerCase().includes(q)) ||
+          (p.upi_id && p.upi_id.toLowerCase().includes(q)) ||
+          (p.vpa && p.vpa.toLowerCase().includes(q)) ||
           (p.method && p.method.toLowerCase().includes(q)) ||
           (p.notes && p.notes.toLowerCase().includes(q))
       );
@@ -153,7 +156,7 @@ export function PaymentsTableWithDrawer({
         <div className="relative min-w-[240px] flex-1 sm:max-w-xs">
           <input
             type="text"
-            placeholder="Search payment #, customer, booking, ID..."
+            placeholder="Search payment #, UPI ID, customer, txn ID..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-xl border border-ink-200 bg-white py-1.5 pl-8 pr-3 text-xs text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-hidden"
@@ -189,10 +192,10 @@ export function PaymentsTableWithDrawer({
             <thead>
               <tr className="border-b border-ink-100 bg-ink-50/50 text-left text-xs uppercase tracking-wider text-ink-400">
                 <th className="px-4 py-3 font-semibold">Payment / Ref</th>
+                <th className="px-4 py-3 font-semibold">Transaction & UPI ID</th>
                 <th className="px-4 py-3 font-semibold">Customer</th>
                 <th className="px-4 py-3 font-semibold">Booking / Vehicle</th>
                 <th className="px-4 py-3 font-semibold">Amount</th>
-                <th className="px-4 py-3 font-semibold">Method</th>
                 <th className="px-4 py-3 font-semibold">Date / Due</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold text-right">Actions</th>
@@ -201,6 +204,8 @@ export function PaymentsTableWithDrawer({
             <tbody>
               {filteredPayments.map((p) => {
                 const isPaid = p.status === "Paid";
+                const upi = p.upi_id || p.vpa;
+                const txnId = p.razorpay_payment_id || p.gateway_ref;
                 return (
                   <tr
                     key={p.id}
@@ -211,14 +216,27 @@ export function PaymentsTableWithDrawer({
                       <p className="font-bold text-ink-900 group-hover:text-brand-700 hover:underline">
                         {p.payment_no}
                       </p>
-                      {p.razorpay_payment_id ? (
-                        <p className="font-mono text-[11px] text-brand-700 truncate max-w-[140px]">
-                          {p.razorpay_payment_id}
-                        </p>
-                      ) : p.receipt_no ? (
+                      {p.receipt_no ? (
                         <p className="text-[11px] text-ink-400 font-mono">Rec: {p.receipt_no}</p>
                       ) : (
                         <p className="text-[11px] text-ink-400 capitalize">{p.kind}</p>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3.5">
+                      {txnId && (
+                        <p className="font-mono text-xs font-semibold text-ink-800 truncate max-w-[170px]" title={txnId}>
+                          {txnId}
+                        </p>
+                      )}
+                      {upi ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-[11px] font-bold text-emerald-800 border border-emerald-200 mt-0.5">
+                          ⚡ {upi}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-ink-400 font-medium">
+                          {p.method ?? "Card / NetBanking"}
+                        </span>
                       )}
                     </td>
 

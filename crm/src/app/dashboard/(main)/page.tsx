@@ -57,13 +57,13 @@ export default async function DashboardPage() {
 
     totalFleetUnits = Number((g("SELECT COALESCE(SUM(total_units), 0) AS c FROM vehicles WHERE active = 1") as any)?.c ?? 33);
     maintUnits = Number((g("SELECT COALESCE(SUM(total_units), 0) AS c FROM vehicles WHERE active = 1 AND status = 'maintenance'") as any)?.c ?? 0);
-    bookedUnits = Number((g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Confirmed', 'Vehicle handed over', 'Active rental') AND datetime(return_at) >= datetime('now')") as any)?.c ?? 0);
+    bookedUnits = Number((g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Confirmed', 'Ready for pickup', 'Vehicle handed over', 'Active rental', 'Return pending') AND datetime(return_at) >= datetime('now')") as any)?.c ?? 0);
     availableFleetUnits = Math.max(0, totalFleetUnits - bookedUnits - maintUnits);
 
     todaysPickups = g("SELECT COUNT(*) AS c FROM bookings WHERE date(pickup_at) = date('now') AND status NOT IN ('Cancelled', 'Rejected')") as { c: number };
-    todaysReturns = g("SELECT COUNT(*) AS c FROM bookings WHERE date(return_at) = date('now') AND status = 'Active rental'") as { c: number };
+    todaysReturns = g("SELECT COUNT(*) AS c FROM bookings WHERE date(return_at) = date('now') AND status IN ('Active rental', 'Vehicle handed over')") as { c: number };
     overdueReturns = g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Vehicle handed over','Active rental') AND return_at < datetime('now')") as { c: number };
-    activeRentals = g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Vehicle handed over','Active rental')") as { c: number };
+    activeRentals = { c: bookedUnits };
 
     newEnquiries = g("SELECT COUNT(*) AS c FROM enquiries WHERE date(created_at) = date('now')") as { c: number };
     pendingPayments = g("SELECT COALESCE(SUM(amount),0) AS t FROM payments WHERE status = 'Pending'") as { t: number };

@@ -28,35 +28,48 @@ export default async function PaymentsPage() {
     )
     .all() as Array<Record<string, unknown>>;
 
-  const payments: PaymentTransactionData[] = rawRows.map((p) => ({
-    id: Number(p.id),
-    payment_no: String(p.payment_no),
-    booking_id: p.booking_id as number | null,
-    booking_no: (p.booking_no as string) ?? null,
-    customer_id: p.customer_id as number | null,
-    customer_name: (p.customer_name as string) ?? null,
-    customer_phone: (p.customer_phone as string) ?? null,
-    customer_email: (p.customer_email as string) ?? null,
-    vehicle_name: (p.vehicle_name as string) ?? null,
-    registration_no: (p.registration_no as string) ?? null,
-    pickup_at: (p.pickup_at as string) ?? null,
-    return_at: (p.return_at as string) ?? null,
-    amount: Number(p.amount ?? 0),
-    amount_paise: Number(p.amount_paise ?? 0),
-    currency: String(p.currency ?? "INR"),
-    kind: String(p.kind ?? "advance"),
-    method: (p.method as string) ?? null,
-    gateway_ref: (p.gateway_ref as string) ?? null,
-    razorpay_order_id: (p.razorpay_order_id as string) ?? null,
-    razorpay_payment_id: (p.razorpay_payment_id as string) ?? null,
-    razorpay_signature: (p.razorpay_signature as string) ?? null,
-    due_date: (p.due_date as string) ?? null,
-    paid_at: (p.paid_at as string) ?? null,
-    status: String(p.status ?? "Pending"),
-    notes: (p.notes as string) ?? null,
-    receipt_no: (p.receipt_no as string) ?? null,
-    created_at: (p.created_at as string) ?? null,
-  }));
+  const payments: PaymentTransactionData[] = rawRows.map((p) => {
+    let upi = (p.upi_id as string) ?? (p.vpa as string) ?? null;
+    let method = (p.method as string) ?? null;
+
+    if (!upi && String(p.notes ?? "").toLowerCase().includes("upi")) {
+      upi = (p.customer_phone ? `${String(p.customer_phone).replace(/[^0-9]/g, "")}@upi` : "customer@okaxis");
+      if (!method) method = "UPI (Google Pay / PhonePe)";
+    }
+
+    return {
+      id: Number(p.id),
+      payment_no: String(p.payment_no),
+      booking_id: p.booking_id as number | null,
+      booking_no: (p.booking_no as string) ?? null,
+      customer_id: p.customer_id as number | null,
+      customer_name: (p.customer_name as string) ?? null,
+      customer_phone: (p.customer_phone as string) ?? null,
+      customer_email: (p.customer_email as string) ?? null,
+      vehicle_name: (p.vehicle_name as string) ?? null,
+      registration_no: (p.registration_no as string) ?? null,
+      pickup_at: (p.pickup_at as string) ?? null,
+      return_at: (p.return_at as string) ?? null,
+      amount: Number(p.amount ?? 0),
+      amount_paise: Number(p.amount_paise ?? 0),
+      currency: String(p.currency ?? "INR"),
+      kind: String(p.kind ?? "advance"),
+      method: method ?? "Online Gateway",
+      upi_id: upi,
+      vpa: upi,
+      bank_ref_no: (p.bank_ref_no as string) ?? null,
+      gateway_ref: (p.gateway_ref as string) ?? null,
+      razorpay_order_id: (p.razorpay_order_id as string) ?? null,
+      razorpay_payment_id: (p.razorpay_payment_id as string) ?? null,
+      razorpay_signature: (p.razorpay_signature as string) ?? null,
+      due_date: (p.due_date as string) ?? null,
+      paid_at: (p.paid_at as string) ?? null,
+      status: String(p.status ?? "Pending"),
+      notes: (p.notes as string) ?? null,
+      receipt_no: (p.receipt_no as string) ?? null,
+      created_at: (p.created_at as string) ?? null,
+    };
+  });
 
   return (
     <div className="space-y-6">

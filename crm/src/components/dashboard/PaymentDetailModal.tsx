@@ -25,6 +25,9 @@ export type PaymentTransactionData = {
   currency?: string;
   kind: string;
   method?: string | null;
+  upi_id?: string | null;
+  vpa?: string | null;
+  bank_ref_no?: string | null;
   gateway_ref?: string | null;
   razorpay_order_id?: string | null;
   razorpay_payment_id?: string | null;
@@ -75,6 +78,7 @@ export function PaymentDetailModal({
 
   const kindMeta = KIND_INFO[payment.kind] ?? { label: payment.kind, bg: "bg-ink-100 text-ink-800" };
   const isPaid = payment.status === "Paid";
+  const upiAddress = payment.upi_id || payment.vpa;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-xs transition-opacity">
@@ -153,7 +157,7 @@ export function PaymentDetailModal({
           {/* Gateway & Online Payment Info */}
           <div className="card p-4 space-y-3">
             <h3 className="font-display font-semibold text-sm text-ink-900 border-b border-ink-100 pb-2 flex items-center justify-between">
-              <span>Gateway & Payment Method</span>
+              <span>Transaction & Gateway Details</span>
               <span className="font-mono text-xs text-brand-700 font-bold">
                 {payment.method ?? "Online Gateway"}
               </span>
@@ -162,7 +166,7 @@ export function PaymentDetailModal({
             <dl className="grid grid-cols-1 gap-2.5 text-xs sm:grid-cols-2">
               <div>
                 <dt className="text-ink-400">Payment Mode / Method</dt>
-                <dd className="font-semibold text-ink-900 mt-0.5">{payment.method ?? "Razorpay / UPI"}</dd>
+                <dd className="font-semibold text-ink-900 mt-0.5">{payment.method ?? "Razorpay UPI"}</dd>
               </div>
 
               {payment.receipt_no && (
@@ -172,20 +176,42 @@ export function PaymentDetailModal({
                 </div>
               )}
 
-              {payment.razorpay_payment_id && (
-                <div className="sm:col-span-2 rounded-lg bg-ink-50 p-2.5 border border-ink-200/70">
+              {/* UPI ID / VPA Card */}
+              {upiAddress && (
+                <div className="sm:col-span-2 rounded-lg bg-emerald-50/70 p-3 border border-emerald-200">
                   <div className="flex items-center justify-between">
-                    <dt className="text-[11px] font-semibold text-ink-500">Razorpay Payment ID</dt>
+                    <dt className="text-[11px] font-bold text-emerald-900 flex items-center gap-1.5">
+                      <span>⚡ UPI ID / VPA (Virtual Payment Address)</span>
+                    </dt>
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(payment.razorpay_payment_id!, "pay_id")}
+                      onClick={() => copyToClipboard(upiAddress, "upi_id")}
+                      className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded hover:bg-emerald-200 transition"
+                    >
+                      {copiedKey === "upi_id" ? "Copied ✓" : "Copy UPI ID"}
+                    </button>
+                  </div>
+                  <dd className="font-mono text-xs font-bold text-emerald-950 mt-1 select-all break-all">
+                    {upiAddress}
+                  </dd>
+                </div>
+              )}
+
+              {/* Transaction ID / Razorpay Payment ID */}
+              {(payment.razorpay_payment_id || payment.gateway_ref) && (
+                <div className="sm:col-span-2 rounded-lg bg-ink-50 p-2.5 border border-ink-200/70">
+                  <div className="flex items-center justify-between">
+                    <dt className="text-[11px] font-semibold text-ink-500">Transaction ID (Payment Reference)</dt>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(payment.razorpay_payment_id || payment.gateway_ref!, "pay_id")}
                       className="text-[10px] font-bold text-brand-700 hover:underline"
                     >
                       {copiedKey === "pay_id" ? "Copied ✓" : "Copy ID"}
                     </button>
                   </div>
                   <dd className="font-mono text-xs font-bold text-ink-900 mt-1 select-all break-all">
-                    {payment.razorpay_payment_id}
+                    {payment.razorpay_payment_id || payment.gateway_ref}
                   </dd>
                 </div>
               )}
@@ -208,10 +234,10 @@ export function PaymentDetailModal({
                 </div>
               )}
 
-              {payment.gateway_ref && payment.gateway_ref !== payment.razorpay_payment_id && (
+              {payment.bank_ref_no && (
                 <div className="sm:col-span-2">
-                  <dt className="text-ink-400">Gateway Reference / UTR</dt>
-                  <dd className="font-mono text-xs font-semibold text-ink-800 mt-0.5">{payment.gateway_ref}</dd>
+                  <dt className="text-ink-400">Bank Reference Number / RRN</dt>
+                  <dd className="font-mono text-xs font-semibold text-ink-800 mt-0.5">{payment.bank_ref_no}</dd>
                 </div>
               )}
             </dl>

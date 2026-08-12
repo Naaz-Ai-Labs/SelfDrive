@@ -739,6 +739,9 @@ function applySchema(database: DatabaseSync) {
   try { database.exec("ALTER TABLE payments ADD COLUMN razorpay_payment_id TEXT;"); } catch {}
   try { database.exec("ALTER TABLE payments ADD COLUMN razorpay_signature TEXT;"); } catch {}
   try { database.exec("ALTER TABLE payments ADD COLUMN breakdown_json TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN upi_id TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN vpa TEXT;"); } catch {}
+  try { database.exec("ALTER TABLE payments ADD COLUMN bank_ref_no TEXT;"); } catch {}
   try { database.exec("ALTER TABLE payment_events ADD COLUMN razorpay_order_id TEXT;"); } catch {}
   try { database.exec("ALTER TABLE payment_events ADD COLUMN razorpay_payment_id TEXT;"); } catch {}
 
@@ -773,7 +776,9 @@ function applySchema(database: DatabaseSync) {
     try {
       database.exec("INSERT OR IGNORE INTO customers (id, name, phone, email, city) VALUES (999, 'Rajesh Sharma', '+919845123456', 'rajesh.sharma@example.com', 'Sakleshpura');");
       database.exec("INSERT OR IGNORE INTO bookings (id, booking_no, customer_id, vehicle_id, branch_id, pickup_at, return_at, status, base_amount, surcharge_amount, gst_amount, deposit_amount, total_amount, paid_amount, created_at, updated_at) VALUES (999, 'BK-TEST-PAID-01', 999, 16, 1, datetime('now', '+1 day', 'start of day', '+9 hours'), datetime('now', '+2 days', 'start of day', '+9 hours'), 'Payment received', 5000, 0, 300, 2000, 7300, 7300, datetime('now', '-2 hours'), datetime('now', '-2 hours'));");
-      database.exec("INSERT OR IGNORE INTO payments (id, booking_id, customer_id, payment_no, kind, amount, status, method, razorpay_payment_id, gateway_ref, notes, paid_at, created_at) VALUES (999, 999, 999, 'PY-TEST-PAID-01', 'full', 7300, 'Paid', 'Razorpay', 'pay_sample_paid_987', 'pay_sample_paid_987', 'Razorpay Online Payment verified (Order: ord_sample_paid_987)', datetime('now', '-2 hours'), datetime('now', '-2 hours'));");
+      database.exec("INSERT OR IGNORE INTO payments (id, booking_id, customer_id, payment_no, kind, amount, status, method, upi_id, vpa, razorpay_payment_id, gateway_ref, notes, paid_at, created_at) VALUES (999, 999, 999, 'PY-TEST-PAID-01', 'full', 7300, 'Paid', 'UPI (Google Pay)', 'rajesh.sharma@okhdfcbank', 'rajesh.sharma@okhdfcbank', 'pay_sample_paid_987', 'pay_sample_paid_987', 'Razorpay UPI Online Payment verified (Order: ord_sample_paid_987)', datetime('now', '-2 hours'), datetime('now', '-2 hours'));");
+      database.exec("UPDATE payments SET upi_id = 'rajesh.sharma@okhdfcbank', vpa = 'rajesh.sharma@okhdfcbank', method = 'UPI (Google Pay)' WHERE id = 999;");
+      database.exec("UPDATE payments SET upi_id = 'customer@okaxis', vpa = 'customer@okaxis', method = 'UPI (PhonePe)' WHERE id = 2;");
       database.exec("INSERT OR IGNORE INTO customer_documents (id, customer_id, booking_id, kind, number, expiry_date, file_path, verified, created_at) VALUES (901, 999, 999, 'licence', 'KA-46-2021-0012345', '2041-08-14', '/documents/sample-dl.svg', 0, datetime('now', '-2 hours'));");
       database.exec("INSERT OR IGNORE INTO customer_documents (id, customer_id, booking_id, kind, number, expiry_date, file_path, verified, created_at) VALUES (902, 999, 999, 'govt_id', '5412 8901 9876', NULL, '/documents/sample-aadhaar.svg', 0, datetime('now', '-2 hours'));");
     } catch (err) {

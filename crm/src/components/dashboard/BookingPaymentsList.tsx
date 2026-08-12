@@ -44,6 +44,9 @@ export function BookingPaymentsList({
           currency: String(raw.currency ?? "INR"),
           kind: String(raw.kind ?? "advance"),
           method: (raw.method as string) ?? null,
+          upi_id: (raw.upi_id as string) ?? (raw.vpa as string) ?? null,
+          vpa: (raw.vpa as string) ?? (raw.upi_id as string) ?? null,
+          bank_ref_no: (raw.bank_ref_no as string) ?? null,
           gateway_ref: (raw.gateway_ref as string) ?? null,
           razorpay_order_id: (raw.razorpay_order_id as string) ?? null,
           razorpay_payment_id: (raw.razorpay_payment_id as string) ?? null,
@@ -55,6 +58,8 @@ export function BookingPaymentsList({
           receipt_no: (raw.receipt_no as string) ?? null,
           created_at: (raw.created_at as string) ?? null,
         };
+
+        const upi = p.upi_id || p.vpa;
 
         return (
           <div
@@ -70,13 +75,17 @@ export function BookingPaymentsList({
                 <span className="rounded bg-ink-100 px-1.5 py-0.2 text-[10px] font-bold text-ink-700 capitalize">
                   {p.kind.replace("_", " ")}
                 </span>
-                {p.method && (
+                {upi ? (
+                  <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 font-mono text-[10px] font-bold text-emerald-800">
+                    ⚡ {upi}
+                  </span>
+                ) : p.method ? (
                   <span className="text-xs text-ink-500 font-medium">· {p.method}</span>
-                )}
+                ) : null}
               </div>
               <p className="mt-0.5 font-mono text-xs text-ink-500">
                 {p.payment_no}
-                {p.razorpay_payment_id ? ` · Ref: ${p.razorpay_payment_id}` : ""}
+                {p.razorpay_payment_id ? ` · Txn: ${p.razorpay_payment_id}` : ""}
                 {p.paid_at ? ` · Paid ${formatDate(p.paid_at)}` : p.due_date ? ` · Due ${formatDate(p.due_date)}` : ""}
               </p>
             </div>
