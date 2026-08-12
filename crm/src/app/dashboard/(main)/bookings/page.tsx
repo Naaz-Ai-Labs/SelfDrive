@@ -9,7 +9,9 @@ export const revalidate = 0;
 
 export default async function BookingsPage() {
   const db = getDb();
-  syncLatestFromSupabase(db).catch(() => {});
+  try {
+    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
+  } catch {}
 
   let rawRows: Array<Record<string, unknown>> = [];
   try {

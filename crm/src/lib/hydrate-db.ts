@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import type { DatabaseSync } from "./db";
 
 const TABLES_ORDERED = [
@@ -42,7 +41,7 @@ const TABLES_ORDERED = [
   "settings",
 ];
 
-export async function hydrateSQLiteFromSupabase(db: DatabaseSync): Promise<boolean> {
+async function fetchSupabaseRest(table: string): Promise<Record<string, unknown>[] | null> {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
     process.env.SUPABASE_SECRET_KEY ||
@@ -50,41 +49,41 @@ export async function hydrateSQLiteFromSupabase(db: DatabaseSync): Promise<boole
     process.env.SUPABASE_PUBLISHABLE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
-  if (!url || !key) {
-    console.warn("⚠️ Supabase credentials not found for DB hydration.");
-    return false;
-  }
+  if (!url || !key) return null;
+
+  const headers: Record<string, string> = {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+  };
 
   try {
-    const supabase = createClient(url, key, { auth: { persistSession: false } });
+    const res = await fetch(`${url}/rest/v1/${table}?select=*`, {
+      headers,
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as Record<string, unknown>[];
+  } catch (err: any) {
+    console.warn(`⚠️ Supabase REST fetch error [${table}]:`, err?.message || err);
+    return null;
+  }
+}
 
-    console.log("🌐 Hydrating SQLite from Supabase production...");
-
-    // Fetch all tables in parallel
-    const results = await Promise.all(
-      TABLES_ORDERED.map((table) => supabase.from(table).select("*"))
-    );
-
+export async function hydrateSQLiteFromSupabase(db: DatabaseSync): Promise<boolean> {
+  console.log("🌐 Hydrating SQLite from Supabase production via Direct REST...");
+  try {
+    const results = await Promise.all(TABLES_ORDERED.map((table) => fetchSupabaseRest(table)));
     let totalInserted = 0;
 
     for (let idx = 0; idx < TABLES_ORDERED.length; idx++) {
       const table = TABLES_ORDERED[idx];
-      const res = results[idx];
-
-      if (res.error) {
-        console.warn(`⚠️ Hydration skipped [${table}]:`, res.error.message);
-        continue;
-      }
-
-      const rows = res.data as Record<string, unknown>[] | null;
+      const rows = results[idx];
       if (!rows || rows.length === 0) continue;
 
-      // Get table column names from SQLite PRAGMA
       const pragma = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
       const sqliteCols = new Set(pragma.map((p) => p.name));
 
       for (const row of rows) {
-        // Filter out fields not present in SQLite table
         const keys = Object.keys(row).filter((k) => sqliteCols.has(k) && row[k] !== undefined);
         if (keys.length === 0) continue;
 
@@ -95,9 +94,7 @@ export async function hydrateSQLiteFromSupabase(db: DatabaseSync): Promise<boole
         try {
           db.prepare(`INSERT OR REPLACE INTO ${table} (${colsStr}) VALUES (${placeholdersStr})`).run(...values);
           totalInserted++;
-        } catch (err: any) {
-          // Ignore constraint warnings during bulk sync
-        }
+        } catch {}
       }
     }
 
@@ -109,34 +106,21 @@ export async function hydrateSQLiteFromSupabase(db: DatabaseSync): Promise<boole
   }
 }
 
-/** Live delta sync to fetch latest bookings, payments, and customers from Supabase into SQLite */
+/** Live delta sync to fetch latest bookings, payments, customers and documents from Supabase into SQLite */
 export async function syncLatestFromSupabase(db: DatabaseSync): Promise<boolean> {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_SECRET_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_PUBLISHABLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-  if (!url || !key) return false;
-
+  const syncTables = ["customers", "enquiries", "bookings", "payments", "customer_documents", "booking_history"];
   try {
-    const supabase = createClient(url, key, { auth: { persistSession: false } });
-
-    const syncTables = ["customers", "enquiries", "bookings", "payments", "booking_history"];
-    const results = await Promise.all(
-      syncTables.map((t) => supabase.from(t).select("*").order("created_at", { ascending: false }).limit(100))
-    );
+    const results = await Promise.all(syncTables.map((t) => fetchSupabaseRest(t)));
 
     for (let idx = 0; idx < syncTables.length; idx++) {
       const table = syncTables[idx];
-      const res = results[idx];
-      if (res.error || !res.data || res.data.length === 0) continue;
+      const rows = results[idx];
+      if (!rows || rows.length === 0) continue;
 
       const pragma = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
       const sqliteCols = new Set(pragma.map((p) => p.name));
 
-      for (const row of res.data) {
+      for (const row of rows) {
         const keys = Object.keys(row).filter((k) => sqliteCols.has(k) && row[k] !== undefined);
         if (keys.length === 0) continue;
 

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { syncLatestFromSupabase } from "@/lib/hydrate-db";
 import { formatDate, formatINR } from "@/lib/utils";
 import { Avatar, StatusBadge } from "@/components/ui";
 
@@ -13,6 +14,9 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
   const db = getDb();
+  try {
+    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
+  } catch {}
   const sp = await searchParams;
   const q = sp.q ?? "";
 

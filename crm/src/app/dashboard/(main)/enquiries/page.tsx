@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getDb } from "@/lib/db";
+import { syncLatestFromSupabase } from "@/lib/hydrate-db";
 import { getSetting } from "@/lib/settings";
 import { formatDateTime } from "@/lib/utils";
 import { StatusBadge, EmptyState } from "@/components/ui";
@@ -9,18 +10,30 @@ import { CreateEnquiryForm } from "@/components/dashboard/forms";
 export const metadata: Metadata = { title: "Enquiries", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
-export default function EnquiriesPage({ searchParams }: { searchParams: { stage?: string } }) {
+export default async function EnquiriesPage({ searchParams }: { searchParams: Promise<{ stage?: string }> }) {
   const db = getDb();
+  try {
+    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
+  } catch {}
+  const sp = await searchParams;
   const stages = getSetting<string[]>("enquiry_stages", []);
-  const categories = (db.prepare("SELECT id, name FROM vehicle_categories ORDER BY name").all() as Array<Record<string, unknown>>).map((r) => ({ ...r })) as unknown as Array<{ id: number; name: string }>;
+  let categories: Array<{ id: number; name: string }> = [];
+  try {
+    categories = (db.prepare("SELECT id, name FROM vehicle_categories ORDER BY name").all() as Array<Record<string, unknown>>).map((r) => ({ ...r })) as unknown as Array<{ id: number; name: string }>;
+  } catch {}
 
-  const stageFilter = searchParams.stage;
-  const enquiries = db
-    .prepare(
-      `SELECT e.*, u.name AS assignee_name FROM enquiries e LEFT JOIN users u ON u.id = e.assigned_to
-       ${stageFilter ? "WHERE e.stage = ?" : ""} ORDER BY e.created_at DESC LIMIT 100`
-    )
-    .all(...(stageFilter ? [stageFilter] : [])) as Array<Record<string, unknown>>;
+  const stageFilter = sp?.stage;
+  let enquiries: Array<Record<string, unknown>> = [];
+  try {
+    enquiries = db
+      .prepare(
+        `SELECT e.*, u.name AS assignee_name FROM enquiries e LEFT JOIN users u ON u.id = e.assigned_to
+         ${stageFilter ? "WHERE e.stage = ?" : ""} ORDER BY e.created_at DESC LIMIT 100`
+      )
+      .all(...(stageFilter ? [stageFilter] : [])) as Array<Record<string, unknown>>;
+  } catch (err) {
+    console.error("Enquiries query error:", err);
+  }
 
   return (
     <div className="space-y-6">
