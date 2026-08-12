@@ -89,7 +89,9 @@ export function PaymentDetailModal({
         <div className="flex items-center justify-between border-b border-ink-100 bg-ink-950 px-6 py-4 text-white">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500 text-ink-950 font-black text-lg">
-              💳
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h2m4 0h4M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
             </span>
             <div>
               <div className="flex items-center gap-2">
@@ -103,7 +105,7 @@ export function PaymentDetailModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-ink-400 hover:bg-white/10 hover:text-white transition"
+            className="rounded-lg p-2 text-ink-400 hover:bg-white/10 hover:text-white transition cursor-pointer"
           >
             ✕
           </button>
@@ -181,14 +183,17 @@ export function PaymentDetailModal({
                 <div className="sm:col-span-2 rounded-lg bg-emerald-50/70 p-3 border border-emerald-200">
                   <div className="flex items-center justify-between">
                     <dt className="text-[11px] font-bold text-emerald-900 flex items-center gap-1.5">
-                      <span>⚡ UPI ID / VPA (Virtual Payment Address)</span>
+                      <svg className="h-3.5 w-3.5 text-emerald-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      <span>UPI ID / VPA (Virtual Payment Address)</span>
                     </dt>
                     <button
                       type="button"
                       onClick={() => copyToClipboard(upiAddress, "upi_id")}
-                      className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded hover:bg-emerald-200 transition"
+                      className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded hover:bg-emerald-200 transition cursor-pointer"
                     >
-                      {copiedKey === "upi_id" ? "Copied ✓" : "Copy UPI ID"}
+                      {copiedKey === "upi_id" ? "Copied" : "Copy UPI ID"}
                     </button>
                   </div>
                   <dd className="font-mono text-xs font-bold text-emerald-950 mt-1 select-all break-all">
@@ -205,9 +210,9 @@ export function PaymentDetailModal({
                     <button
                       type="button"
                       onClick={() => copyToClipboard(payment.razorpay_payment_id || payment.gateway_ref!, "pay_id")}
-                      className="text-[10px] font-bold text-brand-700 hover:underline"
+                      className="text-[10px] font-bold text-brand-700 hover:underline cursor-pointer"
                     >
-                      {copiedKey === "pay_id" ? "Copied ✓" : "Copy ID"}
+                      {copiedKey === "pay_id" ? "Copied" : "Copy ID"}
                     </button>
                   </div>
                   <dd className="font-mono text-xs font-bold text-ink-900 mt-1 select-all break-all">
@@ -223,9 +228,9 @@ export function PaymentDetailModal({
                     <button
                       type="button"
                       onClick={() => copyToClipboard(payment.razorpay_order_id!, "order_id")}
-                      className="text-[10px] font-bold text-brand-700 hover:underline"
+                      className="text-[10px] font-bold text-brand-700 hover:underline cursor-pointer"
                     >
-                      {copiedKey === "order_id" ? "Copied ✓" : "Copy ID"}
+                      {copiedKey === "order_id" ? "Copied" : "Copy ID"}
                     </button>
                   </div>
                   <dd className="font-mono text-xs font-bold text-ink-900 mt-1 select-all break-all">
@@ -263,9 +268,12 @@ export function PaymentDetailModal({
                       href={waLink(payment.customer_phone)}
                       target="_blank"
                       rel="noreferrer"
-                      className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 hover:bg-emerald-200"
+                      className="inline-flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 hover:bg-emerald-200"
                     >
-                      WhatsApp 💬
+                      <span>WhatsApp</span>
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
                     </a>
                   )}
                 </div>
@@ -289,9 +297,12 @@ export function PaymentDetailModal({
                 </h3>
                 <Link
                   href={`/dashboard/bookings/${payment.booking_id}`}
-                  className="text-xs font-bold text-brand-700 hover:underline"
+                  className="inline-flex items-center gap-1 text-xs font-bold text-brand-700 hover:underline"
                 >
-                  View Booking #{payment.booking_no ?? payment.booking_id} ↗
+                  <span>View Booking #{payment.booking_no ?? payment.booking_id}</span>
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
                 </Link>
               </div>
 
@@ -347,9 +358,15 @@ export function PaymentDetailModal({
                 href={`/invoice/${payment.booking_no}`}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs font-semibold text-brand-700 hover:underline"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-700 hover:underline"
               >
-                View Customer Invoice 🧾 ↗
+                <svg className="h-3.5 w-3.5 text-brand-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>View Customer Invoice</span>
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
               </a>
             )}
           </div>
@@ -360,15 +377,18 @@ export function PaymentDetailModal({
                 type="button"
                 disabled={pending}
                 onClick={handleMarkPaid}
-                className="btn-primary text-xs px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700"
+                className="btn-primary inline-flex items-center gap-1.5 text-xs px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
               >
-                {pending ? "Saving..." : "Mark as Paid ✓"}
+                <span>{pending ? "Saving..." : "Mark as Paid"}</span>
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
               </button>
             )}
             <button
               type="button"
               onClick={onClose}
-              className="btn-secondary text-xs px-4 py-1.5"
+              className="btn-secondary text-xs px-4 py-1.5 cursor-pointer"
             >
               Close
             </button>

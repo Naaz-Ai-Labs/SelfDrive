@@ -26,7 +26,7 @@ const NAV: NavItem[] = [
   },
   { href: "/gallery", label: "Gallery" },
   { href: "/insights", label: "Insights" },
-  { href: "/track", label: "Track Booking 📍" },
+  { href: "/track", label: "Track Booking" },
   { href: "/about", label: "About" },
   { href: "/contact", label: "Contact" },
 ];

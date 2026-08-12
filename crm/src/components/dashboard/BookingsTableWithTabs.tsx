@@ -113,7 +113,12 @@ export function BookingsTableWithTabs({
                 : "text-ink-600 hover:bg-ink-50"
             }`}
           >
-            <span>Rejected Bookings ❌</span>
+            <span className="flex items-center gap-1">
+              <span>Rejected Bookings</span>
+              <svg className="h-3.5 w-3.5 text-current" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </span>
             <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
               activeTab === "rejected" ? "bg-white text-red-700" : "bg-red-100 text-red-900"
             }`}>
@@ -131,7 +136,9 @@ export function BookingsTableWithTabs({
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-xl border border-ink-200 bg-white py-1.5 pl-8 pr-3 text-xs text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-hidden"
           />
-          <span className="absolute left-2.5 top-2 text-xs text-ink-400">🔍</span>
+          <svg className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-ink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
           {searchQuery && (
             <button
               onClick={() => setSearchQuery("")}
@@ -200,8 +207,11 @@ export function BookingsTableWithTabs({
                   </td>
 
                   <td className="px-4 py-3.5 max-w-xs">
-                    <div className="rounded-lg bg-red-100/70 p-2 text-xs font-semibold text-red-900 border border-red-200">
-                      <span>❌ {b.notes || "Rejection reason not recorded"}</span>
+                    <div className="flex items-center gap-1.5 rounded-lg bg-red-100/70 p-2 text-xs font-semibold text-red-900 border border-red-200">
+                      <svg className="h-3.5 w-3.5 text-red-700 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <span>{b.notes || "Rejection reason not recorded"}</span>
                     </div>
                   </td>
 
@@ -220,17 +230,10 @@ export function BookingsTableWithTabs({
                         e.stopPropagation();
                         setSelectedBooking(b);
                       }}
-                      className="btn-secondary px-3 py-1 text-xs text-red-800 border-red-200 hover:bg-red-50"
+                      className="btn-secondary px-3 py-1 text-xs font-semibold"
                     >
-                      Review / Reopen
+                      Review / Restore
                     </button>
-                    <Link
-                      href={`/dashboard/bookings/${b.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="btn-secondary px-2.5 py-1 text-xs"
-                    >
-                      Full ↗
-                    </Link>
                   </td>
                 </tr>
               ))}
@@ -248,8 +251,8 @@ export function BookingsTableWithTabs({
                 <th className="px-4 py-3 font-semibold">Vehicle</th>
                 <th className="px-4 py-3 font-semibold">Pickup</th>
                 <th className="px-4 py-3 font-semibold">Return</th>
-                <th className="px-4 py-3 font-semibold">ID Proofs</th>
-                <th className="px-4 py-3 font-semibold">Paid / Total</th>
+                <th className="px-4 py-3 font-semibold">Documents</th>
+                <th className="px-4 py-3 font-semibold">Paid</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold text-right">Actions</th>
               </tr>
@@ -279,9 +282,12 @@ export function BookingsTableWithTabs({
                           target="_blank"
                           rel="noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="text-xs text-brand-700 hover:underline inline-block font-mono"
+                          className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline font-mono"
                         >
-                          {b.customer_phone} 💬
+                          <span>{b.customer_phone}</span>
+                          <svg className="h-3 w-3 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                          </svg>
                         </a>
                       )}
                     </td>
@@ -310,7 +316,10 @@ export function BookingsTableWithTabs({
                               : "bg-amber-100 text-amber-800"
                           }`}
                         >
-                          🪪 {verifiedDocs}/{docs.length} Verified
+                          <svg className="h-3 w-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          {verifiedDocs}/{docs.length} Verified
                         </span>
                       )}
                     </td>

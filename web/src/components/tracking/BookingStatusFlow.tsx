@@ -130,7 +130,17 @@ export function BookingStatusFlow({
                     : "bg-ink-200 text-ink-600"
                 }`}
               >
-                {isRejected ? "❌" : isConfirmed ? "✓" : "3"}
+                {isRejected ? (
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                ) : isConfirmed ? (
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  "3"
+                )}
               </div>
               <div>
                 <p className="font-bold text-sm text-ink-900">
@@ -153,7 +163,11 @@ export function BookingStatusFlow({
         {isRejected ? (
           <div className="rounded-2xl border-2 border-red-200 bg-red-50/90 p-5 space-y-3">
             <div className="flex items-start gap-3">
-              <span className="text-2xl">❌</span>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-200 text-red-800">
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
               <div className="space-y-1">
                 <h3 className="font-display font-bold text-base text-red-950">
                   Booking Not Approved
@@ -172,19 +186,29 @@ export function BookingStatusFlow({
                 href={waSupportUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="btn-primary bg-red-700 hover:bg-red-800 text-white text-xs px-4 py-2"
+                className="btn-primary inline-flex items-center gap-1.5 bg-red-700 hover:bg-red-800 text-white text-xs px-4 py-2"
               >
-                Contact Support on WhatsApp 💬
+                <span>Contact Support on WhatsApp</span>
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
               </a>
-              <Link href={`/invoice/${tracking.booking_no}`} className="btn-secondary text-xs px-4 py-2 bg-white">
-                View Payment Receipt 🧾
+              <Link href={`/invoice/${tracking.booking_no}`} className="btn-secondary inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-white">
+                <svg className="h-3.5 w-3.5 text-ink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>View Payment Receipt</span>
               </Link>
             </div>
           </div>
         ) : isConfirmed ? (
           <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50/90 p-5 space-y-3">
             <div className="flex items-start gap-3">
-              <span className="text-2xl">🎉</span>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-200 text-emerald-800">
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
               <div className="space-y-1">
                 <h3 className="font-display font-bold text-base text-emerald-950">
                   Your Booking is Confirmed!
@@ -193,10 +217,24 @@ export function BookingStatusFlow({
                   Your identity documents have been verified and your vehicle is reserved. Please visit our branch at your scheduled pickup time.
                 </p>
                 <div className="mt-2 rounded-lg bg-white/80 p-3 text-xs text-ink-800 space-y-1 border border-emerald-200">
-                  <p><strong>📍 Pickup Location:</strong> {tracking.pickup_branch}</p>
-                  <p><strong>⏰ Pickup Time:</strong> {formatDateTime(tracking.pickup_at)}</p>
-                  <p className="text-[11px] text-ink-500">
-                    💡 Please carry your original physical Driving Licence and Aadhaar card for vehicle key handover.
+                  <p className="flex items-center gap-1.5">
+                    <svg className="h-3.5 w-3.5 text-brand-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span><strong>Pickup Location:</strong> {tracking.pickup_branch}</span>
+                  </p>
+                  <p className="flex items-center gap-1.5">
+                    <svg className="h-3.5 w-3.5 text-brand-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span><strong>Pickup Time:</strong> {formatDateTime(tracking.pickup_at)}</span>
+                  </p>
+                  <p className="text-[11px] text-ink-500 flex items-center gap-1 mt-1">
+                    <svg className="h-3.5 w-3.5 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Please carry your original physical Driving Licence and Aadhaar card for vehicle key handover.</span>
                   </p>
                 </div>
               </div>
@@ -205,24 +243,34 @@ export function BookingStatusFlow({
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <Link
                 href={`/invoice/${tracking.booking_no}`}
-                className="btn-primary text-xs px-4 py-2 bg-emerald-600 hover:bg-emerald-700 shadow-sm"
+                className="btn-primary inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-emerald-600 hover:bg-emerald-700 shadow-sm"
               >
-                Download / Print Tax Invoice 🧾
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>Download / Print Tax Invoice</span>
               </Link>
               <a
                 href={waSupportUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="btn-secondary text-xs px-4 py-2 bg-white"
+                className="btn-secondary inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-white"
               >
-                Need Help? Chat on WhatsApp 💬
+                <span>Need Help? Chat on WhatsApp</span>
+                <svg className="h-3.5 w-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
               </a>
             </div>
           </div>
         ) : (
           <div className="rounded-2xl border-2 border-amber-200 bg-amber-50/80 p-5 space-y-2">
             <div className="flex items-start gap-3">
-              <span className="text-2xl">⏳</span>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-200 text-amber-900">
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
               <div>
                 <h3 className="font-display font-bold text-base text-amber-950">
                   Verification In Progress
@@ -230,8 +278,11 @@ export function BookingStatusFlow({
                 <p className="text-xs text-amber-800 mt-0.5">
                   Your online payment of {formatINR(tracking.paid_amount)} has been confirmed! Our staff is currently verifying your uploaded Driving Licence & ID proofs.
                 </p>
-                <p className="text-[11px] text-amber-700 mt-1">
-                  ⏱ Typical verification time: <strong>15–30 minutes</strong> during business hours (8:00 AM – 9:00 PM).
+                <p className="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Typical verification time: <strong>15–30 minutes</strong> during business hours (8:00 AM – 9:00 PM).</span>
                 </p>
               </div>
             </div>
@@ -291,9 +342,12 @@ export function BookingStatusFlow({
               </h2>
               <Link
                 href={`/invoice/${tracking.booking_no}`}
-                className="text-xs font-bold text-brand-700 hover:underline"
+                className="inline-flex items-center gap-1 text-xs font-bold text-brand-700 hover:underline"
               >
-                Tax Invoice 🧾 ↗
+                <span>Tax Invoice</span>
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
               </Link>
             </div>
 

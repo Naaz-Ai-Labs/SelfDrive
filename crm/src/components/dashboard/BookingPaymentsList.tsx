@@ -76,8 +76,11 @@ export function BookingPaymentsList({
                   {p.kind.replace("_", " ")}
                 </span>
                 {upi ? (
-                  <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 font-mono text-[10px] font-bold text-emerald-800">
-                    ⚡ {upi}
+                  <span className="inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 font-mono text-[10px] font-bold text-emerald-800">
+                    <svg className="h-2.5 w-2.5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span>{upi}</span>
                   </span>
                 ) : p.method ? (
                   <span className="text-xs text-ink-500 font-medium">· {p.method}</span>
@@ -94,9 +97,13 @@ export function BookingPaymentsList({
               <button
                 type="button"
                 onClick={() => setSelectedPayment(p)}
-                className="btn-secondary px-2.5 py-1 text-xs font-semibold text-brand-900 border-brand-200 bg-brand-50 hover:bg-brand-100"
+                className="btn-secondary inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-brand-900 border-brand-200 bg-brand-50 hover:bg-brand-100"
               >
-                Details 🔍
+                <span>Details</span>
+                <svg className="h-3 w-3 text-brand-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
               </button>
               <StatusBadge status={p.status} />
               {p.status !== "Paid" && <MarkPaidButton id={p.id} />}

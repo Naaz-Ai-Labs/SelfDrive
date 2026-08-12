@@ -97,3 +97,57 @@ export async function issueRazorpayRefund(input: {
   }
 }
 
+export interface RazorpayPaymentDetails {
+  id: string;
+  entity: string;
+  amount: number;
+  currency: string;
+  status: string;
+  order_id?: string;
+  method: string;
+  vpa?: string | null;
+  bank?: string | null;
+  wallet?: string | null;
+  email?: string | null;
+  contact?: string | null;
+  acquirer_data?: {
+    rrn?: string;
+    upi_transaction_id?: string;
+    bank_transaction_id?: string;
+    auth_code?: string;
+  };
+  upi?: {
+    vpa?: string;
+    payer_account_type?: string;
+    flow?: string;
+  };
+  notes?: Record<string, string>;
+  created_at?: number;
+}
+
+/** Fetches full real payment details directly from Razorpay's API. */
+export async function fetchRazorpayPayment(paymentId: string): Promise<
+  { ok: true; payment: RazorpayPaymentDetails } | { ok: false; error: string }
+> {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) {
+    return { ok: false, error: "Razorpay credentials not configured." };
+  }
+
+  const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+  try {
+    const res = await fetch(`https://api.razorpay.com/v1/payments/${paymentId}`, {
+      headers: { Authorization: `Basic ${auth}` },
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: data?.error?.description ?? "Failed to fetch payment details from Razorpay" };
+    }
+    return { ok: true, payment: data as RazorpayPaymentDetails };
+  } catch {
+    return { ok: false, error: "Network error communicating with Razorpay API." };
+  }
+}
+
+

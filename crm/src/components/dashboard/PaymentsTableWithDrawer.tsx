@@ -161,7 +161,9 @@ export function PaymentsTableWithDrawer({
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-xl border border-ink-200 bg-white py-1.5 pl-8 pr-3 text-xs text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-hidden"
           />
-          <span className="absolute left-2.5 top-2 text-xs text-ink-400">🔍</span>
+          <svg className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-ink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
           {searchQuery && (
             <button
               onClick={() => setSearchQuery("")}
@@ -231,7 +233,10 @@ export function PaymentsTableWithDrawer({
                       )}
                       {upi ? (
                         <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-[11px] font-bold text-emerald-800 border border-emerald-200 mt-0.5">
-                          ⚡ {upi}
+                          <svg className="h-3 w-3 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                          </svg>
+                          <span>{upi}</span>
                         </span>
                       ) : (
                         <span className="text-[11px] text-ink-400 font-medium">
@@ -271,12 +276,6 @@ export function PaymentsTableWithDrawer({
                       <span className="text-[10px] font-semibold text-ink-400 uppercase">{p.kind}</span>
                     </td>
 
-                    <td className="px-4 py-3.5">
-                      <span className="rounded bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-800">
-                        {p.method ?? "Online"}
-                      </span>
-                    </td>
-
                     <td className="px-4 py-3.5 text-xs text-ink-600">
                       {isPaid && p.paid_at ? (
                         <div>
@@ -304,9 +303,13 @@ export function PaymentsTableWithDrawer({
                           e.stopPropagation();
                           setSelectedPayment(p);
                         }}
-                        className="btn-secondary px-3 py-1 text-xs font-semibold bg-brand-50 text-brand-900 border-brand-200 hover:bg-brand-100"
+                        className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold bg-brand-50 text-brand-900 border-brand-200 hover:bg-brand-100"
                       >
-                        Details 🔍
+                        <span>Details</span>
+                        <svg className="h-3.5 w-3.5 text-brand-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
                       </button>
 
                       {!isPaid && (
@@ -314,9 +317,12 @@ export function PaymentsTableWithDrawer({
                           type="button"
                           disabled={pending}
                           onClick={(e) => handleQuickMarkPaid(e, p.id)}
-                          className="btn-primary px-3 py-1 text-xs bg-emerald-600 hover:bg-emerald-700"
+                          className="btn-primary inline-flex items-center gap-1.5 px-3 py-1 text-xs bg-emerald-600 hover:bg-emerald-700"
                         >
-                          Mark Paid ✓
+                          <span>Mark Paid</span>
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                          </svg>
                         </button>
                       )}
                     </td>

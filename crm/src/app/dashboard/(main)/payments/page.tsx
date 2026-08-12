@@ -3,15 +3,17 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { syncLatestFromSupabase } from "@/lib/hydrate-db";
+import { fetchRazorpayPayment } from "@/lib/razorpay";
 import { PaymentsTableWithDrawer } from "@/components/dashboard/PaymentsTableWithDrawer";
 import type { PaymentTransactionData } from "@/components/dashboard/PaymentDetailModal";
 
 export const metadata: Metadata = { title: "Payments", robots: { index: false, follow: false } };
-export const revalidate = 0;
+export const dynamic = "force-dynamic";
 
 export default async function PaymentsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
+
   const db = getDb();
   await syncLatestFromSupabase(db);
 
@@ -28,14 +30,33 @@ export default async function PaymentsPage() {
     )
     .all() as Array<Record<string, unknown>>;
 
-  const payments: PaymentTransactionData[] = rawRows.map((p) => {
-    let upi = (p.upi_id as string) ?? (p.vpa as string) ?? null;
-    let method = (p.method as string) ?? null;
+  for (const p of rawRows) {
+    const rzpId = p.razorpay_payment_id as string | undefined;
+    if (rzpId && (!p.upi_id || !p.bank_ref_no || p.method === "Online")) {
+      try {
+        const rzpRes = await fetchRazorpayPayment(rzpId);
+        if (rzpRes.ok) {
+          const rzp = rzpRes.payment;
+          const liveVpa = rzp.vpa || rzp.upi?.vpa || null;
+          const liveMethod = rzp.method ? (rzp.method.toLowerCase() === "upi" ? "UPI" : rzp.method.toUpperCase()) : null;
+          const liveRrn = rzp.acquirer_data?.rrn || rzp.acquirer_data?.upi_transaction_id || rzp.acquirer_data?.bank_transaction_id || null;
 
-    if (!upi && String(p.notes ?? "").toLowerCase().includes("upi")) {
-      upi = (p.customer_phone ? `${String(p.customer_phone).replace(/[^0-9]/g, "")}@upi` : "customer@okaxis");
-      if (!method) method = "UPI (Google Pay / PhonePe)";
+          db.prepare(
+            "UPDATE payments SET upi_id = ?, vpa = ?, bank_ref_no = COALESCE(?, bank_ref_no), method = COALESCE(?, method) WHERE id = ?"
+          ).run(liveVpa, liveVpa, liveRrn, liveMethod, p.id);
+
+          p.upi_id = liveVpa;
+          p.vpa = liveVpa;
+          p.bank_ref_no = liveRrn ?? p.bank_ref_no;
+          if (liveMethod) p.method = liveMethod;
+        }
+      } catch {}
     }
+  }
+
+  const payments: PaymentTransactionData[] = rawRows.map((p) => {
+    const upi = (p.upi_id as string) ?? (p.vpa as string) ?? null;
+    const method = (p.method as string) ?? null;
 
     return {
       id: Number(p.id),
@@ -54,7 +75,7 @@ export default async function PaymentsPage() {
       amount_paise: Number(p.amount_paise ?? 0),
       currency: String(p.currency ?? "INR"),
       kind: String(p.kind ?? "advance"),
-      method: method ?? "Online Gateway",
+      method: method ?? (p.razorpay_payment_id ? "Online Gateway" : "Cash / Direct"),
       upi_id: upi,
       vpa: upi,
       bank_ref_no: (p.bank_ref_no as string) ?? null,

@@ -4,7 +4,7 @@ import { getDb } from "./db";
 import { nextNumber } from "./utils";
 import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
-import { createRazorpayOrder, verifyRazorpaySignature, razorpayConfigured, razorpayKeyId } from "./razorpay";
+import { createRazorpayOrder, verifyRazorpaySignature, fetchRazorpayPayment, razorpayConfigured, razorpayKeyId } from "./razorpay";
 import { generateInvoiceForBooking } from "./invoices";
 import { toPaise, syncPaymentToSupabase } from "./supabase-sync";
 
@@ -145,9 +145,41 @@ export async function verifyBookingPayment(input: {
   }
 
   const receiptNo = nextNumber("RC", null);
+
+  // Fetch verified payment details directly from Razorpay API
+  let realMethod: string | null = null;
+  let realVpa: string | null = null;
+  let realBankRef: string | null = null;
+
+  try {
+    const rzpRes = await fetchRazorpayPayment(input.razorpayPaymentId);
+    if (rzpRes.ok) {
+      const p = rzpRes.payment;
+      realVpa = p.vpa || p.upi?.vpa || null;
+      realMethod = p.method ? (p.method.toLowerCase() === "upi" ? "UPI" : p.method.toUpperCase()) : null;
+      realBankRef = p.acquirer_data?.rrn || p.acquirer_data?.upi_transaction_id || p.acquirer_data?.bank_transaction_id || null;
+    }
+  } catch {}
+
   db.prepare(
-    "UPDATE payments SET status = 'Paid', paid_at = datetime('now'), notes = ?, receipt_no = ?, razorpay_order_id = ?, razorpay_payment_id = ?, razorpay_signature = ? WHERE id = ?"
+    `UPDATE payments SET
+       status = 'Paid',
+       paid_at = datetime('now'),
+       method = COALESCE(?, method, 'Online'),
+       upi_id = COALESCE(?, upi_id),
+       vpa = COALESCE(?, vpa),
+       bank_ref_no = COALESCE(?, bank_ref_no),
+       notes = ?,
+       receipt_no = ?,
+       razorpay_order_id = ?,
+       razorpay_payment_id = ?,
+       razorpay_signature = ?
+     WHERE id = ?`
   ).run(
+    realMethod,
+    realVpa,
+    realVpa,
+    realBankRef,
     `Razorpay payment ID: ${input.razorpayPaymentId}`,
     receiptNo,
     input.razorpayOrderId,
