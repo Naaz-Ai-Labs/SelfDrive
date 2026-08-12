@@ -15,9 +15,7 @@ export default async function PaymentsPage() {
   if (!user) redirect("/dashboard/login");
 
   const db = getDb();
-  try {
-    await syncLatestFromSupabase(db);
-  } catch {}
+  syncLatestFromSupabase(db).catch(() => {});
 
   let rawRows: Array<Record<string, unknown>> = [];
   try {
