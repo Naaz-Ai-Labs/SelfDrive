@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
 function getBaseUrl(): string {
-  if (process.env.CRM_API_URL) return process.env.CRM_API_URL.replace(/\/$/, "");
-  if (process.env.NEXT_PUBLIC_CRM_API_URL) return process.env.NEXT_PUBLIC_CRM_API_URL.replace(/\/$/, "");
-  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
-    return "https://darshan-tours-crm-papadon.vercel.app";
+  const envUrl = process.env.CRM_API_URL || process.env.NEXT_PUBLIC_CRM_API_URL;
+  if (envUrl && !envUrl.includes("localhost")) {
+    return envUrl.replace(/\/$/, "");
   }
-  return "http://localhost:3001";
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+    return "https://crm.selfdrive.bike";
+  }
+  return envUrl ? envUrl.replace(/\/$/, "") : "http://localhost:3001";
 }
 
 const KEY = process.env.GATEWAY_API_KEY ?? "adb661bf6bbe85efd79f26fa2901e580809755dc7bfb37e69f444cb7f2be305c";
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Direct Supabase Storage Upload with Structured Path
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
     const supabaseKey =
       process.env.SUPABASE_SECRET_KEY ||
       process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -61,25 +62,24 @@ export async function POST(req: NextRequest) {
 
     if (supabaseUrl && supabaseKey) {
       try {
-        const supabase = createClient(supabaseUrl, supabaseKey);
         const bucketName = "vehicle-photos";
         const buf = Buffer.from(await file.arrayBuffer());
+        const cleanUrl = supabaseUrl.replace(/\/$/, "");
 
-        // Ensure bucket exists
-        const { data: buckets } = await supabase.storage.listBuckets();
-        if (!buckets?.some((b) => b.name === bucketName)) {
-          await supabase.storage.createBucket(bucketName, { public: true });
-        }
+        const uploadRes = await fetch(`${cleanUrl}/storage/v1/object/${bucketName}/${structuredPath}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            "x-upsert": "true",
+          },
+          body: buf,
+        });
 
-        const { data: uploadData, error: uploadErr } = await supabase.storage
-          .from(bucketName)
-          .upload(structuredPath, buf, { contentType: file.type, upsert: true });
-
-        if (!uploadErr && uploadData) {
-          const { data: pubUrl } = supabase.storage.from(bucketName).getPublicUrl(structuredPath);
-          if (pubUrl?.publicUrl) {
-            return NextResponse.json({ ok: true, path: pubUrl.publicUrl, structuredPath });
-          }
+        if (uploadRes.ok) {
+          const publicUrl = `${cleanUrl}/storage/v1/object/public/${bucketName}/${structuredPath}`;
+          return NextResponse.json({ ok: true, path: publicUrl, structuredPath });
         }
       } catch (supaErr) {
         console.warn("Direct Supabase Storage upload fallback attempt:", supaErr);

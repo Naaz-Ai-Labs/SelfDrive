@@ -90,14 +90,22 @@ export async function submitBooking(input: {
     const bookingNo = `BK-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-01`;
     const phone = input.contact.phone ? input.contact.phone.replace(/[^\d+]/g, "") : "";
 
-    let customerId = Math.floor(Date.now() / 1000);
+    let customerId = 25;
     try {
-      const { data: customerData } = await supabase
-        .from("users")
-        .upsert({ name: input.contact.name, phone, email: input.contact.email || null, role: "customer" }, { onConflict: "phone" })
-        .select("id")
-        .single();
-      if (customerData?.id) customerId = customerData.id;
+      const existingCustomers = await supabaseRestSelect<{ id: number }>("customers", `phone=eq.${encodeURIComponent(phone)}`);
+      if (existingCustomers && existingCustomers.length > 0) {
+        customerId = existingCustomers[0].id;
+      } else {
+        const newCustRes = await supabaseRestInsert<{ id: number }>("customers", {
+          name: input.contact.name,
+          phone,
+          email: input.contact.email || null,
+          source: "Website booking",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        if (newCustRes.ok && newCustRes.data?.id) customerId = newCustRes.data.id;
+      }
     } catch {}
 
     // Calculate accurate quote for the booking
@@ -157,6 +165,26 @@ export async function submitBooking(input: {
     });
 
     const bookingId = insertRes.ok && insertRes.data?.id ? Number(insertRes.data.id) : Math.floor(Date.now() / 1000);
+
+    // Save all uploaded customer ID documents in Supabase
+    if (input.documents && Array.isArray(input.documents)) {
+      for (const doc of input.documents) {
+        if (!doc.url) continue;
+        try {
+          await supabaseRestInsert("customer_documents", {
+            customer_id: customerId,
+            booking_id: bookingId,
+            kind: doc.kind || "other",
+            number: doc.number || null,
+            expiry_date: doc.expiry || null,
+            file_path: doc.url,
+            verified: 0,
+            created_at: new Date().toISOString(),
+          });
+        } catch {}
+      }
+    }
+
     return { ok: true, bookingNo, bookingId, customerId };
   } catch (supaErr) {
     console.warn("Direct Supabase booking creation fallback attempt:", supaErr);
