@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireGatewayKey, bearerCustomer } from "@/lib/gateway-auth";
 import { getDb } from "@/lib/db";
 import { businessInfo } from "@/lib/settings";
+import { generateInvoiceForBooking } from "@/lib/invoices";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ bookingNo: string }> }) {
   const denied = requireGatewayKey(req);
@@ -24,7 +25,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ book
     return NextResponse.json({ error: "Not authorised." }, { status: 403 });
   }
 
-  const invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
+  let invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
+  if (!invoice) {
+    generateInvoiceForBooking(Number(booking.id));
+    invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
+  }
   const photo = db.prepare("SELECT url FROM vehicle_photos WHERE vehicle_id = ? ORDER BY is_primary DESC, sort LIMIT 1").get(booking.vehicle_id as number) as { url: string } | undefined;
 
   return NextResponse.json({ booking, invoice: invoice ?? null, photoUrl: photo?.url ?? null, business: businessInfo() });

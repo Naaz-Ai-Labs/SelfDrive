@@ -7,6 +7,7 @@ import { businessInfo } from "@/lib/settings";
 import { formatINR, formatDateTime } from "@/lib/utils";
 
 import { InvoicePrintButton } from "@/components/customer/InvoicePrintButton";
+import { generateInvoiceForBooking } from "@/lib/invoices";
 
 export const metadata: Metadata = { title: "Invoice", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -27,7 +28,12 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
     .get(bookingNo, Number(bookingNo) || 0) as Record<string, unknown> | undefined;
   if (!booking) notFound();
 
-  const invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
+  let invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
+  if (!invoice) {
+    generateInvoiceForBooking(Number(booking.id));
+    invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
+  }
+
   const photo = db.prepare("SELECT url FROM vehicle_photos WHERE vehicle_id = ? ORDER BY is_primary DESC, sort LIMIT 1").get(booking.vehicle_id as number) as { url: string } | undefined;
   const info = businessInfo();
 
