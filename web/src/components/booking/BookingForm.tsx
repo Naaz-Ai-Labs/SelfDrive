@@ -593,8 +593,11 @@ export function BookingForm({
               <h1 className="mt-4 font-display text-2xl font-semibold text-ink-900">You&apos;re all set!</h1>
               <p className="mt-1.5 text-xs text-ink-600">Your booking number is <strong>{result.bookingNo}</strong>. Here is your official payment tax invoice.</p>
               <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
-                <a href={waLink(businessWhatsapp, `Hi, this is regarding my booking ${result.bookingNo}`)} target="_blank" rel="noopener noreferrer" className="btn-primary py-2 text-xs">Message us on WhatsApp</a>
-                <Link href="/customer/portal" className="btn-secondary py-2 text-xs">Track in Customer Portal</Link>
+                <Link href={`/track/${result.bookingNo}`} className="btn-primary py-2 px-4 text-xs font-bold bg-brand-500 text-ink-950 shadow-sm">
+                  Track Booking Status 📍
+                </Link>
+                <a href={waLink(businessWhatsapp, `Hi, this is regarding my booking ${result.bookingNo}`)} target="_blank" rel="noopener noreferrer" className="btn-secondary py-2 text-xs">Message us on WhatsApp 💬</a>
+                <Link href="/customer/portal" className="btn-secondary py-2 text-xs">Customer Portal ↗</Link>
               </div>
             </div>
 

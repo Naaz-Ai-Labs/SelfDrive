@@ -6,6 +6,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { businessInfo } from "@/lib/settings";
 import { formatINR, formatDateTime } from "@/lib/utils";
 
+import { InvoicePrintButton } from "@/components/customer/InvoicePrintButton";
+
 export const metadata: Metadata = { title: "Invoice", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
@@ -20,9 +22,9 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
       `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email, c.address AS customer_address,
               v.name AS vehicle_name, v.registration_no, v.brand, v.model
        FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       WHERE b.booking_no = ?`
+       WHERE b.booking_no = ? OR b.id = ?`
     )
-    .get(bookingNo) as Record<string, unknown> | undefined;
+    .get(bookingNo, Number(bookingNo) || 0) as Record<string, unknown> | undefined;
   if (!booking) notFound();
 
   const invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
@@ -48,8 +50,8 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
           </div>
           <div className="text-right">
             <p className="text-xs font-bold uppercase tracking-wider text-ink-400">Tax Invoice</p>
-            <p className="font-display text-xl font-semibold text-ink-900">{invoice ? String(invoice.invoice_no) : "Draft"}</p>
-            <p className="text-xs text-ink-500">{invoice ? formatDateTime(String(invoice.created_at)) : "Not yet issued"}</p>
+            <p className="font-display text-xl font-semibold text-ink-900">{invoice ? String(invoice.invoice_no) : `INV-${String(booking.id).padStart(5, "0")}`}</p>
+            <p className="text-xs text-ink-500">{invoice ? formatDateTime(String(invoice.created_at)) : formatDateTime(String(booking.created_at))}</p>
           </div>
         </div>
 
@@ -114,9 +116,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
           </tbody>
         </table>
 
-        <div className="mt-8 flex justify-end gap-3 print:hidden">
-          <button type="button" className="btn-secondary">Download / Print</button>
-        </div>
+        <InvoicePrintButton />
       </div>
     </article>
   );

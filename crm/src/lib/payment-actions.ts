@@ -115,7 +115,18 @@ export async function verifyBookingPayment(input: {
   razorpayPaymentId: string;
   razorpaySignature: string;
   skipSignatureCheck?: boolean;
-}): Promise<{ ok: true; bookingNo: string } | { ok: false; error: string }> {
+}): Promise<{ ok: true; bookingNo: string; alreadyProcessed?: boolean } | { ok: false; error: string }> {
+  const db = getDb();
+
+  // 1. Idempotency Check: if this payment ID was already processed, return success immediately
+  const existingPaid = db
+    .prepare("SELECT p.*, b.booking_no FROM payments p LEFT JOIN bookings b ON b.id = p.booking_id WHERE (p.razorpay_payment_id = ? OR (p.id = ? AND p.status = 'Paid')) LIMIT 1")
+    .get(input.razorpayPaymentId, input.paymentId) as { booking_no: string; status: string } | undefined;
+
+  if (existingPaid && existingPaid.status === "Paid") {
+    return { ok: true, bookingNo: existingPaid.booking_no || `BK-${input.paymentId}`, alreadyProcessed: true };
+  }
+
   if (!input.skipSignatureCheck) {
     const valid = verifyRazorpaySignature(input.razorpayOrderId, input.razorpayPaymentId, input.razorpaySignature);
     if (!valid) {
@@ -124,15 +135,13 @@ export async function verifyBookingPayment(input: {
     }
   }
 
-
-  const db = getDb();
-  const payment = db.prepare("SELECT * FROM payments WHERE id = ? AND gateway_ref = ?").get(input.paymentId, input.razorpayOrderId) as
+  const payment = db.prepare("SELECT * FROM payments WHERE id = ? AND (gateway_ref = ? OR razorpay_order_id = ?)").get(input.paymentId, input.razorpayOrderId, input.razorpayOrderId) as
     | { id: number; booking_id: number; customer_id: number | null; amount: number; payment_no: string; status: string }
     | undefined;
   if (!payment) return { ok: false, error: "Payment record not found." };
   if (payment.status === "Paid") {
     const booking = db.prepare("SELECT booking_no FROM bookings WHERE id = ?").get(payment.booking_id) as { booking_no: string };
-    return { ok: true, bookingNo: booking.booking_no };
+    return { ok: true, bookingNo: booking.booking_no, alreadyProcessed: true };
   }
 
   const receiptNo = nextNumber("RC", null);
@@ -150,15 +159,18 @@ export async function verifyBookingPayment(input: {
   // Sync to Supabase ledger
   syncPaymentToSupabase(payment.id).catch(() => {});
 
-  // Payment verified -> booking auto-confirms. This is the one moment the CRM should treat
-  // as ground truth for "paid": we only ever get here after the Razorpay signature check above.
-  db.prepare("UPDATE bookings SET paid_amount = paid_amount + ?, status = 'Confirmed', updated_at = datetime('now') WHERE id = ?").run(
-    payment.amount, payment.booking_id
+  // Check if documents are already verified
+  const unverifiedDocsCount = (db.prepare("SELECT COUNT(*) AS c FROM customer_documents WHERE booking_id = ? AND verified = 0").get(payment.booking_id) as { c: number })?.c ?? 0;
+  const newBookingStatus = unverifiedDocsCount === 0 ? "Confirmed" : "Payment received";
+
+  db.prepare("UPDATE bookings SET paid_amount = paid_amount + ?, status = ?, updated_at = datetime('now') WHERE id = ?").run(
+    payment.amount, newBookingStatus, payment.booking_id
   );
+
   db.prepare("INSERT INTO booking_history (booking_id, action, detail) VALUES (?, 'payment_verified', ?)").run(
-    payment.booking_id, JSON.stringify({ payment_no: payment.payment_no, amount: payment.amount, razorpay_payment_id: input.razorpayPaymentId })
+    payment.booking_id, JSON.stringify({ payment_no: payment.payment_no, amount: payment.amount, razorpay_payment_id: input.razorpayPaymentId, status: newBookingStatus })
   );
-  logActivity(null, "payment_verified", "payment", payment.id, { amount: payment.amount });
+  logActivity(null, "payment_verified", "payment", payment.id, { amount: payment.amount, razorpay_payment_id: input.razorpayPaymentId });
   const invoice = generateInvoiceForBooking(payment.booking_id);
 
   const booking = db
@@ -166,7 +178,7 @@ export async function verifyBookingPayment(input: {
       LEFT JOIN customers c ON c.id = b.customer_id LEFT JOIN vehicles v ON v.id = b.vehicle_id WHERE b.id = ?`)
     .get(payment.booking_id) as { booking_no: string; pickup_at: string; name: string | null; phone: string | null; vehicle_name: string | null };
 
-  if (booking.phone) {
+  if (booking && booking.phone) {
     try {
       sendTemplate("payment_receipt", booking.phone, { name: booking.name ?? "", amount: `₹${payment.amount.toLocaleString("en-IN")}`, reference: input.razorpayPaymentId, receipt_no: receiptNo, booking_no: booking.booking_no }, null, payment.booking_id);
       sendTemplate("booking_confirmation", booking.phone, { name: booking.name ?? "", booking_no: booking.booking_no, vehicle: booking.vehicle_name ?? "", pickup_at: booking.pickup_at, location: "" }, null, payment.booking_id);
@@ -176,10 +188,12 @@ export async function verifyBookingPayment(input: {
     }
   }
 
-  const staff = db.prepare("SELECT id FROM users WHERE role IN ('admin','manager') AND is_active = 1").all() as { id: number }[];
-  for (const s of staff) {
-    pushNotification(s.id, `Payment received — ${booking.booking_no}`, `${booking.name ?? "Customer"} · ${booking.vehicle_name ?? ""}`, null, payment.booking_id);
+  if (booking) {
+    const staff = db.prepare("SELECT id FROM users WHERE role IN ('admin','manager') AND is_active = 1").all() as { id: number }[];
+    for (const s of staff) {
+      pushNotification(s.id, `Payment received — ${booking.booking_no}`, `${booking.name ?? "Customer"} · ${booking.vehicle_name ?? ""}`, null, payment.booking_id);
+    }
   }
 
-  return { ok: true, bookingNo: booking.booking_no };
+  return { ok: true, bookingNo: booking?.booking_no || "" };
 }
