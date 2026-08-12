@@ -1,12 +1,14 @@
 import { cookies } from "next/headers";
 
 function getBaseUrl(): string {
-  if (process.env.CRM_API_URL) return process.env.CRM_API_URL.replace(/\/$/, "");
-  if (process.env.NEXT_PUBLIC_CRM_API_URL) return process.env.NEXT_PUBLIC_CRM_API_URL.replace(/\/$/, "");
-  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
-    return "https://darshan-tours-crm.vercel.app";
+  const envUrl = process.env.CRM_API_URL || process.env.NEXT_PUBLIC_CRM_API_URL;
+  if (envUrl && !envUrl.includes("localhost")) {
+    return envUrl.replace(/\/$/, "");
   }
-  return "http://localhost:3001";
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+    return "https://crm.selfdrive.bike";
+  }
+  return envUrl ? envUrl.replace(/\/$/, "") : "http://localhost:3001";
 }
 
 const DEFAULT_GATEWAY_KEY = "adb661bf6bbe85efd79f26fa2901e580809755dc7bfb37e69f444cb7f2be305c";

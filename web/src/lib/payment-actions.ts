@@ -1,6 +1,7 @@
 "use server";
 
 import { gatewayPost } from "./gateway";
+import { supabaseRestInsert, supabaseRestSelect, supabaseRestUpsert } from "./supabase-rest";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
@@ -148,67 +149,62 @@ export async function verifyBookingPayment(input: {
   let paidAmount = 1000;
 
   // High-availability live update directly in Supabase PostgreSQL
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
-  const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  if (supabaseUrl && supabaseKey) {
-    try {
-      const supabase = createClient(supabaseUrl, supabaseKey);
-      
-      // Fetch booking details
-      let { data: b } = await supabase.from("bookings").select("*").eq("id", input.paymentId).single();
-      
-      if (!b) {
-        // If booking record does not exist in Supabase, auto-create it to satisfy foreign key constraint
-        const now = new Date().toISOString();
-        const tomorrow = new Date(Date.now() + 86400000).toISOString();
-        await supabase.from("bookings").upsert({
-          id: input.paymentId,
-          booking_no: bookingNo,
-          vehicle_id: 1,
-          pickup_at: now,
-          return_at: tomorrow,
-          base_amount: 900,
-          deposit_amount: 1000,
-          gst_amount: 69,
-          total_amount: paidAmount,
-          paid_amount: paidAmount,
-          status: "Confirmed",
-          created_at: now,
-          updated_at: now,
-        });
-      } else {
-        bookingNo = b.booking_no || bookingNo;
-        paidAmount = Number(b.total_amount || b.paid_amount || 1000);
-        
-        // 1. Update Booking Status to Confirmed & Paid Amount
-        await supabase.from("bookings").update({
-          status: "Confirmed",
-          paid_amount: paidAmount,
-          updated_at: new Date().toISOString(),
-        }).eq("id", input.paymentId);
-      }
+  try {
+    const rows = await supabaseRestSelect<any>("bookings", `id=eq.${input.paymentId}`);
+    let b = rows && rows.length > 0 ? rows[0] : null;
 
-      // 2. Record Payment Entry in CRM Payments Table
-      const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
-      await supabase.from("payments").insert({
+    if (!b) {
+      const now = new Date().toISOString();
+      const tomorrow = new Date(Date.now() + 86400000).toISOString();
+      await supabaseRestUpsert("bookings", {
+        id: input.paymentId,
+        booking_no: bookingNo,
+        vehicle_id: 1,
+        pickup_at: now,
+        return_at: tomorrow,
+        base_amount: 900,
+        deposit_amount: 1000,
+        gst_amount: 69,
+        total_amount: paidAmount,
+        paid_amount: paidAmount,
+        status: "Confirmed",
+        created_at: now,
+        updated_at: now,
+      });
+    } else {
+      bookingNo = b.booking_no || bookingNo;
+      paidAmount = Number(b.total_amount || b.paid_amount || 1000);
+
+      // 1. Update Booking Status to Confirmed & Paid Amount
+      await supabaseRestUpsert("bookings", {
+        ...b,
+        status: "Confirmed",
+        paid_amount: paidAmount,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    // 2. Record Payment Entry in CRM Payments Table
+    const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
+    await supabaseRestInsert("payments", {
+      booking_id: input.paymentId,
+      payment_no: paymentNo,
+      kind: "online",
+      amount: paidAmount,
+      status: "Paid",
+      notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
+      created_at: new Date().toISOString(),
+    });
+
+    // 3. Record Audit Log in Booking History
+    try {
+      await supabaseRestInsert("booking_history", {
         booking_id: input.paymentId,
-        payment_no: paymentNo,
-        kind: "online",
-        amount: paidAmount,
-        status: "Paid",
-        notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
+        action: "Payment Verified",
+        detail: `Razorpay payment of ₹${paidAmount} verified successfully. Payment ID: ${input.razorpayPaymentId}. Status updated to Confirmed.`,
         created_at: new Date().toISOString(),
       });
-
-      // 3. Record Audit Log in Booking History
-      try {
-        await supabase.from("booking_history").insert({
-          booking_id: input.paymentId,
-          action: "Payment Verified",
-          detail: `Razorpay payment of ₹${paidAmount} verified successfully. Payment ID: ${input.razorpayPaymentId}. Status updated to Confirmed.`,
-          created_at: new Date().toISOString(),
-        });
-      } catch {}
+    } catch {}
 
       // 4. Cache downloadable Invoice payload in Redis for this session
       try {
@@ -229,7 +225,6 @@ export async function verifyBookingPayment(input: {
     } catch (err: any) {
       console.error("Supabase payment verification update error:", err?.message || err);
     }
-  }
 
   return { ok: true, bookingNo };
 }

@@ -193,7 +193,7 @@ export function BookingsTableWithTabs({
                     <span className="font-bold text-red-950 hover:underline">
                       {b.booking_no}
                     </span>
-                    <p className="text-[11px] text-ink-400">{formatDateTime(b.created_at || b.pickup_at)}</p>
+                    <p suppressHydrationWarning className="text-[11px] text-ink-400">{formatDateTime(b.created_at || b.pickup_at)}</p>
                   </td>
 
                   <td className="px-4 py-3.5">
@@ -297,11 +297,11 @@ export function BookingsTableWithTabs({
                       <p className="text-xs text-ink-400">{b.registration_no ?? "—"}</p>
                     </td>
 
-                    <td className="px-4 py-3.5 text-xs text-ink-600">
+                    <td className="px-4 py-3.5 text-xs text-ink-600" suppressHydrationWarning>
                       {formatDateTime(b.pickup_at)}
                     </td>
 
-                    <td className="px-4 py-3.5 text-xs text-ink-600">
+                    <td className="px-4 py-3.5 text-xs text-ink-600" suppressHydrationWarning>
                       {formatDateTime(b.return_at)}
                     </td>
 

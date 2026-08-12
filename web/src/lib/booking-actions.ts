@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
 import { gatewayGet, gatewayPost } from "./gateway";
+import { supabaseRestInsert, supabaseRestSelect, supabaseRestUpsert } from "./supabase-rest";
 import type { Vehicle } from "./data";
 
 export type DraftPayload = {
@@ -141,25 +142,21 @@ export async function submitBooking(input: {
       }
     } catch {}
 
-    const { data: bookingData } = await supabase
-      .from("bookings")
-      .insert({
-        booking_no: bookingNo,
-        customer_id: customerId,
-        vehicle_id: input.vehicleId,
-        pickup_at: input.pickupAt,
-        return_at: input.returnAt,
-        base_amount: baseAmount,
-        deposit_amount: depositAmount,
-        gst_amount: gstAmount,
-        total_amount: totalAmount,
-        status: "Pending",
-        created_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
+    const insertRes = await supabaseRestInsert<{ id: number }>("bookings", {
+      booking_no: bookingNo,
+      customer_id: customerId,
+      vehicle_id: input.vehicleId,
+      pickup_at: input.pickupAt,
+      return_at: input.returnAt,
+      base_amount: baseAmount,
+      deposit_amount: depositAmount,
+      gst_amount: gstAmount,
+      total_amount: totalAmount,
+      status: "Pending",
+      created_at: new Date().toISOString(),
+    });
 
-    const bookingId = bookingData?.id ?? Math.floor(Date.now() / 1000);
+    const bookingId = insertRes.ok && insertRes.data?.id ? Number(insertRes.data.id) : Math.floor(Date.now() / 1000);
     return { ok: true, bookingNo, bookingId, customerId };
   } catch (supaErr) {
     console.warn("Direct Supabase booking creation fallback attempt:", supaErr);
