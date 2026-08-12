@@ -20,7 +20,8 @@ export const revalidate = 0;
 export default async function BookingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: paramId } = await params;
   const db = getDb();
-  const id = Number(paramId);
+  const numId = Number(paramId);
+
   const rawBooking = db
     .prepare(
       `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
@@ -28,21 +29,56 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
        FROM bookings b
        LEFT JOIN customers c ON c.id = b.customer_id
        LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       WHERE b.id = ?`
+       WHERE b.id = ? OR b.booking_no = ?`
     )
-    .get(id) as Record<string, unknown> | undefined;
+    .get(numId || 0, paramId) as Record<string, unknown> | undefined;
+
   if (!rawBooking) notFound();
   const booking = { ...rawBooking };
+  const id = Number(booking.id);
 
-  const statuses = getSetting<string[]>("booking_statuses", []);
-  const staff = getStaff();
-  const history = (db.prepare("SELECT h.*, u.name AS user_name FROM booking_history h LEFT JOIN users u ON u.id = h.user_id WHERE h.booking_id = ? ORDER BY h.created_at DESC").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const inspections = (db.prepare("SELECT * FROM inspections WHERE booking_id = ? ORDER BY created_at").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const inspectionPhotos = (db.prepare("SELECT * FROM inspection_photos WHERE inspection_id IN (SELECT id FROM inspections WHERE booking_id = ?)").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const damages = (db.prepare("SELECT * FROM damage_reports WHERE booking_id = ?").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const adjustments = (db.prepare("SELECT a.*, u.name AS employee_name FROM manual_adjustments a LEFT JOIN users u ON u.id = a.employee_id WHERE a.booking_id = ?").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const payments = (db.prepare("SELECT * FROM payments WHERE booking_id = ? ORDER BY created_at DESC").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const documents = (db.prepare("SELECT * FROM customer_documents WHERE booking_id = ? OR customer_id = ?").all(id, booking.customer_id as number | null) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  let statuses: string[] = [];
+  try {
+    statuses = getSetting<string[]>("booking_statuses", []) || [];
+  } catch {}
+  if (!statuses || statuses.length === 0) {
+    statuses = ["Pending", "Payment received", "Confirmed", "Vehicle handed over", "Active rental", "Completed", "Cancelled", "Rejected"];
+  }
+
+  let staff: any[] = [];
+  try {
+    staff = getStaff();
+  } catch {}
+
+  let history: any[] = [];
+  let inspections: any[] = [];
+  let inspectionPhotos: any[] = [];
+  let damages: any[] = [];
+  let adjustments: any[] = [];
+  let payments: any[] = [];
+  let documents: any[] = [];
+
+  try {
+    history = (db.prepare("SELECT h.*, u.name AS user_name FROM booking_history h LEFT JOIN users u ON u.id = h.user_id WHERE h.booking_id = ? ORDER BY h.created_at DESC").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  } catch {}
+  try {
+    inspections = (db.prepare("SELECT * FROM inspections WHERE booking_id = ? ORDER BY created_at").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  } catch {}
+  try {
+    inspectionPhotos = (db.prepare("SELECT * FROM inspection_photos WHERE inspection_id IN (SELECT id FROM inspections WHERE booking_id = ?)").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  } catch {}
+  try {
+    damages = (db.prepare("SELECT * FROM damage_reports WHERE booking_id = ?").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  } catch {}
+  try {
+    adjustments = (db.prepare("SELECT a.*, u.name AS employee_name FROM manual_adjustments a LEFT JOIN users u ON u.id = a.employee_id WHERE a.booking_id = ?").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  } catch {}
+  try {
+    payments = (db.prepare("SELECT * FROM payments WHERE booking_id = ? ORDER BY created_at DESC").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  } catch {}
+  try {
+    documents = (db.prepare("SELECT * FROM customer_documents WHERE booking_id = ? OR (customer_id IS NOT NULL AND customer_id = ?)").all(id, booking.customer_id as number | null ?? 0) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  } catch {}
 
   const hasHandover = inspections.some((i) => i.kind === "handover");
   const hasReturn = inspections.some((i) => i.kind === "return");
