@@ -54,7 +54,7 @@ export async function createBookingPaymentOrder(bookingId: number, overrideAmoun
 
   if (due <= 0) return { ok: false, error: "This booking is already fully paid." };
 
-  const duePaise = toPaise(due);
+  const duePaise = Math.max(100, toPaise(due));
 
   let payment = db
     .prepare("SELECT * FROM payments WHERE booking_id = ? AND status = 'Pending' AND kind = 'full' ORDER BY id DESC LIMIT 1")

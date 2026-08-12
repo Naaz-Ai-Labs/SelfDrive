@@ -21,7 +21,8 @@ export async function createRazorpayOrder(input: { amountInRupees: number; recei
     return { ok: false, error: "Online payment isn't set up yet. Our team will contact you to arrange payment." };
   }
 
-  const amountPaise = Math.round(input.amountInRupees * 100);
+  // Minimum order amount allowed by Razorpay is 1 INR (100 paise)
+  const amountPaise = Math.max(100, Math.round(input.amountInRupees * 100));
   const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
 
   try {

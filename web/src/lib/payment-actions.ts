@@ -64,10 +64,10 @@ export async function createBookingPaymentOrder(
     }
 
     if (finalAmount <= 0) {
-      finalAmount = 1000;
+      finalAmount = 1;
     }
 
-    const amountPaise = Math.round(finalAmount * 100); // exact paise representation
+    const amountPaise = Math.max(100, Math.round(finalAmount * 100)); // Minimum 100 paise = ₹1 INR
     const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
 
     // Itemized notes for Razorpay receipt and customer transparency
