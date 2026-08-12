@@ -40,6 +40,26 @@ export type Quote = {
   payableNow: number;
 };
 
+export function normalizeDocKind(kind: string): "licence" | "govt_id" | "address_proof" | "photo" | "other" {
+  switch (kind) {
+    case "licence":
+    case "driver_licence":
+      return "licence";
+    case "driver_govt_id":
+    case "pillion_id":
+    case "govt_id":
+      return "govt_id";
+    case "driver_photo":
+    case "pillion_photo":
+    case "photo":
+      return "photo";
+    case "address_proof":
+      return "address_proof";
+    default:
+      return "other";
+  }
+}
+
 export async function saveBookingDraft(input: DraftPayload & { token?: string | null }): Promise<{ token: string; savedAt: string }> {
   return gatewayPost("/api/gateway/v1/booking/draft", input);
 }
@@ -174,7 +194,7 @@ export async function submitBooking(input: {
           await supabaseRestInsert("customer_documents", {
             customer_id: customerId,
             booking_id: bookingId,
-            kind: doc.kind || "other",
+            kind: normalizeDocKind(doc.kind || "other"),
             number: doc.number || null,
             expiry_date: doc.expiry || null,
             file_path: doc.url,

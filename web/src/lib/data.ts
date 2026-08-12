@@ -120,23 +120,156 @@ const EMPTY_CONTENT: Content = {
   business: {}, rentalRules: {}, categories: FALLBACK_CATEGORIES, vehicles: FALLBACK_VEHICLES, testimonials: [], gallery: [], faqs: [], staff: [], terms: null, blogPosts: FALLBACK_BLOG_POSTS, branches: [],
 };
 
+async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseKey =
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    "";
+
+  if (!supabaseUrl || !supabaseKey) return null;
+
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+
+    const [
+      { data: supaCategories },
+      { data: supaVehicles },
+      { data: supaPhotos },
+      { data: supaBranches },
+      { data: supaTestimonials },
+      { data: supaFaqs },
+      { data: supaTerms },
+      { data: supaBlogPosts },
+      { data: supaSettings },
+    ] = await Promise.all([
+      supabase.from("vehicle_categories").select("*").eq("active", 1).order("sort"),
+      supabase.from("vehicles").select("*, vehicle_categories(name, kind, slug)").eq("active", 1),
+      supabase.from("vehicle_photos").select("*").order("is_primary", { ascending: false }),
+      supabase.from("branches").select("*").eq("active", 1),
+      supabase.from("testimonials").select("*").eq("active", 1).order("sort"),
+      supabase.from("faqs").select("*").eq("active", 1).order("sort"),
+      supabase.from("terms_versions").select("*").eq("active", 1).order("version", { ascending: false }).limit(1),
+      supabase.from("blog_posts").select("*").eq("published", 1).order("created_at", { ascending: false }),
+      supabase.from("settings").select("*"),
+    ]);
+
+    if (!supaVehicles || supaVehicles.length === 0) return null;
+
+    const photoMap = new Map<number, { photos: string[]; primary: string }>();
+    if (supaPhotos) {
+      for (const p of supaPhotos) {
+        const photoUrl = (p as any).url || (p as any).photo_url;
+        if (!photoUrl) continue;
+        const entry = photoMap.get(p.vehicle_id) || { photos: [], primary: "" };
+        entry.photos.push(photoUrl);
+        if (p.is_primary) entry.primary = photoUrl;
+        photoMap.set(p.vehicle_id, entry);
+      }
+    }
+
+    const DEFAULT_SLUG_PHOTOS: Record<string, string> = {
+      "honda-dio": "/vehicles/honda-dio.avif",
+      "honda-activa": "/vehicles/honda-activa.webp",
+      "tvs-jupiter": "/vehicles/tvs-jupiter.webp",
+      "yamaha-rayzr": "/vehicles/yamaha-rayzr.avif",
+      "tvs-ntorq": "/vehicles/tvs-ntorq.webp",
+      "tvs-ronin": "/vehicles/tvs-ronin.avif",
+      "honda-cb200x": "/vehicles/honda-cb200x.jpg",
+      "tvs-raider": "/vehicles/tvs-radar.avif",
+      "bajaj-pulsar-ns": "/vehicles/bajaj-pulsar-ns.png",
+      "honda-shine": "/vehicles/honda-shine.avif",
+      "maruti-baleno-manual": "/vehicles/baleno-manual.avif",
+      "maruti-dzire": "/vehicles/maruti-dzire.avif",
+      "maruti-ciaz": "/vehicles/maruti-ciaz.jpg",
+      "maruti-ertiga-7-seater": "/vehicles/maruti-ertiga.avif",
+      "mahindra-thar-manual": "/vehicles/mahindra-thar.avif",
+      "tempo-traveller-12": "/vehicles/tempo-traveller.jpg",
+      "tempo-traveller-2days": "/vehicles/cta-tempo-banner.jpg",
+    };
+
+    const vehicles: Vehicle[] = supaVehicles.map((v: any) => {
+      const cat = v.vehicle_categories;
+      const ph = photoMap.get(v.id);
+      const fallback = DEFAULT_SLUG_PHOTOS[v.slug] || "/vehicles/baleno-manual.avif";
+      const vehiclePhotos = ph?.photos && ph.photos.length > 0 ? ph.photos : (Array.isArray(v.photos) ? v.photos : [fallback]);
+      return {
+        ...v,
+        category_name: cat?.name || v.category_name || "Vehicle",
+        category_kind: cat?.kind || v.category_kind || "car",
+        category_slug: cat?.slug || v.category_slug || "cars",
+        photos: vehiclePhotos,
+        primary_photo: ph?.primary || vehiclePhotos[0] || fallback,
+        available_units: v.available_units ?? v.total_units ?? 1,
+        vehicle_categories: undefined,
+      };
+    });
+
+    const settingsMap = new Map((supaSettings ?? []).map((s: any) => [s.key, s.value]));
+    let parsedTerms: { id: number; version: number; content: string[] } | null = null;
+    if (supaTerms && supaTerms.length > 0) {
+      const t = supaTerms[0];
+      let contentArr: string[] = [];
+      try {
+        contentArr = typeof t.content === "string" ? JSON.parse(t.content) : (t.content || []);
+      } catch {
+        contentArr = Array.isArray(t.content) ? t.content : [];
+      }
+      parsedTerms = { id: t.id, version: t.version, content: contentArr };
+    }
+
+    return {
+      categories: (supaCategories && supaCategories.length > 0 ? supaCategories : FALLBACK_CATEGORIES) as VehicleCategory[],
+      vehicles,
+      branches: (supaBranches ?? []) as Branch[],
+      testimonials: (supaTestimonials ?? []) as Array<Record<string, unknown>>,
+      faqs: (supaFaqs ?? []) as Array<Record<string, unknown>>,
+      terms: parsedTerms,
+      blogPosts: (supaBlogPosts && supaBlogPosts.length > 0 ? supaBlogPosts : FALLBACK_BLOG_POSTS) as Array<Record<string, unknown>>,
+      business: Object.fromEntries(settingsMap),
+    };
+  } catch (err) {
+    console.warn("Supabase direct content query fallback exception:", err);
+    return null;
+  }
+}
+
 /** Fetched once per request (React cache dedupes repeated calls within the same render
  * pass) — the CRM gateway returns the whole read-mostly content model in one payload, so
  * a page that needs categories, vehicles and testimonials makes one network round trip. */
 export const getContent = cache(async (): Promise<Content> => {
-  const data = await gatewayGet<Content & { error?: string }>("/api/gateway/v1/content", { revalidate: 0 });
-  if (!data || "error" in data || !Array.isArray(data.vehicles) || data.vehicles.length === 0) {
+  try {
+    const data = await gatewayGet<Content & { error?: string }>("/api/gateway/v1/content", { revalidate: 0 });
+    if (data && !("error" in data) && Array.isArray(data.vehicles) && data.vehicles.length > 0) {
+      return {
+        ...data,
+        blogPosts: data.blogPosts?.length ? data.blogPosts : FALLBACK_BLOG_POSTS,
+      };
+    }
+  } catch (err) {
+    console.warn("Gateway getContent fetch warning:", err);
+  }
+
+  // Direct Supabase Live Data Fallback
+  const supaContent = await fetchContentFromSupabase();
+  if (supaContent && Array.isArray(supaContent.vehicles) && supaContent.vehicles.length > 0) {
     return {
       ...EMPTY_CONTENT,
-      ...(data && !("error" in data) ? data : {}),
-      categories: data?.categories?.length ? data.categories : FALLBACK_CATEGORIES,
-      vehicles: data?.vehicles?.length ? data.vehicles : FALLBACK_VEHICLES,
-      blogPosts: data?.blogPosts?.length ? data.blogPosts : FALLBACK_BLOG_POSTS,
-    };
+      ...supaContent,
+      categories: supaContent.categories?.length ? supaContent.categories : FALLBACK_CATEGORIES,
+      vehicles: supaContent.vehicles,
+      blogPosts: supaContent.blogPosts?.length ? supaContent.blogPosts : FALLBACK_BLOG_POSTS,
+    } as Content;
   }
+
   return {
-    ...data,
-    blogPosts: data.blogPosts?.length ? data.blogPosts : FALLBACK_BLOG_POSTS,
+    ...EMPTY_CONTENT,
+    categories: FALLBACK_CATEGORIES,
+    vehicles: FALLBACK_VEHICLES,
+    blogPosts: FALLBACK_BLOG_POSTS,
   };
 });
 

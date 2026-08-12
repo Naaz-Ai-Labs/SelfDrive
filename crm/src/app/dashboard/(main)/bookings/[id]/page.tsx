@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getDb } from "@/lib/db";
+import { syncLatestFromSupabase } from "@/lib/hydrate-db";
 import { getSetting } from "@/lib/settings";
 import { getStaff } from "@/lib/data";
 import { formatDateTime, formatINR, waLink } from "@/lib/utils";
@@ -20,6 +21,9 @@ export const revalidate = 0;
 export default async function BookingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: paramId } = await params;
   const db = getDb();
+  try {
+    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
+  } catch {}
   const numId = Number(paramId);
 
   const rawBooking = db

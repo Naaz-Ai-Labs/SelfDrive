@@ -108,7 +108,22 @@ export async function hydrateSQLiteFromSupabase(db: DatabaseSync): Promise<boole
 
 /** Live delta sync to fetch latest bookings, payments, customers and documents from Supabase into SQLite */
 export async function syncLatestFromSupabase(db: DatabaseSync): Promise<boolean> {
-  const syncTables = ["customers", "enquiries", "bookings", "payments", "customer_documents", "booking_history"];
+  const syncTables = [
+    "customers",
+    "enquiries",
+    "bookings",
+    "payments",
+    "customer_documents",
+    "booking_history",
+    "refunds",
+    "inspections",
+    "inspection_photos",
+    "damage_reports",
+    "manual_adjustments",
+    "feedback",
+    "problem_tickets",
+    "messages",
+  ];
   try {
     const results = await Promise.all(syncTables.map((t) => fetchSupabaseRest(t)));
 
@@ -130,7 +145,9 @@ export async function syncLatestFromSupabase(db: DatabaseSync): Promise<boolean>
 
         try {
           db.prepare(`INSERT OR REPLACE INTO ${table} (${colsStr}) VALUES (${placeholdersStr})`).run(...values);
-        } catch {}
+        } catch (insertErr: any) {
+          console.warn(`Delta sync insert error [${table}]:`, insertErr?.message || insertErr);
+        }
       }
     }
     return true;

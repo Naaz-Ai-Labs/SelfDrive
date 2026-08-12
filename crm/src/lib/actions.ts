@@ -351,7 +351,9 @@ export async function updateBookingStatus(id: number, status: string) {
   const db = getDb();
   const prev = db.prepare("SELECT status FROM bookings WHERE id = ?").get(id) as { status: string };
   db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id);
-  db.prepare("INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'status_change', ?)").run(id, user.id, JSON.stringify({ from: prev.status, to: status }));
+  const histRes = db.prepare("INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'status_change', ?)").run(id, user.id, JSON.stringify({ from: prev.status, to: status }));
+  syncEntityToSupabase("bookings", id).catch(() => {});
+  syncEntityToSupabase("booking_history", Number(histRes.lastInsertRowid)).catch(() => {});
   logActivity(user.id, "booking_status", "booking", id, { from: prev.status, to: status });
 
   if (status === "Confirmed") {
@@ -369,6 +371,7 @@ export async function updateBookingStatus(id: number, status: string) {
 export async function assignBookingManager(id: number, managerId: number | null) {
   const user = await staffUser();
   getDb().prepare("UPDATE bookings SET manager_id = ?, updated_at = datetime('now') WHERE id = ?").run(managerId, id);
+  syncEntityToSupabase("bookings", id).catch(() => {});
   logActivity(user.id, "booking_assigned", "booking", id, { manager_id: managerId });
   refresh();
   return { ok: true };
@@ -381,6 +384,7 @@ export async function approveAfterHours(id: number, approve: boolean, note?: str
   db.prepare("UPDATE bookings SET after_hours_approved_by = ?, notes = COALESCE(notes || char(10), '') || ? WHERE id = ?").run(
     approve ? user.id : null, `After-hours pickup ${approve ? "approved" : "declined"}${note ? `: ${note}` : ""}`, id
   );
+  syncEntityToSupabase("bookings", id).catch(() => {});
   logActivity(user.id, "after_hours_decision", "booking", id, { approve, note });
   refresh();
   return { ok: true };
@@ -390,11 +394,13 @@ export async function addManualAdjustment(input: { bookingId: number; type: stri
   const user = await staffUser();
   assertCan(user, "manager");
   const db = getDb();
-  db.prepare("INSERT INTO manual_adjustments (booking_id, type, amount, reason, employee_id, approved_by) VALUES (?, ?, ?, ?, ?, ?)").run(
+  const adjRes = db.prepare("INSERT INTO manual_adjustments (booking_id, type, amount, reason, employee_id, approved_by) VALUES (?, ?, ?, ?, ?, ?)").run(
     input.bookingId, input.type, input.amount, input.reason, user.id, user.id
   );
   const field = input.type === "damage_charge" ? "damage_amount" : input.type.startsWith("late_fee") ? "late_fee_amount" : "other_fees_amount";
   db.prepare(`UPDATE bookings SET ${field} = ${field} + ?, total_amount = total_amount + ?, updated_at = datetime('now') WHERE id = ?`).run(input.amount, input.amount, input.bookingId);
+  syncEntityToSupabase("manual_adjustments", Number(adjRes.lastInsertRowid)).catch(() => {});
+  syncEntityToSupabase("bookings", input.bookingId).catch(() => {});
   logActivity(user.id, "manual_adjustment", "booking", input.bookingId, input);
   refresh();
   return { ok: true };
@@ -438,9 +444,10 @@ export async function recordInspection(input: {
        late_fee_amount = ?, extra_km_amount = ?, total_amount = total_amount + ? + ?, updated_at = datetime('now') WHERE id = ?`
     ).run(input.odometer ?? null, late.fee, km.amount, late.fee, km.amount, input.bookingId);
     db.prepare("UPDATE vehicles SET status = 'available' WHERE id = ?").run(booking.vehicle_id);
-    db.prepare("INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'return_inspection', ?)").run(
+    const bhRes = db.prepare("INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'return_inspection', ?)").run(
       input.bookingId, user.id, JSON.stringify({ lateFee: late, extraKm: km })
     );
+    syncEntityToSupabase("booking_history", Number(bhRes.lastInsertRowid)).catch(() => {});
   }
   syncEntityToSupabase("bookings", input.bookingId).catch(() => {});
   logActivity(user.id, `inspection_${input.kind}`, "booking", input.bookingId, { inspection_id: inspectionId });
@@ -452,12 +459,14 @@ export async function addDamageReport(input: { bookingId: number; inspectionId?:
   const user = await staffUser();
   assertCan(user, "manager");
   const db = getDb();
-  db.prepare("INSERT INTO damage_reports (booking_id, inspection_id, description, charge_amount, approved_by) VALUES (?, ?, ?, ?, ?)").run(
+  const dmgRes = db.prepare("INSERT INTO damage_reports (booking_id, inspection_id, description, charge_amount, approved_by) VALUES (?, ?, ?, ?, ?)").run(
     input.bookingId, input.inspectionId ?? null, input.description, input.chargeAmount, user.id
   );
   db.prepare("UPDATE bookings SET damage_amount = damage_amount + ?, total_amount = total_amount + ?, updated_at = datetime('now') WHERE id = ?").run(
     input.chargeAmount, input.chargeAmount, input.bookingId
   );
+  syncEntityToSupabase("damage_reports", Number(dmgRes.lastInsertRowid)).catch(() => {});
+  syncEntityToSupabase("bookings", input.bookingId).catch(() => {});
   logActivity(user.id, "damage_report", "booking", input.bookingId, input);
   refresh();
   return { ok: true };
@@ -470,9 +479,10 @@ export async function addPayment(input: { bookingId: number; amount: number; kin
   const db = getDb();
   const booking = db.prepare("SELECT customer_id FROM bookings WHERE id = ?").get(input.bookingId) as { customer_id: number | null };
   const pn = nextNumber("PY", null);
-  db.prepare(
+  const payRes = db.prepare(
     "INSERT INTO payments (payment_no, booking_id, customer_id, amount, kind, method, due_date, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?)"
   ).run(pn, input.bookingId, booking.customer_id, input.amount, input.kind ?? "advance", input.method ?? null, input.dueDate ?? null, input.notes ?? null);
+  syncEntityToSupabase("payments", Number(payRes.lastInsertRowid)).catch(() => {});
   logActivity(user.id, "payment_created", "booking", input.bookingId, { amount: input.amount });
   refresh();
   return { ok: true };
@@ -485,6 +495,8 @@ export async function markPaymentPaid(id: number, gatewayRef?: string) {
   const receiptNo = nextNumber("RC", null);
   db.prepare("UPDATE payments SET status = 'Paid', paid_at = datetime('now'), receipt_no = ?, gateway_ref = COALESCE(?, gateway_ref) WHERE id = ?").run(receiptNo, gatewayRef ?? null, id);
   db.prepare("UPDATE bookings SET paid_amount = paid_amount + ?, updated_at = datetime('now') WHERE id = ?").run(p.amount, p.booking_id);
+  syncEntityToSupabase("payments", id).catch(() => {});
+  syncEntityToSupabase("bookings", p.booking_id).catch(() => {});
   const customer = p.customer_id ? db.prepare("SELECT phone, name FROM customers WHERE id = ?").get(p.customer_id) as { phone: string | null; name: string } : null;
   if (customer?.phone) {
     sendTemplate("invoice_generated", customer.phone, { name: customer.name, amount: `₹${p.amount.toLocaleString("en-IN")}`, total: `₹${p.amount.toLocaleString("en-IN")}`, booking_no: p.payment_no }, null, p.booking_id);

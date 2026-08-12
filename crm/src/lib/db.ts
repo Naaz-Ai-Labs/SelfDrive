@@ -81,14 +81,14 @@ export function getDb(): any {
       const vehCount = db.prepare("SELECT COUNT(*) AS c FROM vehicles").get() as { c: number } | undefined;
       if (!vehCount || vehCount.c === 0) {
         seedSync(db);
-        if (!isHydrating) {
-          isHydrating = true;
-          import("./hydrate-db")
-            .then(({ hydrateSQLiteFromSupabase }) => {
-              hydrateSQLiteFromSupabase(db).catch(() => {});
-            })
-            .catch(() => {});
-        }
+      }
+      if (!isHydrating) {
+        isHydrating = true;
+        import("./hydrate-db")
+          .then(({ hydrateSQLiteFromSupabase }) => {
+            hydrateSQLiteFromSupabase(db).catch(() => {});
+          })
+          .catch(() => {});
       }
     } catch {}
     return db;

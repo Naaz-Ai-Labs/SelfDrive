@@ -137,19 +137,20 @@ export async function submitBooking(input: {
       syncEntityToSupabase("enquiries", existing.id).catch(() => {});
     }
 
+    // Live sync customer and booking entities to Supabase FIRST so foreign keys exist
+    await syncEntityToSupabase("customers", customerId).catch(() => {});
+    await syncEntityToSupabase("bookings", bookingId).catch(() => {});
+
     if (input.documents && input.documents.length > 0) {
       for (const d of input.documents) {
+        const normalizedKind = normalizeDocKind(d.kind);
         const docRes = db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
-          customerId, bookingId, normalizeDocKind(d.kind), d.number ?? null, d.expiry ?? null, d.url
+          customerId, bookingId, normalizedKind, d.number ?? null, d.expiry ?? null, d.url
         );
         const docId = Number(docRes.lastInsertRowid);
         syncEntityToSupabase("customer_documents", docId).catch(() => {});
       }
     }
-
-    // Live sync customer and booking entities to Supabase
-    syncEntityToSupabase("customers", customerId).catch(() => {});
-    syncEntityToSupabase("bookings", bookingId).catch(() => {});
 
     try {
       revalidatePath("/dashboard", "layout");
@@ -293,9 +294,11 @@ async function getAvailableVehiclesFromSupabase(kind: string | null, _pickupAt: 
 export async function attachCustomerDocuments(customerId: number, bookingId: number, docs: Array<{ kind: string; url: string; number?: string; expiry?: string }>) {
   const db = getDb();
   for (const d of docs) {
-    db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
+    const docRes = db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
       customerId, bookingId, normalizeDocKind(d.kind), d.number ?? null, d.expiry ?? null, d.url
     );
+    const docId = Number(docRes.lastInsertRowid);
+    syncEntityToSupabase("customer_documents", docId).catch(() => {});
   }
   return { ok: true };
 }

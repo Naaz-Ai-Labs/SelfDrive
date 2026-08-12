@@ -174,12 +174,32 @@ export async function markPaymentEventProcessed(eventDbId: number, processingErr
   }
 }
 
-/** Syncs any record to Supabase asynchronously. */
+/** Syncs any record to Supabase asynchronously with self-healing column sanitization. */
 export async function syncTableRecordToSupabase(table: string, record: Record<string, unknown>): Promise<boolean> {
   const supabase = getSupabaseClient();
   if (!supabase) return false;
   try {
-    const { error } = await supabase.from(table).upsert([record]);
+    const payload = { ...record };
+    // Filter SQLite-only columns that do not exist in standard Supabase payments schema
+    if (table === "payments") {
+      delete payload.breakdown_json;
+      delete payload.upi_id;
+      delete payload.vpa;
+      delete payload.bank_ref_no;
+    }
+
+    let { error } = await supabase.from(table).upsert([payload]);
+
+    if (error && error.message.includes("Could not find the")) {
+      const match = error.message.match(/Could not find the '([^']+)' column/);
+      if (match && match[1]) {
+        const missingCol = match[1];
+        delete payload[missingCol];
+        const retry = await supabase.from(table).upsert([payload]);
+        error = retry.error;
+      }
+    }
+
     if (error) {
       console.warn(`⚠️ Supabase sync warning for [${table}]:`, error.message);
       return false;

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { syncLatestFromSupabase } from "@/lib/hydrate-db";
 import { formatINR, formatDateTime } from "@/lib/utils";
 import { KpiCard, StatusBadge } from "@/components/ui";
 import { AreaTrend } from "@/components/dashboard/charts/AreaTrend";
@@ -52,6 +53,10 @@ export default async function DashboardPage() {
 
   try {
     const db = getDb();
+    try {
+      await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
+    } catch {}
+
     const g = (sql: string, ...p: any[]) => db.prepare(sql).get(...p) ?? {};
     const a = (sql: string, ...p: any[]) => db.prepare(sql).all(...p) ?? [];
 
@@ -110,7 +115,7 @@ export default async function DashboardPage() {
     const rawPendingBookings = a(
       `SELECT b.*, v.name AS vehicle_name, v.registration_no, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email
        FROM bookings b LEFT JOIN vehicles v ON v.id = b.vehicle_id LEFT JOIN customers c ON c.id = b.customer_id
-       WHERE b.status IN ('Pending verification', 'Payment received', 'Enquiry', 'Draft') ORDER BY b.created_at DESC`
+       WHERE b.status IN ('Pending', 'Pending verification', 'Payment received', 'Enquiry', 'Draft') ORDER BY b.created_at DESC`
     ) as Array<Record<string, unknown>>;
 
     const pbIds = rawPendingBookings.map((r) => Number(r.id)).filter(Boolean);

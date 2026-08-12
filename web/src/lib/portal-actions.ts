@@ -96,10 +96,6 @@ export async function getCustomerPortalData(): Promise<PortalData | null> {
         const { data: bk } = await supabase.from("bookings").select("*, vehicles(name, registration_no)").eq("customer_id", customerId).order("created_at", { ascending: false });
         if (bk) bookings = bk;
       }
-      if (bookings.length === 0) {
-        const { data: bkAll } = await supabase.from("bookings").select("*, vehicles(name, registration_no)").order("created_at", { ascending: false }).limit(50);
-        if (bkAll) bookings = bkAll;
-      }
     } catch {}
 
     // 3. Payments for Customer's Bookings

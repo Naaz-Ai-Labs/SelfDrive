@@ -6,7 +6,7 @@ import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { createRazorpayOrder, verifyRazorpaySignature, fetchRazorpayPayment, razorpayConfigured, razorpayKeyId } from "./razorpay";
 import { generateInvoiceForBooking } from "./invoices";
-import { toPaise, syncPaymentToSupabase } from "./supabase-sync";
+import { toPaise, syncPaymentToSupabase, syncEntityToSupabase } from "./supabase-sync";
 
 /**
  * Creates (or reuses) a Pending payment record for the full outstanding amount on a
@@ -198,10 +198,12 @@ export async function verifyBookingPayment(input: {
   db.prepare("UPDATE bookings SET paid_amount = paid_amount + ?, status = ?, updated_at = datetime('now') WHERE id = ?").run(
     payment.amount, newBookingStatus, payment.booking_id
   );
+  syncEntityToSupabase("bookings", payment.booking_id).catch(() => {});
 
-  db.prepare("INSERT INTO booking_history (booking_id, action, detail) VALUES (?, 'payment_verified', ?)").run(
+  const histRes = db.prepare("INSERT INTO booking_history (booking_id, action, detail) VALUES (?, 'payment_verified', ?)").run(
     payment.booking_id, JSON.stringify({ payment_no: payment.payment_no, amount: payment.amount, razorpay_payment_id: input.razorpayPaymentId, status: newBookingStatus })
   );
+  syncEntityToSupabase("booking_history", Number(histRes.lastInsertRowid)).catch(() => {});
   logActivity(null, "payment_verified", "payment", payment.id, { amount: payment.amount, razorpay_payment_id: input.razorpayPaymentId });
   const invoice = generateInvoiceForBooking(payment.booking_id);
 
