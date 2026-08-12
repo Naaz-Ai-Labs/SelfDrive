@@ -9,19 +9,26 @@ export const revalidate = 0;
 
 export default async function BookingsPage() {
   const db = getDb();
-  await syncLatestFromSupabase(db);
+  try {
+    await syncLatestFromSupabase(db);
+  } catch {}
 
-  const rawRows = db
-    .prepare(
-      `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
-              v.name AS vehicle_name, v.registration_no, u.name AS manager_name
-       FROM bookings b
-       LEFT JOIN customers c ON c.id = b.customer_id
-       LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       LEFT JOIN users u ON u.id = b.manager_id
-       ORDER BY b.created_at DESC, b.pickup_at DESC LIMIT 200`
-    )
-    .all() as Array<Record<string, unknown>>;
+  let rawRows: Array<Record<string, unknown>> = [];
+  try {
+    rawRows = db
+      .prepare(
+        `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
+                v.name AS vehicle_name, v.registration_no, u.name AS manager_name
+         FROM bookings b
+         LEFT JOIN customers c ON c.id = b.customer_id
+         LEFT JOIN vehicles v ON v.id = b.vehicle_id
+         LEFT JOIN users u ON u.id = b.manager_id
+         ORDER BY b.created_at DESC, b.pickup_at DESC LIMIT 200`
+      )
+      .all() as Array<Record<string, unknown>>;
+  } catch (err) {
+    console.error("Bookings query error:", err);
+  }
 
   const bookingIds = rawRows.map((r) => Number(r.id)).filter(Boolean);
   let allDocs: CustomerDocument[] = [];
@@ -54,17 +61,17 @@ export default async function BookingsPage() {
 
   const bookings: BookingReviewData[] = rawRows.map((r) => ({
     id: Number(r.id),
-    booking_no: String(r.booking_no),
-    customer_id: r.customer_id as number | null,
+    booking_no: r.booking_no ? String(r.booking_no) : `BK-${r.id}`,
+    customer_id: r.customer_id ? Number(r.customer_id) : null,
     customer_name: (r.customer_name as string) ?? null,
     customer_phone: (r.customer_phone as string) ?? null,
     customer_email: (r.customer_email as string) ?? null,
-    vehicle_id: r.vehicle_id as number | null,
+    vehicle_id: r.vehicle_id ? Number(r.vehicle_id) : null,
     vehicle_name: (r.vehicle_name as string) ?? null,
     registration_no: (r.registration_no as string) ?? null,
-    pickup_at: String(r.pickup_at),
-    return_at: String(r.return_at),
-    status: String(r.status),
+    pickup_at: (r.pickup_at as string) ?? new Date().toISOString(),
+    return_at: (r.return_at as string) ?? new Date().toISOString(),
+    status: (r.status as string) ?? "Pending",
     base_amount: Number(r.base_amount ?? 0),
     surcharge_amount: Number(r.surcharge_amount ?? 0),
     gst_amount: Number(r.gst_amount ?? 0),
@@ -72,7 +79,7 @@ export default async function BookingsPage() {
     total_amount: Number(r.total_amount ?? 0),
     paid_amount: Number(r.paid_amount ?? 0),
     notes: (r.notes as string) ?? null,
-    created_at: String(r.created_at ?? ""),
+    created_at: (r.created_at as string) ?? new Date().toISOString(),
     documents: docsByBookingId.get(Number(r.id)) ?? [],
     payments: paymentsByBookingId.get(Number(r.id)) ?? [],
   }));

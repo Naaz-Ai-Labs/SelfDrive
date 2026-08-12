@@ -15,20 +15,27 @@ export default async function PaymentsPage() {
   if (!user) redirect("/dashboard/login");
 
   const db = getDb();
-  await syncLatestFromSupabase(db);
+  try {
+    await syncLatestFromSupabase(db);
+  } catch {}
 
-  const rawRows = db
-    .prepare(
-      `SELECT p.*, b.booking_no, b.pickup_at, b.return_at,
-              c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
-              v.name AS vehicle_name, v.registration_no
-       FROM payments p
-       LEFT JOIN bookings b ON b.id = p.booking_id
-       LEFT JOIN customers c ON c.id = p.customer_id
-       LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       ORDER BY p.created_at DESC, p.due_date IS NULL, p.due_date`
-    )
-    .all() as Array<Record<string, unknown>>;
+  let rawRows: Array<Record<string, unknown>> = [];
+  try {
+    rawRows = db
+      .prepare(
+        `SELECT p.*, b.booking_no, b.pickup_at, b.return_at,
+                c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
+                v.name AS vehicle_name, v.registration_no
+         FROM payments p
+         LEFT JOIN bookings b ON b.id = p.booking_id
+         LEFT JOIN customers c ON c.id = p.customer_id
+         LEFT JOIN vehicles v ON v.id = b.vehicle_id
+         ORDER BY p.created_at DESC, p.due_date IS NULL, p.due_date`
+      )
+      .all() as Array<Record<string, unknown>>;
+  } catch (err) {
+    console.error("Payments query error:", err);
+  }
 
   for (const p of rawRows) {
     const rzpId = p.razorpay_payment_id as string | undefined;
