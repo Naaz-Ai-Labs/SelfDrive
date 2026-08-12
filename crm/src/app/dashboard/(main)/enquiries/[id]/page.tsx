@@ -14,16 +14,38 @@ export const revalidate = 0;
 export default async function EnquiryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: paramId } = await params;
   const db = getDb();
-  const id = Number(paramId);
-  const enquiry = db
-    .prepare(`SELECT e.*, c.name AS category_name, v.name AS vehicle_name FROM enquiries e
-      LEFT JOIN vehicle_categories c ON c.id = e.category_id LEFT JOIN vehicles v ON v.id = e.vehicle_id WHERE e.id = ?`)
-    .get(id) as Record<string, unknown> | undefined;
-  if (!enquiry) notFound();
+  const numId = Number(paramId);
 
-  const stages = getSetting<string[]>("enquiry_stages", []);
-  const staff = getStaff();
-  const history = db.prepare("SELECT h.*, u.name AS user_name FROM enquiry_history h LEFT JOIN users u ON u.id = h.user_id WHERE h.enquiry_id = ? ORDER BY h.created_at DESC").all(id) as Array<Record<string, unknown>>;
+  const enquiry = db
+    .prepare(
+      `SELECT e.*, c.name AS category_name, v.name AS vehicle_name FROM enquiries e
+       LEFT JOIN vehicle_categories c ON c.id = e.category_id LEFT JOIN vehicles v ON v.id = e.vehicle_id
+       WHERE e.id = ? OR e.enquiry_no = ?`
+    )
+    .get(numId || 0, paramId) as Record<string, unknown> | undefined;
+
+  if (!enquiry) notFound();
+  const id = Number(enquiry.id);
+
+  let stages: string[] = [];
+  try {
+    stages = getSetting<string[]>("enquiry_stages", []) || [];
+  } catch {}
+  if (!stages || stages.length === 0) {
+    stages = ["New", "Contacted", "Quoted", "Converted", "Closed", "Lost"];
+  }
+
+  let staff: any[] = [];
+  try {
+    staff = getStaff();
+  } catch {}
+
+  let history: Array<Record<string, unknown>> = [];
+  try {
+    history = db
+      .prepare("SELECT h.*, u.name AS user_name FROM enquiry_history h LEFT JOIN users u ON u.id = h.user_id WHERE h.enquiry_id = ? ORDER BY h.created_at DESC")
+      .all(id) as Array<Record<string, unknown>>;
+  } catch {}
   const data = parseJSON<Record<string, unknown>>(String(enquiry.data ?? "{}"), {});
 
   return (

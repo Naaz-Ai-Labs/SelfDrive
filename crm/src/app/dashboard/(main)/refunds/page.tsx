@@ -17,13 +17,18 @@ export default async function RefundsPage() {
   if (user.role !== "admin") redirect("/dashboard");
 
   const db = getDb();
-  const refunds = db
-    .prepare(
-      `SELECT r.*, b.booking_no, c.name AS customer_name FROM refunds r
-       LEFT JOIN bookings b ON b.id = r.booking_id LEFT JOIN customers c ON c.id = r.customer_id
-       ORDER BY r.requested_at DESC`
-    )
-    .all() as Array<Record<string, unknown>>;
+  let refunds: Array<Record<string, unknown>> = [];
+  try {
+    refunds = db
+      .prepare(
+        `SELECT r.*, b.booking_no, c.name AS customer_name FROM refunds r
+         LEFT JOIN bookings b ON b.id = r.booking_id LEFT JOIN customers c ON c.id = r.customer_id
+         ORDER BY r.requested_at DESC`
+      )
+      .all() as Array<Record<string, unknown>>;
+  } catch (err) {
+    console.error("Refunds query error:", err);
+  }
 
   return (
     <div className="space-y-6">

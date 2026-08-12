@@ -32,13 +32,8 @@ export async function GET(
     if (supabaseUrl && supabaseKey) {
       try {
         const sb = createClient(supabaseUrl, supabaseKey);
-        let q = sb.from("bookings").select("*, vehicles(*), customers(*)");
-        if (/^\d+$/.test(bookingNo)) {
-          q = q.eq("id", Number(bookingNo));
-        } else {
-          q = q.eq("booking_no", bookingNo);
-        }
-        const { data: b } = await q.single();
+        let q = sb.from("bookings").select("*, vehicles(*), customers(*)").or(`id.eq.${Number(bookingNo) || 0},booking_no.eq.${bookingNo}`);
+        const { data: b } = await q.maybeSingle();
         if (b) {
           booking = {
             ...b,

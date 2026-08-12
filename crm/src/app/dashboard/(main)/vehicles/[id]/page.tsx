@@ -20,7 +20,7 @@ export default async function VehicleAdminDetailPage({ params }: { params: Promi
   let bookings: Array<Record<string, unknown>> = [];
 
   try {
-    vehicle = getVehicleById(Number(paramId));
+    vehicle = getVehicleById(paramId);
     if (!vehicle) notFound();
     categories = getVehicleCategories(false);
     branches = getBranches(false);

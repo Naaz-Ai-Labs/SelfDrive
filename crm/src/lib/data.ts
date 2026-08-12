@@ -239,20 +239,22 @@ export function getVehicle(slug: string): Vehicle | null {
   return getVehicles().find((v) => v.slug === slug) ?? null;
 }
 
-export function getVehicleById(id: number): Vehicle | null {
+export function getVehicleById(idOrSlug: number | string): Vehicle | null {
   try {
+    const num = Number(idOrSlug);
     const row = getDb()
       .prepare(
         `SELECT v.*, c.name AS category_name, c.kind AS category_kind, c.slug AS category_slug, b.name AS branch_name
          FROM vehicles v
          LEFT JOIN vehicle_categories c ON c.id = v.category_id
          LEFT JOIN branches b ON b.id = v.branch_id
-         WHERE v.id = ?`
+         WHERE v.id = ? OR v.slug = ? OR v.registration_no = ?`
       )
-      .get(id) as Record<string, unknown> | undefined;
+      .get(num || 0, String(idOrSlug), String(idOrSlug)) as Record<string, unknown> | undefined;
     if (row) return attachPhotos(row);
   } catch {}
-  return getVehicles({}, false).find((v) => v.id === id) ?? null;
+  const numId = Number(idOrSlug);
+  return getVehicles({}, false).find((v) => v.id === numId || v.slug === String(idOrSlug)) ?? null;
 }
 
 export function getBranches(onlyActive = true): Branch[] {

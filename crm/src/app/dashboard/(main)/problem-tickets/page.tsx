@@ -11,18 +11,24 @@ export const revalidate = 0;
 
 const FILTERS = ["Active", "Open", "In progress", "Resolved", "Cancelled", "All"] as const;
 
-export default function ProblemTicketsPage({ searchParams }: { searchParams: { status?: string } }) {
+export default async function ProblemTicketsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const db = getDb();
-  const active = FILTERS.includes(searchParams.status as (typeof FILTERS)[number]) ? (searchParams.status as (typeof FILTERS)[number]) : "Active";
+  const sp = await searchParams;
+  const active = FILTERS.includes(sp?.status as (typeof FILTERS)[number]) ? (sp?.status as (typeof FILTERS)[number]) : "Active";
 
   const where = active === "All" ? "" : active === "Active" ? "WHERE t.status IN ('Open','In progress')" : "WHERE t.status = ?";
-  const tickets = db
-    .prepare(
-      `SELECT t.*, b.booking_no, v.name AS vehicle_name, c.name AS customer_name FROM problem_tickets t
-       LEFT JOIN bookings b ON b.id = t.booking_id LEFT JOIN vehicles v ON v.id = t.vehicle_id LEFT JOIN customers c ON c.id = t.customer_id
-       ${where} ORDER BY t.created_at DESC`
-    )
-    .all(...(active !== "All" && active !== "Active" ? [active] : [])) as Array<Record<string, unknown>>;
+  let tickets: Array<Record<string, unknown>> = [];
+  try {
+    tickets = db
+      .prepare(
+        `SELECT t.*, b.booking_no, v.name AS vehicle_name, c.name AS customer_name FROM problem_tickets t
+         LEFT JOIN bookings b ON b.id = t.booking_id LEFT JOIN vehicles v ON v.id = t.vehicle_id LEFT JOIN customers c ON c.id = t.customer_id
+         ${where} ORDER BY t.created_at DESC`
+      )
+      .all(...(active !== "All" && active !== "Active" ? [active] : [])) as Array<Record<string, unknown>>;
+  } catch (err) {
+    console.error("Problem tickets query error:", err);
+  }
   const staff = getStaff();
   const vehicles = getVehicles({}, false).map((v) => ({ id: v.id, name: v.name }));
 

@@ -23,16 +23,18 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
              FROM customers c WHERE 1=1`;
   const params: Array<string> = [];
   if (q) {
-    if (/^\d+$/.test(q)) {
-      sql += " AND c.id = ?"; params.push(q);
-    } else {
-      sql += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)";
-      const like = `%${q}%`;
-      params.push(like, like, like);
-    }
+    sql += " AND (c.id = ? OR c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.city LIKE ?)";
+    const like = `%${q}%`;
+    params.push(q, like, like, like, like);
   }
   sql += " ORDER BY c.created_at DESC LIMIT 100";
-  const customers = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+
+  let customers: Array<Record<string, unknown>> = [];
+  try {
+    customers = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+  } catch (err) {
+    console.error("Customers query error:", err);
+  }
 
   return (
     <div className="space-y-6">
