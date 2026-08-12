@@ -7,7 +7,7 @@ import { fetchRazorpayPayment } from "@/lib/razorpay";
 import { PaymentsTableWithDrawer } from "@/components/dashboard/PaymentsTableWithDrawer";
 import type { PaymentTransactionData } from "@/components/dashboard/PaymentDetailModal";
 
-export const metadata: Metadata = { title: "Payments", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Payments | Darshh CRM", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
 
 export default async function PaymentsPage() {
