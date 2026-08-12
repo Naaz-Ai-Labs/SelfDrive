@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { syncLatestFromSupabase } from "@/lib/hydrate-db";
-import { formatDateTime, formatINR } from "@/lib/utils";
-import { StatusBadge } from "@/components/ui";
+import { BookingsTableWithTabs } from "@/components/dashboard/BookingsTableWithTabs";
+import type { BookingReviewData, CustomerDocument } from "@/components/dashboard/BookingReviewModal";
 
 export const metadata: Metadata = { title: "Bookings", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -11,56 +10,73 @@ export const revalidate = 0;
 export default async function BookingsPage() {
   const db = getDb();
   await syncLatestFromSupabase(db);
-  const rows = db
+
+  const rawRows = db
     .prepare(
-      `SELECT b.*, c.name AS customer_name, v.name AS vehicle_name, u.name AS manager_name
+      `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
+              v.name AS vehicle_name, v.registration_no, u.name AS manager_name
        FROM bookings b
        LEFT JOIN customers c ON c.id = b.customer_id
        LEFT JOIN vehicles v ON v.id = b.vehicle_id
        LEFT JOIN users u ON u.id = b.manager_id
-       ORDER BY b.pickup_at DESC LIMIT 150`
+       ORDER BY b.created_at DESC, b.pickup_at DESC LIMIT 200`
     )
     .all() as Array<Record<string, unknown>>;
 
+  const bookingIds = rawRows.map((r) => Number(r.id)).filter(Boolean);
+  let allDocs: CustomerDocument[] = [];
+  if (bookingIds.length > 0) {
+    try {
+      const placeholders = bookingIds.map(() => "?").join(",");
+      allDocs = db
+        .prepare(`SELECT * FROM customer_documents WHERE booking_id IN (${placeholders})`)
+        .all(...bookingIds) as CustomerDocument[];
+    } catch {}
+  }
+
+  const docsByBookingId = new Map<number, CustomerDocument[]>();
+  for (const doc of allDocs) {
+    const bId = Number((doc as any).booking_id);
+    if (!docsByBookingId.has(bId)) docsByBookingId.set(bId, []);
+    docsByBookingId.get(bId)!.push(doc);
+  }
+
+  const bookings: BookingReviewData[] = rawRows.map((r) => ({
+    id: Number(r.id),
+    booking_no: String(r.booking_no),
+    customer_id: r.customer_id as number | null,
+    customer_name: (r.customer_name as string) ?? null,
+    customer_phone: (r.customer_phone as string) ?? null,
+    customer_email: (r.customer_email as string) ?? null,
+    vehicle_id: r.vehicle_id as number | null,
+    vehicle_name: (r.vehicle_name as string) ?? null,
+    registration_no: (r.registration_no as string) ?? null,
+    pickup_at: String(r.pickup_at),
+    return_at: String(r.return_at),
+    status: String(r.status),
+    base_amount: Number(r.base_amount ?? 0),
+    surcharge_amount: Number(r.surcharge_amount ?? 0),
+    gst_amount: Number(r.gst_amount ?? 0),
+    deposit_amount: Number(r.deposit_amount ?? 0),
+    total_amount: Number(r.total_amount ?? 0),
+    paid_amount: Number(r.paid_amount ?? 0),
+    notes: (r.notes as string) ?? null,
+    created_at: String(r.created_at ?? ""),
+    documents: docsByBookingId.get(Number(r.id)) ?? [],
+  }));
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold text-ink-900">Bookings</h1>
-        <p className="mt-1 text-sm text-ink-500">Every booking from pending verification through to completion.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 pb-4">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-ink-900">Bookings Management</h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Review customer bookings, inspect uploaded Driving Licences & Aadhaar IDs, and manage rejections.
+          </p>
+        </div>
       </div>
 
-      {rows.length === 0 ? (
-        <div className="card p-8 text-center text-sm text-ink-500">No bookings yet.</div>
-      ) : (
-        <div className="card overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
-            <thead>
-              <tr className="border-b border-ink-100 text-left text-xs uppercase tracking-wider text-ink-400">
-                <th className="px-4 py-3 font-semibold">Booking</th>
-                <th className="px-4 py-3 font-semibold">Customer</th>
-                <th className="px-4 py-3 font-semibold">Vehicle</th>
-                <th className="px-4 py-3 font-semibold">Pickup</th>
-                <th className="px-4 py-3 font-semibold">Return</th>
-                <th className="px-4 py-3 font-semibold">Paid / Total</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((b) => (
-                <tr key={Number(b.id)} className="border-b border-ink-50 hover:bg-ink-50/40">
-                  <td className="px-4 py-3"><Link href={`/dashboard/bookings/${Number(b.id)}`} className="font-semibold text-ink-900 hover:text-brand-700">{String(b.booking_no)}</Link></td>
-                  <td className="px-4 py-3 text-ink-700">{String(b.customer_name ?? "—")}</td>
-                  <td className="px-4 py-3 text-ink-600">{String(b.vehicle_name ?? "—")}</td>
-                  <td className="px-4 py-3 text-ink-500">{formatDateTime(String(b.pickup_at ?? ""))}</td>
-                  <td className="px-4 py-3 text-ink-500">{formatDateTime(String(b.return_at ?? ""))}</td>
-                  <td className="px-4 py-3 font-medium text-ink-800">{formatINR(Number(b.paid_amount))} / {formatINR(Number(b.total_amount))}</td>
-                  <td className="px-4 py-3"><StatusBadge status={String(b.status)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <BookingsTableWithTabs initialBookings={bookings} />
     </div>
   );
 }

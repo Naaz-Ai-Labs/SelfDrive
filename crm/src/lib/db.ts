@@ -752,20 +752,33 @@ function applySchema(database: DatabaseSync) {
     database.exec("UPDATE settings SET value = 'Pre-booking only · Mon–Sun, 8:00 AM – 8:00 AM' WHERE key = 'hours';");
     database.exec("UPDATE settings SET value = '08:00 AM - 08:00 AM' WHERE key = 'operating_hours';");
     database.exec("UPDATE vehicles SET total_units = 4 WHERE id = 1;"); // Honda Dio
-    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 2;"); // Honda Activa
-    database.exec("UPDATE vehicles SET total_units = 6 WHERE id = 3;"); // TVS Jupiter
+    database.exec("UPDATE vehicles SET total_units = 3 WHERE id = 2;"); // Honda Activa
+    database.exec("UPDATE vehicles SET total_units = 4 WHERE id = 3;"); // TVS Jupiter
     database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 4;"); // Yamaha RayZR
     database.exec("UPDATE vehicles SET total_units = 3 WHERE id = 5;"); // TVS NTorq
-    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 6;"); // TVS Radar
-    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 7;"); // Pulsar NS
-    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 8;"); // TVS Ronin
-    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 9;"); // Honda CB200X
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 6;"); // TVS Radar/Ronin
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 7;"); // Honda CB200X
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 8;"); // TVS Raider
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 9;"); // Pulsar NS
     database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 10;"); // Honda Shine
     database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 11;"); // Baleno
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 13;"); // Dzire
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 14;"); // Ciaz
     database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 15;"); // Ertiga
-    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 16;"); // Thar
+    database.exec("UPDATE vehicles SET total_units = 2 WHERE id = 16;"); // Thar (2 units)
+    database.exec("UPDATE vehicles SET total_units = 1 WHERE id = 18;"); // Tempo Traveller
+    database.exec("UPDATE vehicles SET total_units = 0 WHERE id = 19;"); // Tempo Tour Package Variant
+
+    // Seed Sample Paid Booking with Uploaded Documents (DL & Aadhaar) for Staff Verification
+    try {
+      database.exec("INSERT OR IGNORE INTO customers (id, name, phone, email, city) VALUES (999, 'Rajesh Sharma', '+919845123456', 'rajesh.sharma@example.com', 'Sakleshpura');");
+      database.exec("INSERT OR IGNORE INTO bookings (id, booking_no, customer_id, vehicle_id, branch_id, pickup_at, return_at, status, base_amount, surcharge_amount, gst_amount, deposit_amount, total_amount, paid_amount, created_at, updated_at) VALUES (999, 'BK-TEST-PAID-01', 999, 16, 1, datetime('now', '+1 day', 'start of day', '+9 hours'), datetime('now', '+2 days', 'start of day', '+9 hours'), 'Payment received', 5000, 0, 300, 2000, 7300, 7300, datetime('now', '-2 hours'), datetime('now', '-2 hours'));");
+      database.exec("INSERT OR IGNORE INTO payments (id, booking_id, customer_id, payment_no, kind, amount, status, method, razorpay_payment_id, gateway_ref, notes, paid_at, created_at) VALUES (999, 999, 999, 'PY-TEST-PAID-01', 'full', 7300, 'Paid', 'Razorpay', 'pay_sample_paid_987', 'pay_sample_paid_987', 'Razorpay Online Payment verified (Order: ord_sample_paid_987)', datetime('now', '-2 hours'), datetime('now', '-2 hours'));");
+      database.exec("INSERT OR IGNORE INTO customer_documents (id, customer_id, booking_id, kind, number, expiry_date, file_path, verified, created_at) VALUES (901, 999, 999, 'licence', 'KA-46-2021-0012345', '2041-08-14', '/documents/sample-dl.svg', 0, datetime('now', '-2 hours'));");
+      database.exec("INSERT OR IGNORE INTO customer_documents (id, customer_id, booking_id, kind, number, expiry_date, file_path, verified, created_at) VALUES (902, 999, 999, 'govt_id', '5412 8901 9876', NULL, '/documents/sample-aadhaar.svg', 0, datetime('now', '-2 hours'));");
+    } catch (err) {
+      console.error("Error seeding sample booking:", err);
+    }
     database.exec(`
       UPDATE terms_versions SET content = '${JSON.stringify([
         "A valid driving licence and government photo ID are required at pickup.",

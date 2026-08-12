@@ -1,0 +1,364 @@
+"use client";
+
+import { useState, useMemo } from "react";
+import Link from "next/link";
+import { formatDateTime, formatINR, waLink } from "@/lib/utils";
+import { StatusBadge } from "@/components/ui";
+import { BookingReviewModal, type BookingReviewData } from "./BookingReviewModal";
+
+export function BookingsTableWithTabs({
+  initialBookings,
+}: {
+  initialBookings: BookingReviewData[];
+}) {
+  const [activeTab, setActiveTab] = useState<"all" | "active" | "pending" | "rejected">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedBooking, setSelectedBooking] = useState<BookingReviewData | null>(null);
+
+  // Filter Bookings by Tab
+  const allCount = initialBookings.length;
+  const activeCount = initialBookings.filter((b) =>
+    ["Confirmed", "Ready for pickup", "Vehicle handed over", "Active rental", "Return pending"].includes(b.status)
+  ).length;
+  const pendingCount = initialBookings.filter((b) =>
+    ["Pending verification", "Payment received", "Draft", "Pending payment"].includes(b.status)
+  ).length;
+  const rejectedCount = initialBookings.filter((b) =>
+    ["Rejected", "Cancelled"].includes(b.status)
+  ).length;
+
+  const filteredBookings = useMemo(() => {
+    let list = initialBookings;
+
+    if (activeTab === "active") {
+      list = list.filter((b) =>
+        ["Confirmed", "Ready for pickup", "Vehicle handed over", "Active rental", "Return pending"].includes(b.status)
+      );
+    } else if (activeTab === "pending") {
+      list = list.filter((b) =>
+        ["Pending verification", "Payment received", "Draft", "Pending payment"].includes(b.status)
+      );
+    } else if (activeTab === "rejected") {
+      list = list.filter((b) => ["Rejected", "Cancelled"].includes(b.status));
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(
+        (b) =>
+          b.booking_no.toLowerCase().includes(q) ||
+          (b.customer_name && b.customer_name.toLowerCase().includes(q)) ||
+          (b.customer_phone && b.customer_phone.toLowerCase().includes(q)) ||
+          (b.vehicle_name && b.vehicle_name.toLowerCase().includes(q)) ||
+          (b.notes && b.notes.toLowerCase().includes(q))
+      );
+    }
+
+    return list;
+  }, [initialBookings, activeTab, searchQuery]);
+
+  return (
+    <div className="space-y-4">
+      {/* Search & Tabs Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Navigation Tabs */}
+        <nav className="flex items-center gap-1.5 overflow-x-auto rounded-xl border border-ink-200 bg-white p-1 shadow-xs">
+          <button
+            type="button"
+            onClick={() => setActiveTab("all")}
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+              activeTab === "all"
+                ? "bg-ink-950 text-white shadow-xs"
+                : "text-ink-600 hover:bg-ink-50"
+            }`}
+          >
+            All Bookings ({allCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("active")}
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+              activeTab === "active"
+                ? "bg-emerald-600 text-white shadow-xs"
+                : "text-ink-600 hover:bg-ink-50"
+            }`}
+          >
+            Active & Confirmed ({activeCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("pending")}
+            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+              activeTab === "pending"
+                ? "bg-amber-500 text-white shadow-xs"
+                : "text-ink-600 hover:bg-ink-50"
+            }`}
+          >
+            <span>Pending Verification</span>
+            <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+              activeTab === "pending" ? "bg-white text-amber-700" : "bg-amber-100 text-amber-900"
+            }`}>
+              {pendingCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("rejected")}
+            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+              activeTab === "rejected"
+                ? "bg-red-600 text-white shadow-xs"
+                : "text-ink-600 hover:bg-ink-50"
+            }`}
+          >
+            <span>Rejected Bookings ❌</span>
+            <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+              activeTab === "rejected" ? "bg-white text-red-700" : "bg-red-100 text-red-900"
+            }`}>
+              {rejectedCount}
+            </span>
+          </button>
+        </nav>
+
+        {/* Quick Search */}
+        <div className="relative min-w-[240px] flex-1 sm:max-w-xs">
+          <input
+            type="text"
+            placeholder="Search booking #, customer, phone, vehicle..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-ink-200 bg-white py-1.5 pl-8 pr-3 text-xs text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-hidden"
+          />
+          <span className="absolute left-2.5 top-2 text-xs text-ink-400">🔍</span>
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2.5 top-1.5 text-xs text-ink-400 hover:text-ink-900"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Bookings Table */}
+      {filteredBookings.length === 0 ? (
+        <div className="card p-10 text-center text-sm text-ink-500 space-y-1">
+          <p className="font-semibold">No bookings found</p>
+          <p className="text-xs text-ink-400">
+            {searchQuery
+              ? "No records matched your search query."
+              : activeTab === "rejected"
+              ? "Great! No rejected or cancelled bookings in this section."
+              : "No bookings present in this category."}
+          </p>
+        </div>
+      ) : activeTab === "rejected" ? (
+        /* Dedicated Rejected Bookings Tab View */
+        <div className="card overflow-x-auto border-red-200 shadow-xs">
+          <div className="bg-red-50/70 px-4 py-2.5 border-b border-red-200 flex items-center justify-between text-xs text-red-900 font-semibold">
+            <span>Showing {filteredBookings.length} Rejected / Cancelled Bookings with Recorded Reasons</span>
+            <span className="text-[11px] text-red-700 font-normal">Click any row to review details or restore</span>
+          </div>
+
+          <table className="w-full min-w-[950px] text-sm">
+            <thead>
+              <tr className="border-b border-ink-100 bg-ink-50/50 text-left text-xs uppercase tracking-wider text-ink-400">
+                <th className="px-4 py-3 font-semibold">Booking</th>
+                <th className="px-4 py-3 font-semibold">Customer</th>
+                <th className="px-4 py-3 font-semibold">Vehicle</th>
+                <th className="px-4 py-3 font-semibold">Rejection Reason & Notes</th>
+                <th className="px-4 py-3 font-semibold">Paid / Total</th>
+                <th className="px-4 py-3 font-semibold">Status</th>
+                <th className="px-4 py-3 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredBookings.map((b) => (
+                <tr
+                  key={b.id}
+                  onClick={() => setSelectedBooking(b)}
+                  className="cursor-pointer border-b border-ink-50 bg-red-50/10 hover:bg-red-50/30 transition"
+                >
+                  <td className="px-4 py-3.5">
+                    <span className="font-bold text-red-950 hover:underline">
+                      {b.booking_no}
+                    </span>
+                    <p className="text-[11px] text-ink-400">{formatDateTime(b.created_at || b.pickup_at)}</p>
+                  </td>
+
+                  <td className="px-4 py-3.5">
+                    <p className="font-semibold text-ink-900">{b.customer_name ?? "—"}</p>
+                    <p className="text-xs text-ink-500 font-mono">{b.customer_phone ?? "—"}</p>
+                  </td>
+
+                  <td className="px-4 py-3.5">
+                    <p className="font-medium text-ink-800">{b.vehicle_name ?? "—"}</p>
+                    <p className="text-xs text-ink-400">{b.registration_no ?? "—"}</p>
+                  </td>
+
+                  <td className="px-4 py-3.5 max-w-xs">
+                    <div className="rounded-lg bg-red-100/70 p-2 text-xs font-semibold text-red-900 border border-red-200">
+                      <span>❌ {b.notes || "Rejection reason not recorded"}</span>
+                    </div>
+                  </td>
+
+                  <td className="px-4 py-3.5 font-medium text-ink-700">
+                    {formatINR(b.paid_amount)} / {formatINR(b.total_amount)}
+                  </td>
+
+                  <td className="px-4 py-3.5">
+                    <StatusBadge status={b.status} />
+                  </td>
+
+                  <td className="px-4 py-3.5 text-right space-x-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedBooking(b);
+                      }}
+                      className="btn-secondary px-3 py-1 text-xs text-red-800 border-red-200 hover:bg-red-50"
+                    >
+                      Review / Reopen
+                    </button>
+                    <Link
+                      href={`/dashboard/bookings/${b.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="btn-secondary px-2.5 py-1 text-xs"
+                    >
+                      Full ↗
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        /* Standard All / Active / Pending Bookings Table */
+        <div className="card overflow-x-auto shadow-xs">
+          <table className="w-full min-w-[950px] text-sm">
+            <thead>
+              <tr className="border-b border-ink-100 bg-ink-50/50 text-left text-xs uppercase tracking-wider text-ink-400">
+                <th className="px-4 py-3 font-semibold">Booking</th>
+                <th className="px-4 py-3 font-semibold">Customer</th>
+                <th className="px-4 py-3 font-semibold">Vehicle</th>
+                <th className="px-4 py-3 font-semibold">Pickup</th>
+                <th className="px-4 py-3 font-semibold">Return</th>
+                <th className="px-4 py-3 font-semibold">ID Proofs</th>
+                <th className="px-4 py-3 font-semibold">Paid / Total</th>
+                <th className="px-4 py-3 font-semibold">Status</th>
+                <th className="px-4 py-3 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredBookings.map((b) => {
+                const docs = b.documents ?? [];
+                const verifiedDocs = docs.filter((d) => d.verified === 1).length;
+
+                return (
+                  <tr
+                    key={b.id}
+                    onClick={() => setSelectedBooking(b)}
+                    className="cursor-pointer border-b border-ink-50 hover:bg-ink-50/60 transition"
+                  >
+                    <td className="px-4 py-3.5">
+                      <span className="font-bold text-ink-900 hover:text-brand-700">
+                        {b.booking_no}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3.5">
+                      <p className="font-semibold text-ink-900">{b.customer_name ?? "—"}</p>
+                      {b.customer_phone && (
+                        <a
+                          href={waLink(b.customer_phone)}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs text-brand-700 hover:underline inline-block font-mono"
+                        >
+                          {b.customer_phone} 💬
+                        </a>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3.5">
+                      <p className="font-medium text-ink-800">{b.vehicle_name ?? "—"}</p>
+                      <p className="text-xs text-ink-400">{b.registration_no ?? "—"}</p>
+                    </td>
+
+                    <td className="px-4 py-3.5 text-xs text-ink-600">
+                      {formatDateTime(b.pickup_at)}
+                    </td>
+
+                    <td className="px-4 py-3.5 text-xs text-ink-600">
+                      {formatDateTime(b.return_at)}
+                    </td>
+
+                    <td className="px-4 py-3.5">
+                      {docs.length === 0 ? (
+                        <span className="text-xs text-ink-400">—</span>
+                      ) : (
+                        <span
+                          className={`badge text-[11px] font-bold ${
+                            verifiedDocs === docs.length
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          🪪 {verifiedDocs}/{docs.length} Verified
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3.5 font-medium text-ink-800">
+                      <span className={b.paid_amount >= b.total_amount ? "text-emerald-700 font-bold" : ""}>
+                        {formatINR(b.paid_amount)}
+                      </span>{" "}
+                      / {formatINR(b.total_amount)}
+                    </td>
+
+                    <td className="px-4 py-3.5">
+                      <StatusBadge status={b.status} />
+                    </td>
+
+                    <td className="px-4 py-3.5 text-right space-x-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedBooking(b);
+                        }}
+                        className="btn-secondary px-3 py-1 text-xs font-semibold bg-brand-50 text-brand-900 border-brand-200 hover:bg-brand-100"
+                      >
+                        Review 🔍
+                      </button>
+                      <Link
+                        href={`/dashboard/bookings/${b.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="btn-secondary px-2.5 py-1 text-xs"
+                      >
+                        Full ↗
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Slide-Over Inspection & Review Drawer */}
+      <BookingReviewModal
+        booking={selectedBooking}
+        isOpen={Boolean(selectedBooking)}
+        onClose={() => setSelectedBooking(null)}
+      />
+    </div>
+  );
+}

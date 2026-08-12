@@ -65,6 +65,7 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
     "Refund pending",
     "Completed",
     "Cancelled",
+    "Rejected",
   ],
   task_statuses: ["Not started", "In progress", "Waiting", "Under review", "Completed", "Blocked", "Cancelled"],
   payment_statuses: ["Pending", "Partially paid", "Paid", "Overdue", "Refunded", "Failed", "Cancelled"],

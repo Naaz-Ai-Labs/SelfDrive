@@ -11,19 +11,29 @@ import {
   revertDocumentDecision,
 } from "@/lib/actions";
 import { formatINR, formatDateTime } from "@/lib/utils";
+import { BookingReviewModal, type BookingReviewData } from "./BookingReviewModal";
 
 type PendingBooking = {
   id: number;
   booking_no: string;
-  customer_name: string | null;
-  customer_phone: string | null;
-  vehicle_name: string | null;
+  customer_id?: number | null;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  customer_email?: string | null;
+  vehicle_id?: number | null;
+  vehicle_name?: string | null;
+  registration_no?: string | null;
   pickup_at: string;
   return_at: string;
   total_amount: number;
+  paid_amount?: number;
+  base_amount?: number;
+  gst_amount?: number;
+  deposit_amount?: number;
   status: string;
   after_hours: number;
   created_at: string;
+  documents?: any[];
 };
 
 type PendingDoc = {
@@ -74,6 +84,7 @@ export function PendingApprovalsInbox({
   const [actionSuccess, setActionSuccess] = useState("");
   const [fallback, setFallback] = useState<FallbackState | null>(null);
   const [timeLeftSec, setTimeLeftSec] = useState(0);
+  const [reviewBooking, setReviewBooking] = useState<BookingReviewData | null>(null);
 
   const totalCount =
     pendingBookings.length +
@@ -356,11 +367,18 @@ export function PendingApprovalsInbox({
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReviewBooking(b as any)}
+                    className="btn-secondary px-3 py-1.5 text-xs font-semibold bg-brand-50 text-brand-900 border-brand-200 hover:bg-brand-100"
+                  >
+                    Review Details 🔍
+                  </button>
                   <Link
                     href={`/dashboard/bookings/${b.id}`}
-                    className="btn-secondary px-3 py-1.5 text-xs"
+                    className="btn-secondary px-2.5 py-1.5 text-xs"
                   >
-                    View Details
+                    Full ↗
                   </Link>
                   <button
                     type="button"
@@ -376,7 +394,7 @@ export function PendingApprovalsInbox({
                     onClick={() => handleBookingAction(b.id, true)}
                     className="btn-primary px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700"
                   >
-                    Approve & Confirm ✓
+                    Approve ✓
                   </button>
                 </div>
               </div>
@@ -531,6 +549,13 @@ export function PendingApprovalsInbox({
           )}
         </div>
       )}
+
+      {/* Slide-Over Inspection & Review Drawer for Dashboard */}
+      <BookingReviewModal
+        booking={reviewBooking}
+        isOpen={Boolean(reviewBooking)}
+        onClose={() => setReviewBooking(null)}
+      />
     </div>
   );
 }

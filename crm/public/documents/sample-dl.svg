@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 540" width="100%" height="100%">
+  <defs>
+    <linearGradient id="dlCardBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fdfbf7"/>
+      <stop offset="50%" stop-color="#fff8e7"/>
+      <stop offset="100%" stop-color="#f5eedc"/>
+    </linearGradient>
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0f52ba"/>
+      <stop offset="100%" stop-color="#1e3a8a"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Outer Card Frame -->
+  <rect x="10" y="10" width="830" height="520" rx="28" fill="url(#dlCardBg)" stroke="#d4af37" stroke-width="4" filter="drop-shadow(0 8px 16px rgba(0,0,0,0.15))"/>
+  
+  <!-- Top Header Banner -->
+  <path d="M 10 38 Q 10 10 38 10 L 812 10 Q 840 10 840 38 L 840 90 L 10 90 Z" fill="url(#headerGrad)"/>
+  
+  <!-- Header Text -->
+  <text x="425" y="42" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" letter-spacing="2">UNION OF INDIA • DRIVING LICENCE</text>
+  <text x="425" y="70" fill="#fcd34d" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" text-anchor="middle" letter-spacing="1.5">KARNATAKA MOTOR VEHICLES DEPARTMENT (KA-46 HASSAN/SAKLESHPURA)</text>
+
+  <!-- Photo Box -->
+  <rect x="50" y="130" width="160" height="200" rx="12" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+  <!-- User Avatar Vector -->
+  <circle cx="130" cy="200" r="45" fill="#64748b"/>
+  <path d="M 75 310 C 75 250, 185 250, 185 310 Z" fill="#475569"/>
+  <rect x="50" y="340" width="160" height="40" rx="6" fill="#1e293b"/>
+  <text x="130" y="365" fill="#ffffff" font-family="monospace" font-size="12" font-weight="bold" text-anchor="middle">SIGNATURE VERIFIED</text>
+
+  <!-- DL Details -->
+  <text x="250" y="145" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">LICENCE NO.</text>
+  <text x="250" y="175" fill="#0f172a" font-family="monospace" font-size="24" font-weight="900" letter-spacing="1">KA-46-2021-0012345</text>
+
+  <text x="560" y="145" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">VALIDITY (NON-TRANSPORT)</text>
+  <text x="560" y="172" fill="#15803d" font-family="system-ui, sans-serif" font-size="18" font-weight="bold">UNTIL 14-08-2041</text>
+
+  <!-- Name -->
+  <text x="250" y="225" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">NAME OF HOLDER</text>
+  <text x="250" y="252" fill="#0f172a" font-family="system-ui, sans-serif" font-size="20" font-weight="bold">RAJESH SHARMA</text>
+
+  <!-- DOB & Blood Group -->
+  <text x="250" y="295" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">DATE OF BIRTH</text>
+  <text x="250" y="318" fill="#1e293b" font-family="system-ui, sans-serif" font-size="16" font-weight="600">12-05-1996 (Age: 30)</text>
+
+  <text x="450" y="295" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">BLOOD GROUP</text>
+  <text x="450" y="318" fill="#b91c1c" font-family="system-ui, sans-serif" font-size="16" font-weight="bold">O +ve</text>
+
+  <!-- Vehicle Category Entitlements -->
+  <text x="250" y="365" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">AUTHORISED VEHICLE CLASSES</text>
+  <rect x="250" y="380" width="130" height="34" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="315" y="402" fill="#1e40af" font-family="system-ui, sans-serif" font-size="13" font-weight="bold" text-anchor="middle">MCWG (Bikes)</text>
+
+  <rect x="395" y="380" width="130" height="34" rx="8" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="460" y="402" fill="#166534" font-family="system-ui, sans-serif" font-size="13" font-weight="bold" text-anchor="middle">LMV (Cars/4x4)</text>
+
+  <!-- Address Block -->
+  <text x="250" y="450" fill="#64748b" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">PERMANENT ADDRESS</text>
+  <text x="250" y="475" fill="#334155" font-family="system-ui, sans-serif" font-size="14" font-weight="500">#42, BM Road, Sakleshpura, Hassan Dist, Karnataka - 573134</text>
+
+  <!-- Security Chip / Hologram Symbol -->
+  <rect x="700" y="230" width="90" height="110" rx="10" fill="#fbbf24" stroke="#d97706" stroke-width="2"/>
+  <circle cx="745" cy="285" r="28" fill="#f59e0b" opacity="0.6"/>
+  <text x="745" y="290" fill="#78350f" font-family="system-ui, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">MICROCHIP</text>
+
+  <!-- QR Code Mock -->
+  <rect x="700" y="380" width="90" height="90" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <rect x="712" y="392" width="22" height="22" fill="#0f172a"/>
+  <rect x="756" y="392" width="22" height="22" fill="#0f172a"/>
+  <rect x="712" y="436" width="22" height="22" fill="#0f172a"/>
+  <rect x="742" y="420" width="16" height="16" fill="#0f172a"/>
+</svg>

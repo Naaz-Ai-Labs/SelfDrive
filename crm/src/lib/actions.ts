@@ -861,12 +861,66 @@ export async function verifyCustomerDocument(input: { documentId: number; approv
   return { ok: true };
 }
 
+export async function rejectBooking(input: { bookingId: number; reason: string; notes?: string }) {
+  const staff = await staffUser();
+  const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
+  const fullReason = input.notes ? `${input.reason} — ${input.notes}` : input.reason;
+  db.prepare("UPDATE bookings SET status = 'Rejected', notes = ?, updated_at = datetime('now') WHERE id = ?").run(fullReason, input.bookingId);
+
+  db.prepare(
+    "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'rejected', ?)"
+  ).run(
+    input.bookingId,
+    staff.id,
+    JSON.stringify({ staff_name: staff.name, reason: input.reason, notes: input.notes ?? null, new_status: "Rejected" })
+  );
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("bookings").update({ status: "Rejected", notes: fullReason }).eq("id", input.bookingId);
+    } catch {}
+  }
+
+  logActivity(staff.id, "booking_rejected", "booking", input.bookingId);
+  refresh();
+  return { ok: true };
+}
+
+export async function reopenBooking(bookingId: number) {
+  const staff = await staffUser();
+  const db = getDb();
+  const { supabaseAdmin } = await import("./supabase");
+
+  const restoredStatus = "Pending verification";
+  db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(restoredStatus, bookingId);
+
+  db.prepare(
+    "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'booking_reopened', ?)"
+  ).run(
+    bookingId,
+    staff.id,
+    JSON.stringify({ staff_name: staff.name, restored_status: restoredStatus })
+  );
+
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("bookings").update({ status: restoredStatus }).eq("id", bookingId);
+    } catch {}
+  }
+
+  logActivity(staff.id, "booking_reopened", "booking", bookingId);
+  refresh();
+  return { ok: true };
+}
+
 export async function quickApproveBooking(input: { bookingId: number; approve: boolean; notes?: string }) {
   const staff = await staffUser();
   const db = getDb();
   const { supabaseAdmin } = await import("./supabase");
 
-  const newStatus = input.approve ? "Confirmed" : "Cancelled";
+  const newStatus = input.approve ? "Confirmed" : "Rejected";
   db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(newStatus, input.bookingId);
 
   db.prepare(

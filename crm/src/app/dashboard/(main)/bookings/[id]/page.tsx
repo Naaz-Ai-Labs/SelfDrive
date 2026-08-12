@@ -11,6 +11,7 @@ import {
   ManualAdjustmentForm, DamageReportForm, PaymentForm, MarkPaidButton,
 } from "@/components/dashboard/forms";
 import { DocumentVerifier } from "@/components/dashboard/DocumentVerifier";
+import { BookingHeaderActions } from "@/components/dashboard/BookingHeaderActions";
 
 export const metadata: Metadata = { title: "Booking detail", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -51,8 +52,21 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
       <div>
         <Link href="/dashboard/bookings" className="text-sm text-brand-700 hover:underline">← All bookings</Link>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="font-display text-2xl font-semibold text-ink-900">{String(booking.booking_no)}</h1>
-          <StatusBadge status={String(booking.status)} />
+          <div>
+            <h1 className="font-display text-2xl font-semibold text-ink-900">{String(booking.booking_no)}</h1>
+            <p className="text-xs text-ink-500">Created: {formatDateTime(String(booking.created_at))}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <StatusBadge status={String(booking.status)} />
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <BookingHeaderActions
+            bookingId={id}
+            currentStatus={String(booking.status)}
+            notes={booking.notes as string | null}
+          />
         </div>
       </div>
 

@@ -32,7 +32,7 @@ export default async function DashboardPage() {
   if (!user) redirect("/dashboard/login");
 
   // Safe defaults for all dashboard KPI stats
-  let totalVehicles = { c: 0 }, availableVehicles = { c: 0 }, bookedVehicles = { c: 0 }, maintenanceVehicles = { c: 0 };
+  let totalFleetUnits = 33, availableFleetUnits = 33, bookedUnits = 0, maintUnits = 0;
   let todaysPickups = { c: 0 }, todaysReturns = { c: 0 }, overdueReturns = { c: 0 }, activeRentals = { c: 0 };
   let newEnquiries = { c: 0 }, pendingPayments = { t: 0 }, pendingDeposits = { t: 0 }, pendingRefunds = { c: 0 };
   let revenue = { t: 0 }, openTickets = { c: 0 };
@@ -55,12 +55,12 @@ export default async function DashboardPage() {
     const g = (sql: string, ...p: any[]) => db.prepare(sql).get(...p) ?? {};
     const a = (sql: string, ...p: any[]) => db.prepare(sql).all(...p) ?? [];
 
-    totalVehicles = g("SELECT COUNT(*) AS c FROM vehicles WHERE active = 1") as { c: number };
-    availableVehicles = g("SELECT COUNT(*) AS c FROM vehicles WHERE active = 1 AND status = 'available'") as { c: number };
-    bookedVehicles = g("SELECT COUNT(*) AS c FROM vehicles WHERE active = 1 AND status = 'booked'") as { c: number };
-    maintenanceVehicles = g("SELECT COUNT(*) AS c FROM vehicles WHERE active = 1 AND status = 'maintenance'") as { c: number };
+    totalFleetUnits = Number((g("SELECT COALESCE(SUM(total_units), 0) AS c FROM vehicles WHERE active = 1") as any)?.c ?? 33);
+    maintUnits = Number((g("SELECT COALESCE(SUM(total_units), 0) AS c FROM vehicles WHERE active = 1 AND status = 'maintenance'") as any)?.c ?? 0);
+    bookedUnits = Number((g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Confirmed', 'Vehicle handed over', 'Active rental') AND datetime(return_at) >= datetime('now')") as any)?.c ?? 0);
+    availableFleetUnits = Math.max(0, totalFleetUnits - bookedUnits - maintUnits);
 
-    todaysPickups = g("SELECT COUNT(*) AS c FROM bookings WHERE date(pickup_at) = date('now') AND status NOT IN ('Cancelled')") as { c: number };
+    todaysPickups = g("SELECT COUNT(*) AS c FROM bookings WHERE date(pickup_at) = date('now') AND status NOT IN ('Cancelled', 'Rejected')") as { c: number };
     todaysReturns = g("SELECT COUNT(*) AS c FROM bookings WHERE date(return_at) = date('now') AND status = 'Active rental'") as { c: number };
     overdueReturns = g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Vehicle handed over','Active rental') AND return_at < datetime('now')") as { c: number };
     activeRentals = g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Vehicle handed over','Active rental')") as { c: number };
@@ -97,7 +97,7 @@ export default async function DashboardPage() {
     upcomingBookings = a(
       `SELECT b.*, v.name AS vehicle_name, c.name AS customer_name FROM bookings b
        LEFT JOIN vehicles v ON v.id = b.vehicle_id LEFT JOIN customers c ON c.id = b.customer_id
-       WHERE b.status NOT IN ('Completed','Cancelled') ORDER BY b.pickup_at LIMIT 6`
+       WHERE b.status NOT IN ('Completed','Cancelled', 'Rejected') ORDER BY b.pickup_at LIMIT 6`
     ) as Array<Record<string, unknown>>;
 
     attentionTickets = a("SELECT ticket_no, category, description, created_at FROM problem_tickets WHERE status = 'Open' ORDER BY created_at DESC LIMIT 5") as typeof attentionTickets;
@@ -107,11 +107,31 @@ export default async function DashboardPage() {
        WHERE b.status IN ('Vehicle handed over','Active rental') AND b.return_at < datetime('now') ORDER BY b.return_at LIMIT 5`
     ) as typeof attentionOverdue;
 
-    pendingBookings = (a(
-      `SELECT b.*, v.name AS vehicle_name, c.name AS customer_name, c.phone AS customer_phone
+    const rawPendingBookings = a(
+      `SELECT b.*, v.name AS vehicle_name, v.registration_no, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email
        FROM bookings b LEFT JOIN vehicles v ON v.id = b.vehicle_id LEFT JOIN customers c ON c.id = b.customer_id
-       WHERE b.status IN ('Pending verification', 'Enquiry', 'Draft') ORDER BY b.created_at DESC`
-    ) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+       WHERE b.status IN ('Pending verification', 'Payment received', 'Enquiry', 'Draft') ORDER BY b.created_at DESC`
+    ) as Array<Record<string, unknown>>;
+
+    const pbIds = rawPendingBookings.map((r) => Number(r.id)).filter(Boolean);
+    let pbDocs: any[] = [];
+    if (pbIds.length > 0) {
+      try {
+        const ph = pbIds.map(() => "?").join(",");
+        pbDocs = a(`SELECT * FROM customer_documents WHERE booking_id IN (${ph})`, ...pbIds);
+      } catch {}
+    }
+    const docsMap = new Map<number, any[]>();
+    for (const d of pbDocs) {
+      const bId = Number(d.booking_id);
+      if (!docsMap.has(bId)) docsMap.set(bId, []);
+      docsMap.get(bId)!.push(d);
+    }
+
+    pendingBookings = rawPendingBookings.map((r) => ({
+      ...r,
+      documents: docsMap.get(Number(r.id)) ?? [],
+    }));
 
     pendingDocs = (a(
       `SELECT d.*, c.name AS customer_name, b.booking_no
@@ -152,10 +172,10 @@ export default async function DashboardPage() {
       />
 
       <div className="grid grid-cols-2 gap-2.5 sm:gap-4 lg:grid-cols-4">
-        <KpiCard label="Vehicles" value={String(totalVehicles.c)} hint={`${availableVehicles.c} available`} accent="brand" href="/dashboard/vehicles" icon={ICON.vehicle} />
-        <KpiCard label="Active rentals" value={String(activeRentals.c)} hint={`${bookedVehicles.c} vehicles out`} accent="ink" href="/dashboard/bookings" icon={ICON.booking} />
+        <KpiCard label="Fleet Units" value={`${totalFleetUnits} Units`} hint={`${availableFleetUnits} available`} accent="brand" href="/dashboard/vehicles" icon={ICON.vehicle} />
+        <KpiCard label="Active rentals" value={String(activeRentals.c)} hint={`${bookedUnits} vehicle units out`} accent="ink" href="/dashboard/bookings" icon={ICON.booking} />
         <KpiCard label="Overdue returns" value={String(overdueReturns.c)} hint="past scheduled return" accent={overdueReturns.c > 0 ? "red" : "ink"} href="/dashboard/bookings" icon={ICON.clock} />
-        <KpiCard label="Under maintenance" value={String(maintenanceVehicles.c)} accent="amber" href="/dashboard/vehicles" icon={ICON.wrench} />
+        <KpiCard label="Under maintenance" value={String(maintUnits)} hint="units in service" accent="amber" href="/dashboard/vehicles" icon={ICON.wrench} />
       </div>
       <div className="grid grid-cols-2 gap-2.5 sm:gap-4 lg:grid-cols-4">
         <KpiCard label="Today's pickups" value={String(todaysPickups.c)} accent="brand" href="/dashboard/bookings" icon={ICON.arrowUp} />

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 540" width="100%" height="100%">
+  <defs>
+    <linearGradient id="aadhaarCardBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="50%" stop-color="#fdfbf7"/>
+      <stop offset="100%" stop-color="#f8fafc"/>
+    </linearGradient>
+    <linearGradient id="flagTricolor" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff9933"/>
+      <stop offset="50%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#138808"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Card Frame -->
+  <rect x="10" y="10" width="830" height="520" rx="28" fill="url(#aadhaarCardBg)" stroke="#cbd5e1" stroke-width="3" filter="drop-shadow(0 8px 16px rgba(0,0,0,0.15))"/>
+
+  <!-- Top Tricolor Ribbon -->
+  <rect x="10" y="10" width="830" height="18" rx="8" fill="url(#flagTricolor)"/>
+
+  <!-- Top Government Emblem & Titles -->
+  <circle cx="90" cy="70" r="30" fill="#0f172a"/>
+  <text x="90" y="76" fill="#ffffff" font-family="system-ui, sans-serif" font-size="12" font-weight="bold" text-anchor="middle">GOI</text>
+
+  <text x="140" y="60" fill="#0f172a" font-family="system-ui, sans-serif" font-size="20" font-weight="900">GOVERNMENT OF INDIA</text>
+  <text x="140" y="82" fill="#b91c1c" font-family="system-ui, sans-serif" font-size="14" font-weight="bold">UNIQUE IDENTIFICATION AUTHORITY OF INDIA</text>
+
+  <!-- Aadhaar Sun Logo Mock on Top Right -->
+  <circle cx="750" cy="65" r="28" fill="#ea580c" opacity="0.9"/>
+  <text x="750" y="70" fill="#ffffff" font-family="system-ui, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">AADHAAR</text>
+
+  <!-- Divider line -->
+  <line x1="40" y1="110" x2="810" y2="110" stroke="#e2e8f0" stroke-width="2"/>
+
+  <!-- Photo Box -->
+  <rect x="50" y="140" width="160" height="200" rx="12" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+  <!-- User Avatar Vector -->
+  <circle cx="130" cy="210" r="45" fill="#475569"/>
+  <path d="M 75 320 C 75 260, 185 260, 185 320 Z" fill="#334155"/>
+
+  <!-- Details block -->
+  <text x="250" y="160" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">NAME / ಹೆಸರು</text>
+  <text x="250" y="190" fill="#0f172a" font-family="system-ui, sans-serif" font-size="24" font-weight="900">Rajesh Sharma / ರಾಜೇಶ್ ಶರ್ಮಾ</text>
+
+  <text x="250" y="240" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">DATE OF BIRTH / ಹುಟ್ಟಿದ ದಿನಾಂಕ</text>
+  <text x="250" y="265" fill="#1e293b" font-family="system-ui, sans-serif" font-size="18" font-weight="bold">12/05/1996</text>
+
+  <text x="500" y="240" fill="#64748b" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">GENDER / ಲಿಂಗ</text>
+  <text x="500" y="265" fill="#1e293b" font-family="system-ui, sans-serif" font-size="18" font-weight="bold">MALE / ಪುರುಷ</text>
+
+  <!-- Large Aadhaar Number Banner -->
+  <rect x="250" y="300" width="550" height="64" rx="12" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="270" y="342" fill="#1e3a8a" font-family="monospace" font-size="28" font-weight="900" letter-spacing="4">5412 8901 9876</text>
+
+  <!-- Secure QR Code Box -->
+  <rect x="680" y="135" width="120" height="120" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <rect x="696" y="151" width="30" height="30" fill="#0f172a"/>
+  <rect x="754" y="151" width="30" height="30" fill="#0f172a"/>
+  <rect x="696" y="209" width="30" height="30" fill="#0f172a"/>
+  <rect x="736" y="185" width="22" height="22" fill="#0f172a"/>
+
+  <!-- Footer Tagline -->
+  <rect x="10" y="440" width="830" height="90" rx="0 0 28 28" fill="#b91c1c"/>
+  <text x="425" y="475" fill="#ffffff" font-family="system-ui, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" letter-spacing="2">ನನ್ನ ಆಧಾರ್, ನನ್ನ ಗುರುತು • MERA AADHAAR, MERI PEHCHAN</text>
+  <text x="425" y="505" fill="#fecaca" font-family="system-ui, sans-serif" font-size="12" text-anchor="middle">Aadhaar is a proof of identity, not of citizenship. Verified via UIDAI Secure Portal.</text>
+</svg>
