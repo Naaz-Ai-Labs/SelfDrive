@@ -48,24 +48,24 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }));
 
   return (
-    <div className="flex min-h-screen bg-ink-50">
-      {/* Full-height dark frosted-glass sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col bg-ink-950/95 backdrop-blur-xl lg:flex">
-        <Link href="/dashboard" className="flex items-center gap-2.5 px-5 py-5">
-          <img src="/logo.png" alt="" className="h-12 w-12 shrink-0 object-contain" />
+    <div className="flex h-screen max-h-screen w-full overflow-hidden bg-ink-50">
+      {/* Full-height dark frosted-glass sidebar (Fixed to viewport) */}
+      <aside className="hidden w-64 shrink-0 flex-col h-screen max-h-screen overflow-hidden bg-ink-950/95 backdrop-blur-xl lg:flex border-r border-white/5 select-none z-20">
+        <Link href="/dashboard" className="flex items-center gap-2.5 px-4 py-3.5 shrink-0 border-b border-white/5 hover:bg-white/5 transition">
+          <img src="/logo.png" alt="" className="h-9 w-9 shrink-0 object-contain" />
           <span className="leading-tight">
-            <span className="block font-display text-base font-semibold text-white">Darshh Holiday</span>
-            <span className="block text-[11px] font-bold uppercase tracking-[0.18em] text-ink-500">CRM</span>
+            <span className="block font-display text-sm font-semibold text-white">Darshh Holiday</span>
+            <span className="block text-[9px] font-bold uppercase tracking-[0.18em] text-ink-400">CRM Portal</span>
           </span>
         </Link>
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-1 scrollbar-thin">
           <SidebarNav items={navItems} />
         </div>
-        <div className="flex items-center gap-3 border-t border-white/10 px-4 py-4">
+        <div className="shrink-0 flex items-center gap-2.5 border-t border-white/10 px-3.5 py-3 bg-ink-950">
           <Avatar name={user.name} size="sm" />
           <div className="min-w-0 flex-1 leading-tight">
-            <p className="truncate text-sm font-semibold text-white">{user.name}</p>
-            <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${isAdmin ? "bg-amber-500/20 text-amber-300" : "bg-blue-500/20 text-blue-300"}`}>
+            <p className="truncate text-xs font-semibold text-white">{user.name}</p>
+            <span className={`inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${isAdmin ? "bg-amber-500/20 text-amber-300" : "bg-blue-500/20 text-blue-300"}`}>
               {isAdmin ? "Admin" : "Staff"}
             </span>
           </div>
@@ -73,8 +73,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </div>
       </aside>
 
-      <div className="min-w-0 flex-1">
-        <div className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-white/50 bg-white/70 px-4 py-3 backdrop-blur-xl sm:px-6">
+      {/* Main content column with independent scroll */}
+      <div className="flex-1 flex flex-col h-screen max-h-screen min-w-0 overflow-hidden">
+        <header className="shrink-0 sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-ink-100/80 bg-white/80 px-4 py-2.5 backdrop-blur-xl sm:px-6">
           <MobileNav items={navItems} user={plainUser} />
           <div className="hidden flex-1 lg:flex items-center gap-3">
             <SearchBox />
@@ -86,8 +87,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
               <LogoutButton />
             </div>
           </div>
-        </div>
-        <div className="p-3 sm:p-6 max-w-full overflow-x-hidden">{children}</div>
+        </header>
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6 scroll-smooth">
+          {children}
+        </main>
       </div>
     </div>
   );
