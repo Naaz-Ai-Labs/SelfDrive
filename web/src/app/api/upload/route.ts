@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBaseUrl, getGatewayKey } from "@/lib/gateway";
+import { PUBLIC_MEDIA_BUCKET, PRIVATE_DOCS_BUCKET, sanitizeFolder } from "@/lib/storage-buckets";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -36,14 +37,19 @@ export async function POST(req: NextRequest) {
     const cleanRandom = Math.random().toString(36).substring(2, 12);
     const nowStamp = Date.now();
 
-    let targetSubfolder = "";
-    if (folderParam && folderParam.trim()) {
-      targetSubfolder = folderParam.trim().replace(/^\/+|\/+$/g, "");
-    } else if (categoryParam && categoryParam.trim()) {
-      targetSubfolder = `${categoryParam.trim().toLowerCase()}s/${dateStr}`;
-    } else {
-      targetSubfolder = `customer-documents/${dateStr}`;
+    // A caller-supplied folder is untrusted: it used to be trimmed of slashes only,
+    // so "../" segments passed straight through into the storage key.
+    const safeFolder = sanitizeFolder(folderParam);
+    if (folderParam && !safeFolder) {
+      return NextResponse.json({ error: "Invalid upload folder." }, { status: 400 });
     }
+    const safeCategory = categoryParam ? sanitizeFolder(categoryParam.toLowerCase()) : null;
+
+    // Anything that is not explicitly public media is treated as a customer identity
+    // document and goes to the PRIVATE bucket.
+    const isPublicMedia = Boolean(safeFolder || safeCategory);
+    const targetSubfolder = safeFolder ?? (safeCategory ? `${safeCategory}s/${dateStr}` : `docs/${dateStr}`);
+    const bucketName = isPublicMedia ? PUBLIC_MEDIA_BUCKET : PRIVATE_DOCS_BUCKET;
 
     const rawBaseName = file.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 24) : "document";
     const fileName = `${rawBaseName}_${nowStamp}_${cleanRandom}.${ext}`;
@@ -51,7 +57,6 @@ export async function POST(req: NextRequest) {
 
     if (supabaseUrl && supabaseKey) {
       try {
-        const bucketName = "vehicle-photos";
         const buf = Buffer.from(await file.arrayBuffer());
         const cleanUrl = supabaseUrl.replace(/\/$/, "");
 
@@ -67,8 +72,13 @@ export async function POST(req: NextRequest) {
         });
 
         if (uploadRes.ok) {
-          const publicUrl = `${cleanUrl}/storage/v1/object/public/${bucketName}/${structuredPath}`;
-          return NextResponse.json({ ok: true, path: publicUrl, structuredPath });
+          // Public media keeps its direct public URL. A customer document must NOT get
+          // one — it is returned as a CRM route that checks for a staff session before
+          // streaming the file out of the private bucket.
+          const path = isPublicMedia
+            ? `${cleanUrl}/storage/v1/object/public/${bucketName}/${structuredPath}`
+            : `/api/files/doc?p=${encodeURIComponent(structuredPath)}`;
+          return NextResponse.json({ ok: true, path, structuredPath });
         }
       } catch (supaErr) {
         console.warn("Direct Supabase Storage upload fallback attempt:", supaErr);

@@ -59,7 +59,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Enter a valid phone number or email." }, { status: 400 });
     }
     const target = normalizeTarget(body.target);
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    // Cryptographically secure — Math.random() is predictable from prior outputs,
+    // which lets an attacker forecast an OTP without ever receiving the message.
+    const code = String(crypto.randomInt(100000, 1000000));
     const codeHash = hashOtp(code);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 

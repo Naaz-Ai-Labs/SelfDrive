@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomInt } from "node:crypto";
 import { z } from "zod";
 import { requireGatewayKey } from "@/lib/gateway-auth";
 import { sbSelectOne, sbInsert, sbUpdate } from "@/lib/supabase-rest";
@@ -42,7 +43,11 @@ export async function POST(req: NextRequest) {
     }
     rateLimits.set(target, Date.now());
 
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    // Math.random() is not cryptographically secure — its output is predictable from
+    // observed values, so an attacker who requests a few OTPs can forecast the next
+    // one and take over an account without ever seeing the SMS. randomInt() draws
+    // from the OS CSPRNG.
+    const code = String(randomInt(100000, 1000000));
     const inserted = await sbInsert("otp_codes", {
       target,
       purpose: "customer_login",

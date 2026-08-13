@@ -387,14 +387,15 @@ export function BookingStatusFlow({
               <div className="space-y-2">
                 {tracking.documents.map((d) => (
                   <div
-                    key={d.id}
+                    key={d.kind}
                     className="flex items-center justify-between rounded-lg bg-ink-50 p-2.5 text-xs"
                   >
                     <div>
                       <p className="font-semibold text-ink-900 capitalize">
                         {d.kind.replace("_", " ")}
                       </p>
-                      {d.number && <p className="font-mono text-[11px] text-ink-500">{d.number}</p>}
+                      {/* The raw licence/ID number is deliberately NOT sent to this
+                          public, unauthenticated page — only the verification status. */}
                     </div>
                     <span
                       className={`badge text-[10px] font-bold ${
