@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 import { getVehicles, getBlogPosts } from "@/lib/data";
 
 export const revalidate = 3600;
-const domain = "https://darshhrentals.in";
+const domain = "https://www.selfdrive.bike";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();

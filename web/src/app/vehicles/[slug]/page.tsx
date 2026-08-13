@@ -92,7 +92,7 @@ export default async function VehicleDetailPage(props: {
     ["Security deposit", formatINR(vehicle.deposit), SPEC_ICONS.deposit],
   ];
 
-  const siteUrl = "https://darshhrentals.in";
+  const siteUrl = "https://www.selfdrive.bike";
   const productJsonLd = {
     "@context": "https://schema.org",
     "@type": "Product",
