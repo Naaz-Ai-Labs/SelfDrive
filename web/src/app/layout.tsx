@@ -41,7 +41,7 @@ export async function generateMetadata(): Promise<Metadata> {
       default: `${name} — ${tagline}`,
       template: `%s | ${name}`,
     },
-    description: `Self-drive bike, scooter and car rentals across Hassan district, Karnataka. Fixed transparent pricing, well-maintained vehicles, refundable deposit, no bargaining. Book online in minutes.`,
+    description: `Self-drive bike, scooter & car rental in Hassan district, Karnataka. Fixed transparent pricing, well-maintained fleet, no bargaining. Book online in minutes.`,
     alternates: { canonical: "/" },
     keywords: [
       "self drive car rental Hassan",

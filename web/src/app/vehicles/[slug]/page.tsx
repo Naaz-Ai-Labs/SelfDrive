@@ -136,7 +136,7 @@ export default async function VehicleDetailPage(props: {
         <div className="grid gap-10 lg:grid-cols-[1.3fr_1fr]">
           <div>
             <div className="relative aspect-[4/3] overflow-hidden rounded-3xl bg-ink-100 shadow-soft">
-              {vehicle.primary_photo && <Image src={vehicle.primary_photo} alt={vehicle.name} fill priority className="object-contain p-6" sizes="(max-width:1024px) 100vw, 60vw" />}
+              {vehicle.primary_photo && <Image src={vehicle.primary_photo} alt={`${vehicle.name} self-drive rental in ${String(info.city ?? "Hassan")}`} fill priority className="object-contain p-6" sizes="(max-width:1024px) 100vw, 60vw" />}
               <span className="absolute left-4 top-4 badge bg-white/95 text-ink-800 shadow-sm">{vehicle.category_name}</span>
               <span className={`absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black shadow-md ${isOutOfStock ? "bg-rose-600 text-white" : (vehicle.available_units ?? vehicle.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-md"}`}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
@@ -145,9 +145,9 @@ export default async function VehicleDetailPage(props: {
             </div>
             {vehicle.photos.length > 1 && (
               <div className="mt-3 grid grid-cols-4 gap-3">
-                {vehicle.photos.slice(1, 5).map((p) => (
+                {vehicle.photos.slice(1, 5).map((p, i) => (
                   <div key={p} className="relative aspect-square overflow-hidden rounded-xl bg-ink-100">
-                    <Image src={p} alt="" fill className="object-cover" sizes="120px" />
+                    <Image src={p} alt={`${vehicle.name} rental in ${String(info.city ?? "Hassan")} — photo ${i + 2}`} fill className="object-cover" sizes="120px" />
                   </div>
                 ))}
               </div>
@@ -289,7 +289,7 @@ export default async function VehicleDetailPage(props: {
                   <Link key={v.id} href={`/vehicles/${v.slug}`} className="card overflow-hidden transition hover:-translate-y-1 hover:shadow-lift">
                     {v.primary_photo && (
                       <div className="relative h-32 overflow-hidden bg-ink-100">
-                        <Image src={v.primary_photo} alt={v.name} fill className="object-contain p-3" sizes="240px" />
+                        <Image src={v.primary_photo} alt={`${v.name} self-drive rental in ${String(info.city ?? "Hassan")}`} fill className="object-contain p-3" sizes="240px" />
                       </div>
                     )}
                     <div className="p-5">

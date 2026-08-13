@@ -494,7 +494,7 @@ export function BookingForm({
       <div className="mx-auto max-w-xl">
         {!paid ? (
           <div className="card p-6 sm:p-8">
-            <h1 className="font-display text-2xl font-semibold text-ink-900">Booking received — {result.bookingNo}</h1>
+            <h2 className="font-display text-2xl font-semibold text-ink-900">Booking received — {result.bookingNo}</h2>
             <p className="mt-2 text-sm text-ink-600">Complete your online payment now to confirm your vehicle reservation instantly.</p>
             <p className="mt-1 text-sm text-ink-600">
               Pay now online: <strong>{formatINR(payNowAmount)}</strong> · Security deposit (cash at pickup, refundable): <strong>{formatINR(depositAtPickup)}</strong>
@@ -516,7 +516,7 @@ export function BookingForm({
           <div>
             <div className="text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl text-emerald-700">✓</div>
-              <h1 className="mt-4 font-display text-2xl font-semibold text-ink-900">You&apos;re all set!</h1>
+              <h2 className="mt-4 font-display text-2xl font-semibold text-ink-900">You&apos;re all set!</h2>
               <p className="mt-1.5 text-xs text-ink-600">Your booking number is <strong>{result.bookingNo}</strong>. Here is your official payment tax invoice.</p>
               <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
                 <Link href={`/track/${result.bookingNo}`} className="btn-primary py-2 px-4 text-xs font-bold bg-brand-500 text-ink-950 shadow-sm">

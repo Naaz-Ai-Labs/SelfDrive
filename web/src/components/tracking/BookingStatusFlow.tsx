@@ -39,9 +39,9 @@ export function BookingStatusFlow({
                 {tracking.booking_no}
               </span>
             </div>
-            <h1 className="font-display text-2xl font-bold text-ink-950 mt-1">
+            <h2 className="font-display text-2xl font-bold text-ink-950 mt-1">
               {tracking.vehicle_name ?? "Vehicle Rental"}
-            </h1>
+            </h2>
           </div>
 
           <div className="text-right">

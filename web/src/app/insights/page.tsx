@@ -17,6 +17,7 @@ export default async function InsightsPage() {
       <section className="border-b border-ink-100 bg-brand-600/5">
         <div className="container-x py-16 sm:py-20">
           <SectionHeading
+            as="h1"
             eyebrow="Insights"
             title="Guides written by people who drive"
             subtitle="Practical advice for self-drive road trips and rentals — no fluff."

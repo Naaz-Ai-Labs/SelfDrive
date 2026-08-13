@@ -97,7 +97,7 @@ export default async function GalleryPage() {
                   href={`/vehicles/${v.slug}`}
                   className="group relative mx-2.5 h-48 w-64 shrink-0 overflow-hidden rounded-2xl border border-ink-200/80 bg-white shadow-sm transition hover:border-brand-500/50 hover:shadow-md"
                 >
-                  <Image src={v.primary_photo as string} alt={v.name} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-105" sizes="256px" />
+                  <Image src={v.primary_photo as string} alt={`${v.name} self-drive rental in Sakleshpura & Hassan`} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-105" sizes="256px" />
                   <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-950/85 to-transparent px-3 pb-2 pt-6 text-sm font-semibold text-white opacity-0 transition group-hover:opacity-100">
                     {v.name}
                   </span>
@@ -111,7 +111,7 @@ export default async function GalleryPage() {
                   href={`/vehicles/${v.slug}`}
                   className="group relative mx-2.5 h-48 w-64 shrink-0 overflow-hidden rounded-2xl border border-ink-200/80 bg-white shadow-sm transition hover:border-brand-500/50 hover:shadow-md"
                 >
-                  <Image src={v.primary_photo as string} alt={v.name} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-105" sizes="256px" />
+                  <Image src={v.primary_photo as string} alt={`${v.name} self-drive rental in Sakleshpura & Hassan`} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-105" sizes="256px" />
                   <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-950/85 to-transparent px-3 pb-2 pt-6 text-sm font-semibold text-white opacity-0 transition group-hover:opacity-100">
                     {v.name}
                   </span>
