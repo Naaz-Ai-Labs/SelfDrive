@@ -1,16 +1,17 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { getDb } from "./db";
-import { requireUser, requireAdmin, assertCan, assertAdmin } from "./auth";
+import { requireUser, requireAdmin, assertCan } from "./auth";
 import { logActivity, pushNotification } from "./activity";
-import { nextNumber, slugify, normalizePhone } from "./utils";
+import { slugify, normalizePhone } from "./utils";
 import { sendTemplate } from "./messaging";
 import { getSetting, setSetting } from "./settings";
 import { calculateLateFee, calculateExtraKm } from "./pricing";
 import type { SessionUser } from "./auth";
 import { issueRazorpayRefund } from "./razorpay";
-import { syncEntityToSupabase } from "./supabase-sync";
+import { sbSelect, sbSelectOne, sbInsert, sbUpdate, sbUpsert, sbDelete, sbRpc, num } from "./supabase-rest";
+import type { RestResult } from "./supabase-rest";
 import { cacheInvalidatePrefix } from "./redis";
 
 function refresh(path = "/dashboard") {
@@ -38,6 +39,60 @@ async function invalidateContentCaches(): Promise<void> {
   ]);
 }
 
+/* ----------------------------- Write plumbing ------------------------------ */
+/*
+ * Every mutation below writes straight to Supabase and awaits the result. The old
+ * shape — write to a per-lambda SQLite file, then `syncEntityToSupabase(...).catch(() => {})`
+ * — lost writes twice over: the SQLite file is wiped on cold start (and degrades to a
+ * mock that fakes `lastInsertRowid`), and the un-awaited sync never runs because the
+ * lambda freezes the moment the response is returned.
+ */
+
+type ActionError = { ok: false; error: string };
+
+/** Turns a failed REST result into the file's error shape. */
+function fail(res: { error: string }, what: string): ActionError {
+  return { ok: false, error: `${what} failed: ${res.error}` };
+}
+
+/**
+ * Builds a human-facing document number from the row's own primary key.
+ *
+ * The previous `nextNumber()` combined a module-level counter (reset on every cold
+ * start) with a timestamp, so two lambdas minted the same ENQ/PY/RC number routinely
+ * — and those columns are UNIQUE, so the loser's insert simply failed. Deriving from
+ * the BIGSERIAL id makes collisions impossible.
+ */
+function docNumber(prefix: string, id: number): string {
+  return `${prefix}-${new Date().getFullYear()}-${String(id).padStart(6, "0")}`;
+}
+
+/**
+ * Inserts a row whose UNIQUE "number" column must be derived from its own id.
+ *
+ * Two steps by necessity: a provisional UUID-backed value satisfies the NOT NULL /
+ * UNIQUE constraint, then the real number is written once the id exists.
+ */
+async function insertWithNumber<T extends { id: number }>(
+  table: string,
+  numberColumn: string,
+  prefix: string,
+  record: Record<string, unknown>
+): Promise<RestResult<{ row: T; number: string }>> {
+  const provisional = `${prefix}-TMP-${randomUUID()}`;
+  const inserted = await sbInsert<T>(table, { ...record, [numberColumn]: provisional });
+  if (!inserted.ok) return inserted;
+
+  const id = Number((inserted.data as { id: number }).id);
+  const finalNumber = docNumber(prefix, id);
+  const renamed = await sbUpdate<T>(table, `id=eq.${id}`, { [numberColumn]: finalNumber });
+  if (!renamed.ok) return renamed;
+
+  return { ok: true, data: { row: renamed.data[0] ?? inserted.data, number: finalNumber } };
+}
+
+const nowIso = () => new Date().toISOString();
+
 export async function staffUser(): Promise<SessionUser> {
   return requireUser();
 }
@@ -51,57 +106,75 @@ export async function adminUser(): Promise<SessionUser> {
 export async function createManualEnquiry(input: {
   name: string; phone: string; email?: string; categoryId?: number | null; vehicleId?: number | null;
   location?: string; pickupDate?: string; returnDate?: string; passengers?: number; source?: string; notes?: string;
-}) {
+}): Promise<{ id: number; enquiryNo: string } | ActionError> {
   const user = await staffUser();
-  const db = getDb();
   const phone = normalizePhone(input.phone);
-  const enquiryNo = nextNumber("ENQ", null);
-  const id = db
-    .prepare(
-      `INSERT INTO enquiries (enquiry_no, category_id, vehicle_id, pickup_date, return_date, location, passengers, name, phone, email, source, notes, assigned_to, status, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', datetime('now'))`
-    )
-    .run(
-      enquiryNo, input.categoryId ?? null, input.vehicleId ?? null, input.pickupDate ?? null, input.returnDate ?? null,
-      input.location ?? null, input.passengers ?? null, input.name, phone, input.email ?? null, input.source ?? "Manual", input.notes ?? null, user.id
-    ).lastInsertRowid as number;
-  logActivity(user.id, "enquiry_created", "enquiry", id, { enquiry_no: enquiryNo });
+
+  const res = await insertWithNumber<{ id: number }>("enquiries", "enquiry_no", "ENQ", {
+    category_id: input.categoryId ?? null,
+    vehicle_id: input.vehicleId ?? null,
+    pickup_date: input.pickupDate ?? null,
+    return_date: input.returnDate ?? null,
+    location: input.location ?? null,
+    passengers: input.passengers ?? null,
+    name: input.name,
+    phone,
+    email: input.email ?? null,
+    source: input.source ?? "Manual",
+    notes: input.notes ?? null,
+    assigned_to: user.id,
+    status: "submitted",
+    submitted_at: nowIso(),
+  });
+  if (!res.ok) return fail(res, "Creating the enquiry");
+
+  const id = Number(res.data.row.id);
+  await logActivity(user.id, "enquiry_created", "enquiry", id, { enquiry_no: res.data.number });
   refresh();
-  return { id, enquiryNo };
+  return { id, enquiryNo: res.data.number };
 }
 
 export async function assignEnquiry(id: number, assigneeId: number | null) {
   const user = await staffUser();
-  const db = getDb();
-  db.prepare("UPDATE enquiries SET assigned_to = ?, updated_at = datetime('now') WHERE id = ?").run(assigneeId, id);
-  if (assigneeId) {
-    const e = db.prepare("SELECT enquiry_no, name FROM enquiries WHERE id = ?").get(id) as { enquiry_no: string; name: string | null };
-    pushNotification(assigneeId, `Enquiry ${e.enquiry_no} assigned`, e.name ?? "", id);
-  }
-  logActivity(user.id, "enquiry_assigned", "enquiry", id, { assignee_id: assigneeId });
+
+  const updated = await sbUpdate<{ enquiry_no: string; name: string | null }>("enquiries", `id=eq.${id}`, {
+    assigned_to: assigneeId,
+    updated_at: nowIso(),
+  });
+  if (!updated.ok) return fail(updated, "Assigning the enquiry");
+
+  const row = updated.data[0];
+  if (assigneeId && row) await pushNotification(assigneeId, `Enquiry ${row.enquiry_no} assigned`, row.name ?? "", id);
+
+  await logActivity(user.id, "enquiry_assigned", "enquiry", id, { assignee_id: assigneeId });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function changeEnquiryStage(id: number, stage: string) {
   const user = await staffUser();
-  const db = getDb();
   const stages = await getSetting<string[]>("enquiry_stages", []);
-  if (!stages.includes(stage)) return { error: "Unknown stage" };
-  db.prepare("UPDATE enquiries SET stage = ?, updated_at = datetime('now') WHERE id = ?").run(stage, id);
-  db.prepare("INSERT INTO enquiry_history (enquiry_id, user_id, action, detail) VALUES (?, ?, 'stage_change', ?)").run(id, user.id, stage);
-  logActivity(user.id, "enquiry_stage", "enquiry", id, { stage });
+  if (!stages.includes(stage)) return { ok: false as const, error: "Unknown stage" };
+
+  const updated = await sbUpdate("enquiries", `id=eq.${id}`, { stage, updated_at: nowIso() });
+  if (!updated.ok) return fail(updated, "Changing the enquiry stage");
+
+  const history = await sbInsert("enquiry_history", { enquiry_id: id, user_id: user.id, action: "stage_change", detail: stage });
+  if (!history.ok) return fail(history, "Recording the stage change");
+
+  await logActivity(user.id, "enquiry_stage", "enquiry", id, { stage });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function addEnquiryNote(id: number, note: string) {
   const user = await staffUser();
-  const db = getDb();
-  db.prepare("INSERT INTO enquiry_history (enquiry_id, user_id, action, detail) VALUES (?, ?, 'note', ?)").run(id, user.id, note);
-  logActivity(user.id, "enquiry_note", "enquiry", id, { note });
+  const res = await sbInsert("enquiry_history", { enquiry_id: id, user_id: user.id, action: "note", detail: note });
+  if (!res.ok) return fail(res, "Saving the note");
+
+  await logActivity(user.id, "enquiry_note", "enquiry", id, { note });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 /* -------------------------------- Vehicles --------------------------------- */
@@ -136,200 +209,152 @@ export async function saveVehicle(input: {
 }) {
   const user = await staffUser();
   assertCan(user, "manager");
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
-  const slug = `${slugify(input.name)}-${input.id ?? Date.now().toString(36).slice(-4)}`;
-  let vehicleId = input.id;
+  // `active` is INTEGER 1/0 in the schema, not a boolean column.
   const activeVal = input.active === false ? 0 : 1;
   const units = input.totalUnits ?? 1;
 
+  const fields = {
+    name: input.name,
+    brand: input.brand,
+    model: input.model,
+    year: input.year ?? null,
+    category_id: input.categoryId ?? null,
+    branch_id: input.branchId ?? null,
+    registration_no: input.registrationNo ?? null,
+    cc: input.cc ?? null,
+    fuel_type: input.fuelType ?? "Petrol",
+    transmission: input.transmission ?? "Manual",
+    seats: input.seats ?? 2,
+    mileage: input.mileage ?? null,
+    included_km: input.includedKm ?? 100,
+    extra_km_rate: input.extraKmRate ?? 5,
+    rate_12h: input.rate12h ?? 0,
+    rate_24h: input.rate24h ?? 0,
+    hourly_rate: input.hourlyRate ?? 0,
+    deposit: input.deposit ?? 0,
+    late_fee_per_hour: input.lateFeePerHour ?? 0,
+    total_units: units,
+    description: input.description ?? null,
+    terms: input.terms ?? null,
+    status: input.status ?? "available",
+    active: activeVal,
+  };
+
+  let vehicleId = input.id;
+
   if (vehicleId) {
-    db.prepare(
-      `UPDATE vehicles SET name=?, brand=?, model=?, year=?, category_id=?, branch_id=?, registration_no=?, cc=?, fuel_type=?, transmission=?, seats=?, mileage=?,
-       included_km=?, extra_km_rate=?, rate_12h=?, rate_24h=?, hourly_rate=?, deposit=?, late_fee_per_hour=?, total_units=?, description=?, terms=?, status=?, active=?, updated_at=datetime('now')
-       WHERE id=?`
-    ).run(
-      input.name, input.brand, input.model, input.year ?? null, input.categoryId ?? null, input.branchId ?? null, input.registrationNo ?? null,
-      input.cc ?? null, input.fuelType ?? "Petrol", input.transmission ?? "Manual", input.seats ?? 2, input.mileage ?? null,
-      input.includedKm ?? 100, input.extraKmRate ?? 5, input.rate12h ?? 0, input.rate24h ?? 0, input.hourlyRate ?? 0, input.deposit ?? 0,
-      input.lateFeePerHour ?? 0, units, input.description ?? null, input.terms ?? null, input.status ?? "available", activeVal, vehicleId
-    );
-    logActivity(user.id, "vehicle_updated", "vehicle", vehicleId, { name: input.name });
+    const updated = await sbUpdate("vehicles", `id=eq.${vehicleId}`, { ...fields, updated_at: nowIso() });
+    if (!updated.ok) return fail(updated, "Saving the vehicle");
+    if (updated.data.length === 0) return { ok: false as const, error: `Vehicle ${vehicleId} no longer exists.` };
+    await logActivity(user.id, "vehicle_updated", "vehicle", vehicleId, { name: input.name });
   } else {
-    const result = db
-      .prepare(
-        `INSERT INTO vehicles (slug, name, brand, model, year, category_id, branch_id, registration_no, cc, fuel_type, transmission, seats, mileage,
-         included_km, extra_km_rate, rate_12h, rate_24h, hourly_rate, deposit, late_fee_per_hour, total_units, description, terms, status, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
-      )
-      .run(
-        slug, input.name, input.brand, input.model, input.year ?? null, input.categoryId ?? null, input.branchId ?? null, input.registrationNo ?? null,
-        input.cc ?? null, input.fuelType ?? "Petrol", input.transmission ?? "Manual", input.seats ?? 2, input.mileage ?? null,
-        input.includedKm ?? 100, input.extraKmRate ?? 5, input.rate12h ?? 0, input.rate24h ?? 0, input.hourlyRate ?? 0, input.deposit ?? 0,
-        input.lateFeePerHour ?? 0, units, input.description ?? null, input.terms ?? null, input.status ?? "available"
-      );
-    vehicleId = Number(result.lastInsertRowid);
-    logActivity(user.id, "vehicle_created", "vehicle", vehicleId, { name: input.name });
+    // The slug is UNIQUE; the random suffix keeps two same-named vehicles from clashing.
+    const slug = `${slugify(input.name)}-${randomUUID().slice(0, 6)}`;
+    const inserted = await sbInsert<{ id: number }>("vehicles", { slug, ...fields });
+    if (!inserted.ok) return fail(inserted, "Creating the vehicle");
+    vehicleId = Number(inserted.data.id);
+    await logActivity(user.id, "vehicle_created", "vehicle", vehicleId, { name: input.name });
   }
 
   if (input.photoUrl) {
-    db.prepare("INSERT INTO vehicle_photos (vehicle_id, url, is_primary) VALUES (?, ?, 1)").run(vehicleId, input.photoUrl);
-  }
-
-  // Sync to Supabase PostgreSQL
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("vehicles").upsert(
-        {
-          id: vehicleId,
-          slug,
-          name: input.name,
-          brand: input.brand,
-          model: input.model,
-          year: input.year ?? null,
-          category_id: input.categoryId ?? null,
-          branch_id: input.branchId ?? null,
-          registration_no: input.registrationNo ?? null,
-          cc: input.cc ?? null,
-          fuel_type: input.fuelType ?? "Petrol",
-          transmission: input.transmission ?? "Manual",
-          seats: input.seats ?? 2,
-          mileage: input.mileage ?? null,
-          included_km: input.includedKm ?? 100,
-          extra_km_rate: input.extraKmRate ?? 5,
-          rate_12h: input.rate12h ?? 0,
-          rate_24h: input.rate24h ?? 0,
-          hourly_rate: input.hourlyRate ?? 0,
-          deposit: input.deposit ?? 0,
-          late_fee_per_hour: input.lateFeePerHour ?? 0,
-          total_units: units,
-          description: input.description ?? null,
-          terms: input.terms ?? null,
-          status: input.status ?? "available",
-          active: activeVal,
-        },
-        { onConflict: "id" }
-      );
-
-      if (input.photoUrl) {
-        await supabaseAdmin.from("vehicle_photos").insert({
-          vehicle_id: vehicleId,
-          url: input.photoUrl,
-          is_primary: 1,
-        });
-      }
-    } catch (err: any) {
-      console.warn("Supabase vehicle sync warning:", err?.message || err);
-    }
+    const photo = await sbInsert("vehicle_photos", { vehicle_id: vehicleId, url: input.photoUrl, is_primary: 1 });
+    if (!photo.ok) return fail(photo, "Saving the vehicle photo");
   }
 
   refresh("/");
   refresh();
-  return { ok: true, id: vehicleId };
+  return { ok: true as const, id: vehicleId };
 }
 
 export async function deleteVehicle(id: number) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
-  // Hard delete from local SQLite
-  db.prepare("DELETE FROM vehicle_photos WHERE vehicle_id = ?").run(id);
-  db.prepare("DELETE FROM vehicles WHERE id = ?").run(id);
+  const photos = await sbDelete("vehicle_photos", `vehicle_id=eq.${id}`);
+  if (!photos.ok) return fail(photos, "Deleting the vehicle photos");
 
-  // Hard delete from Supabase PostgreSQL
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("vehicle_photos").delete().eq("vehicle_id", id);
-      await supabaseAdmin.from("vehicles").delete().eq("id", id);
-    } catch (err: any) {
-      console.warn("Supabase vehicle delete warning:", err?.message || err);
-    }
-  }
+  const vehicle = await sbDelete("vehicles", `id=eq.${id}`);
+  if (!vehicle.ok) return fail(vehicle, "Deleting the vehicle");
 
-  logActivity(user.id, "vehicle_deleted", "vehicle", id);
+  await logActivity(user.id, "vehicle_deleted", "vehicle", id);
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function addVehiclePhoto(vehicleId: number, url: string, isPrimary = false) {
   const user = await staffUser();
   assertCan(user, "manager");
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
-  if (isPrimary) db.prepare("UPDATE vehicle_photos SET is_primary = 0 WHERE vehicle_id = ?").run(vehicleId);
-  const res = db.prepare("INSERT INTO vehicle_photos (vehicle_id, url, is_primary) VALUES (?, ?, ?)").run(vehicleId, url, isPrimary ? 1 : 0);
-
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("vehicle_photos").insert({
-        id: Number(res.lastInsertRowid),
-        vehicle_id: vehicleId,
-        url,
-        is_primary: isPrimary ? 1 : 0,
-      });
-    } catch {}
+  if (isPrimary) {
+    const cleared = await sbUpdate("vehicle_photos", `vehicle_id=eq.${vehicleId}`, { is_primary: 0 });
+    if (!cleared.ok) return fail(cleared, "Clearing the previous primary photo");
   }
+
+  const inserted = await sbInsert("vehicle_photos", { vehicle_id: vehicleId, url, is_primary: isPrimary ? 1 : 0 });
+  if (!inserted.ok) return fail(inserted, "Adding the photo");
 
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function removeVehiclePhoto(id: number) {
   const user = await staffUser();
   assertCan(user, "manager");
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
-  db.prepare("DELETE FROM vehicle_photos WHERE id = ?").run(id);
-
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("vehicle_photos").delete().eq("id", id);
-    } catch {}
-  }
+  const res = await sbDelete("vehicle_photos", `id=eq.${id}`);
+  if (!res.ok) return fail(res, "Removing the photo");
 
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function saveVehicleCategory(input: { id?: number; name: string; kind: string; icon?: string; image?: string; shortDesc?: string; description?: string; active?: boolean; sort?: number }) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  const slug = slugify(input.name);
-  if (input.id) {
-    db.prepare("UPDATE vehicle_categories SET name=?, kind=?, icon=?, image=?, short_desc=?, description=?, active=?, sort=? WHERE id=?").run(
-      input.name, input.kind, input.icon ?? null, input.image ?? null, input.shortDesc ?? null, input.description ?? null, input.active === false ? 0 : 1, input.sort ?? 0, input.id
-    );
-  } else {
-    db.prepare("INSERT INTO vehicle_categories (slug, name, kind, icon, image, short_desc, description, sort) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
-      slug, input.name, input.kind, input.icon ?? null, input.image ?? null, input.shortDesc ?? null, input.description ?? null, input.sort ?? 0
-    );
-  }
-  logActivity(user.id, "category_saved", "vehicle_category", input.id ?? null, { name: input.name });
+
+  const fields = {
+    name: input.name,
+    kind: input.kind,
+    icon: input.icon ?? null,
+    image: input.image ?? null,
+    short_desc: input.shortDesc ?? null,
+    description: input.description ?? null,
+    active: input.active === false ? 0 : 1,
+    sort: input.sort ?? 0,
+  };
+
+  const res = input.id
+    ? await sbUpdate("vehicle_categories", `id=eq.${input.id}`, fields)
+    : await sbInsert("vehicle_categories", { slug: slugify(input.name), ...fields });
+  if (!res.ok) return fail(res, "Saving the category");
+
+  await logActivity(user.id, "category_saved", "vehicle_category", input.id ?? null, { name: input.name });
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function saveBranch(input: { id?: number; name: string; city?: string; address?: string; phone?: string; active?: boolean }) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  if (input.id) {
-    db.prepare("UPDATE branches SET name=?, city=?, address=?, phone=?, active=? WHERE id=?").run(input.name, input.city ?? null, input.address ?? null, input.phone ?? null, input.active === false ? 0 : 1, input.id);
-  } else {
-    db.prepare("INSERT INTO branches (name, city, address, phone) VALUES (?, ?, ?, ?)").run(input.name, input.city ?? null, input.address ?? null, input.phone ?? null);
-  }
+
+  const fields = {
+    name: input.name,
+    city: input.city ?? null,
+    address: input.address ?? null,
+    phone: input.phone ?? null,
+    active: input.active === false ? 0 : 1,
+  };
+
+  const res = input.id ? await sbUpdate("branches", `id=eq.${input.id}`, fields) : await sbInsert("branches", fields);
+  if (!res.ok) return fail(res, "Saving the branch");
+
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 /* ------------------------------ Pricing rules ------------------------------ */
@@ -341,91 +366,174 @@ export async function savePricingRule(input: {
 }) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  if (input.id) {
-    db.prepare(
-      `UPDATE pricing_rules SET name=?, vehicle_id=?, category_id=?, day_type=?, start_date=?, end_date=?, rate_24h=?, rate_12h=?, deposit=?, included_km=?, extra_km_rate=?, min_days=?, priority=?, active=?
-       WHERE id=?`
-    ).run(input.name, input.vehicleId ?? null, input.categoryId ?? null, input.dayType, input.startDate, input.endDate, input.rate24h ?? null, input.rate12h ?? null, input.deposit ?? null, input.includedKm ?? null, input.extraKmRate ?? null, input.minDays ?? 1, input.priority ?? 0, input.active === false ? 0 : 1, input.id);
-  } else {
-    db.prepare(
-      `INSERT INTO pricing_rules (name, vehicle_id, category_id, day_type, start_date, end_date, rate_24h, rate_12h, deposit, included_km, extra_km_rate, min_days, priority)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(input.name, input.vehicleId ?? null, input.categoryId ?? null, input.dayType, input.startDate, input.endDate, input.rate24h ?? null, input.rate12h ?? null, input.deposit ?? null, input.includedKm ?? null, input.extraKmRate ?? null, input.minDays ?? 1, input.priority ?? 0);
-  }
-  logActivity(user.id, "pricing_rule_saved", "pricing_rule", input.id ?? null, { name: input.name });
+
+  const fields = {
+    name: input.name,
+    vehicle_id: input.vehicleId ?? null,
+    category_id: input.categoryId ?? null,
+    day_type: input.dayType,
+    start_date: input.startDate,
+    end_date: input.endDate,
+    rate_24h: input.rate24h ?? null,
+    rate_12h: input.rate12h ?? null,
+    deposit: input.deposit ?? null,
+    included_km: input.includedKm ?? null,
+    extra_km_rate: input.extraKmRate ?? null,
+    min_days: input.minDays ?? 1,
+    priority: input.priority ?? 0,
+    active: input.active === false ? 0 : 1,
+  };
+
+  const res = input.id ? await sbUpdate("pricing_rules", `id=eq.${input.id}`, fields) : await sbInsert("pricing_rules", fields);
+  if (!res.ok) return fail(res, "Saving the pricing rule");
+
+  await logActivity(user.id, "pricing_rule_saved", "pricing_rule", input.id ?? null, { name: input.name });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function deletePricingRule(id: number) {
   const user = await staffUser();
   assertCan(user, "admin");
-  getDb().prepare("DELETE FROM pricing_rules WHERE id = ?").run(id);
+
+  const res = await sbDelete("pricing_rules", `id=eq.${id}`);
+  if (!res.ok) return fail(res, "Deleting the pricing rule");
+
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 /* -------------------------------- Bookings --------------------------------- */
 
+/** Shared tail for the several actions that flip a booking's status and log it. */
+async function setBookingStatus(
+  bookingId: number,
+  status: string,
+  patch: Record<string, unknown>,
+  history: { userId: number; action: string; detail: unknown }
+): Promise<ActionError | null> {
+  const updated = await sbUpdate("bookings", `id=eq.${bookingId}`, { status, updated_at: nowIso(), ...patch });
+  if (!updated.ok) return fail(updated, "Updating the booking");
+  if (updated.data.length === 0) return { ok: false as const, error: `Booking ${bookingId} no longer exists.` };
+
+  const logged = await sbInsert("booking_history", {
+    booking_id: bookingId,
+    user_id: history.userId,
+    action: history.action,
+    detail: JSON.stringify(history.detail),
+  });
+  if (!logged.ok) return fail(logged, "Recording the booking history");
+
+  return null;
+}
+
 export async function updateBookingStatus(id: number, status: string) {
   const user = await staffUser();
-  const db = getDb();
-  const prev = db.prepare("SELECT status FROM bookings WHERE id = ?").get(id) as { status: string };
-  db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id);
-  const histRes = db.prepare("INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'status_change', ?)").run(id, user.id, JSON.stringify({ from: prev.status, to: status }));
-  syncEntityToSupabase("bookings", id).catch(() => {});
-  syncEntityToSupabase("booking_history", Number(histRes.lastInsertRowid)).catch(() => {});
-  logActivity(user.id, "booking_status", "booking", id, { from: prev.status, to: status });
+
+  const before = await sbSelectOne<{ status: string }>("bookings", `select=status&id=eq.${id}`);
+  if (!before.ok) return fail(before, "Reading the booking");
+  if (!before.data) return { ok: false as const, error: `Booking ${id} no longer exists.` };
+  const previous = before.data.status;
+
+  const failed = await setBookingStatus(id, status, {}, { userId: user.id, action: "status_change", detail: { from: previous, to: status } });
+  if (failed) return failed;
+
+  await logActivity(user.id, "booking_status", "booking", id, { from: previous, to: status });
 
   if (status === "Confirmed") {
-    const b = db.prepare("SELECT booking_no, vehicle_id, pickup_at FROM bookings WHERE id = ?").get(id) as { booking_no: string; vehicle_id: number; pickup_at: string };
-    const customer = db.prepare("SELECT c.name, c.phone FROM bookings b JOIN customers c ON c.id = b.customer_id WHERE b.id = ?").get(id) as { name: string; phone: string } | undefined;
-    const vehicle = db.prepare("SELECT name FROM vehicles WHERE id = ?").get(b.vehicle_id) as { name: string } | undefined;
-    if (customer?.phone) {
-      sendTemplate("booking_confirmation", customer.phone, { name: customer.name, booking_no: b.booking_no, vehicle: vehicle?.name ?? "", pickup_at: b.pickup_at }, null, id);
+    const booking = await sbSelectOne<{
+      booking_no: string;
+      pickup_at: string;
+      vehicles: { name: string } | null;
+      customers: { name: string; phone: string | null } | null;
+    }>("bookings", `select=booking_no,pickup_at,vehicles(name),customers(name,phone)&id=eq.${id}`);
+
+    const row = booking.ok ? booking.data : null;
+    if (row?.customers?.phone) {
+      // Awaited: an un-awaited send never completes once the lambda freezes.
+      await sendTemplate(
+        "booking_confirmation",
+        row.customers.phone,
+        { name: row.customers.name, booking_no: row.booking_no, vehicle: row.vehicles?.name ?? "", pickup_at: row.pickup_at },
+        null,
+        id
+      ).catch(() => null);
     }
   }
+
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function assignBookingManager(id: number, managerId: number | null) {
   const user = await staffUser();
-  getDb().prepare("UPDATE bookings SET manager_id = ?, updated_at = datetime('now') WHERE id = ?").run(managerId, id);
-  syncEntityToSupabase("bookings", id).catch(() => {});
-  logActivity(user.id, "booking_assigned", "booking", id, { manager_id: managerId });
+
+  const res = await sbUpdate("bookings", `id=eq.${id}`, { manager_id: managerId, updated_at: nowIso() });
+  if (!res.ok) return fail(res, "Assigning the booking manager");
+
+  await logActivity(user.id, "booking_assigned", "booking", id, { manager_id: managerId });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function approveAfterHours(id: number, approve: boolean, note?: string) {
   const user = await staffUser();
   assertCan(user, "manager");
-  const db = getDb();
-  db.prepare("UPDATE bookings SET after_hours_approved_by = ?, notes = COALESCE(notes || char(10), '') || ? WHERE id = ?").run(
-    approve ? user.id : null, `After-hours pickup ${approve ? "approved" : "declined"}${note ? `: ${note}` : ""}`, id
-  );
-  syncEntityToSupabase("bookings", id).catch(() => {});
-  logActivity(user.id, "after_hours_decision", "booking", id, { approve, note });
+
+  const existing = await sbSelectOne<{ notes: string | null }>("bookings", `select=notes&id=eq.${id}`);
+  if (!existing.ok) return fail(existing, "Reading the booking");
+  if (!existing.data) return { ok: false as const, error: `Booking ${id} no longer exists.` };
+
+  const line = `After-hours pickup ${approve ? "approved" : "declined"}${note ? `: ${note}` : ""}`;
+  const notes = existing.data.notes ? `${existing.data.notes}\n${line}` : line;
+
+  const res = await sbUpdate("bookings", `id=eq.${id}`, {
+    after_hours_approved_by: approve ? user.id : null,
+    notes,
+    updated_at: nowIso(),
+  });
+  if (!res.ok) return fail(res, "Recording the after-hours decision");
+
+  await logActivity(user.id, "after_hours_decision", "booking", id, { approve, note });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function addManualAdjustment(input: { bookingId: number; type: string; amount: number; reason: string }) {
   const user = await staffUser();
   assertCan(user, "manager");
-  const db = getDb();
-  const adjRes = db.prepare("INSERT INTO manual_adjustments (booking_id, type, amount, reason, employee_id, approved_by) VALUES (?, ?, ?, ?, ?, ?)").run(
-    input.bookingId, input.type, input.amount, input.reason, user.id, user.id
-  );
+
+  const inserted = await sbInsert("manual_adjustments", {
+    booking_id: input.bookingId,
+    type: input.type,
+    amount: input.amount,
+    reason: input.reason,
+    employee_id: user.id,
+    approved_by: user.id,
+  });
+  if (!inserted.ok) return fail(inserted, "Saving the adjustment");
+
   const field = input.type === "damage_charge" ? "damage_amount" : input.type.startsWith("late_fee") ? "late_fee_amount" : "other_fees_amount";
-  db.prepare(`UPDATE bookings SET ${field} = ${field} + ?, total_amount = total_amount + ?, updated_at = datetime('now') WHERE id = ?`).run(input.amount, input.amount, input.bookingId);
-  syncEntityToSupabase("manual_adjustments", Number(adjRes.lastInsertRowid)).catch(() => {});
-  syncEntityToSupabase("bookings", input.bookingId).catch(() => {});
-  logActivity(user.id, "manual_adjustment", "booking", input.bookingId, input);
+
+  // The per-category bucket has no dedicated Postgres accumulator, so it stays a
+  // read-modify-write; `total_amount` — the one two staff can race on — goes through
+  // the atomic RPC.
+  const current = await sbSelectOne<Record<string, unknown>>("bookings", `select=${field}&id=eq.${input.bookingId}`);
+  if (!current.ok) return fail(current, "Reading the booking totals");
+  if (!current.data) return { ok: false as const, error: `Booking ${input.bookingId} no longer exists.` };
+
+  const bucket = await sbUpdate("bookings", `id=eq.${input.bookingId}`, {
+    [field]: num(current.data[field]) + input.amount,
+    updated_at: nowIso(),
+  });
+  if (!bucket.ok) return fail(bucket, "Updating the booking charges");
+
+  const total = await sbRpc("increment_booking_total", { p_booking_id: input.bookingId, p_amount: input.amount });
+  if (!total.ok) return fail(total, "Updating the booking total");
+
+  await logActivity(user.id, "manual_adjustment", "booking", input.bookingId, input);
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 /* ------------------------------- Inspections -------------------------------- */
@@ -435,97 +543,204 @@ export async function recordInspection(input: {
   photos: Array<{ side: string; url: string; notes?: string }>;
 }) {
   const user = await staffUser();
-  const db = getDb();
-  const result = db.prepare("INSERT INTO inspections (booking_id, kind, employee_id, odometer, fuel_level, notes) VALUES (?, ?, ?, ?, ?, ?)").run(
-    input.bookingId, input.kind, user.id, input.odometer ?? null, input.fuelLevel ?? null, input.notes ?? null
-  );
-  const inspectionId = Number(result.lastInsertRowid);
-  syncEntityToSupabase("inspections", inspectionId).catch(() => {});
 
-  for (const p of input.photos) {
-    const photoResult = db.prepare("INSERT INTO inspection_photos (inspection_id, side, url, notes) VALUES (?, ?, ?, ?)").run(inspectionId, p.side, p.url, p.notes ?? null);
-    const photoId = Number(photoResult.lastInsertRowid);
-    syncEntityToSupabase("inspection_photos", photoId).catch(() => {});
+  const inspection = await sbInsert<{ id: number }>("inspections", {
+    booking_id: input.bookingId,
+    kind: input.kind,
+    employee_id: user.id,
+    odometer: input.odometer ?? null,
+    fuel_level: input.fuelLevel ?? null,
+    notes: input.notes ?? null,
+  });
+  if (!inspection.ok) return fail(inspection, "Recording the inspection");
+  const inspectionId = Number(inspection.data.id);
+
+  if (input.photos.length > 0) {
+    const photos = await sbInsert(
+      "inspection_photos",
+      input.photos.map((p) => ({ inspection_id: inspectionId, side: p.side, url: p.url, notes: p.notes ?? null }))
+    );
+    if (!photos.ok) return fail(photos, "Saving the inspection photos");
   }
+
+  const booking = await sbSelectOne<{ vehicle_id: number | null; return_at: string; start_odometer: number | string | null; included_km: number }>(
+    "bookings",
+    `select=vehicle_id,return_at,start_odometer,included_km&id=eq.${input.bookingId}`
+  );
+  if (!booking.ok) return fail(booking, "Reading the booking");
+  if (!booking.data) return { ok: false as const, error: `Booking ${input.bookingId} no longer exists.` };
+  const vehicleId = booking.data.vehicle_id;
 
   if (input.kind === "handover") {
-    db.prepare("UPDATE bookings SET status = 'Vehicle handed over', actual_pickup_at = datetime('now'), start_odometer = ?, updated_at = datetime('now') WHERE id = ?").run(input.odometer ?? null, input.bookingId);
-    db.prepare("UPDATE vehicles SET status = 'booked' WHERE id = (SELECT vehicle_id FROM bookings WHERE id = ?)").run(input.bookingId);
+    const updated = await sbUpdate("bookings", `id=eq.${input.bookingId}`, {
+      status: "Vehicle handed over",
+      actual_pickup_at: nowIso(),
+      start_odometer: input.odometer ?? null,
+      updated_at: nowIso(),
+    });
+    if (!updated.ok) return fail(updated, "Updating the booking");
+
+    if (vehicleId) {
+      const vehicle = await sbUpdate("vehicles", `id=eq.${vehicleId}`, { status: "booked", updated_at: nowIso() });
+      if (!vehicle.ok) return fail(vehicle, "Updating the vehicle status");
+    }
   } else {
-    const booking = db.prepare("SELECT vehicle_id, return_at, start_odometer, included_km FROM bookings WHERE id = ?").get(input.bookingId) as {
-      vehicle_id: number; return_at: string; start_odometer: number | null; included_km: number;
-    };
-    const vehicle = db.prepare("SELECT rate_24h, extra_km_rate FROM vehicles WHERE id = ?").get(booking.vehicle_id) as { rate_24h: number; extra_km_rate: number };
-    const now = new Date();
-    const late = calculateLateFee(new Date(booking.return_at), now, vehicle?.rate_24h ?? 900);
-    const km = input.odometer != null && booking.start_odometer != null
-      ? calculateExtraKm(booking.included_km, booking.start_odometer, input.odometer, vehicle.extra_km_rate)
+    const vehicle = vehicleId
+      ? await sbSelectOne<{ rate_24h: string | number; extra_km_rate: string | number }>("vehicles", `select=rate_24h,extra_km_rate&id=eq.${vehicleId}`)
+      : null;
+    if (vehicle && !vehicle.ok) return fail(vehicle, "Reading the vehicle");
+
+    // NUMERIC arrives from PostgREST as a string; `num()` before any arithmetic.
+    const rate24h = vehicle?.ok && vehicle.data ? num(vehicle.data.rate_24h, 900) : 900;
+    const extraKmRate = vehicle?.ok && vehicle.data ? num(vehicle.data.extra_km_rate) : 0;
+
+    const late = calculateLateFee(new Date(booking.data.return_at), new Date(), rate24h);
+    const startOdo = booking.data.start_odometer;
+    const km = input.odometer != null && startOdo != null
+      ? calculateExtraKm(num(booking.data.included_km), num(startOdo), input.odometer, extraKmRate)
       : { extraKm: 0, amount: 0 };
-    db.prepare(
-      `UPDATE bookings SET status = 'Inspection pending', actual_return_at = datetime('now'), end_odometer = ?,
-       late_fee_amount = ?, extra_km_amount = ?, total_amount = total_amount + ? + ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(input.odometer ?? null, late.fee, km.amount, late.fee, km.amount, input.bookingId);
-    db.prepare("UPDATE vehicles SET status = 'available' WHERE id = ?").run(booking.vehicle_id);
-    const bhRes = db.prepare("INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'return_inspection', ?)").run(
-      input.bookingId, user.id, JSON.stringify({ lateFee: late, extraKm: km })
-    );
-    syncEntityToSupabase("booking_history", Number(bhRes.lastInsertRowid)).catch(() => {});
+
+    const updated = await sbUpdate("bookings", `id=eq.${input.bookingId}`, {
+      status: "Inspection pending",
+      actual_return_at: nowIso(),
+      end_odometer: input.odometer ?? null,
+      late_fee_amount: late.fee,
+      extra_km_amount: km.amount,
+      updated_at: nowIso(),
+    });
+    if (!updated.ok) return fail(updated, "Updating the booking");
+
+    const total = await sbRpc("increment_booking_total", { p_booking_id: input.bookingId, p_amount: late.fee + km.amount });
+    if (!total.ok) return fail(total, "Updating the booking total");
+
+    if (vehicleId) {
+      const freed = await sbUpdate("vehicles", `id=eq.${vehicleId}`, { status: "available", updated_at: nowIso() });
+      if (!freed.ok) return fail(freed, "Updating the vehicle status");
+    }
+
+    const history = await sbInsert("booking_history", {
+      booking_id: input.bookingId,
+      user_id: user.id,
+      action: "return_inspection",
+      detail: JSON.stringify({ lateFee: late, extraKm: km }),
+    });
+    if (!history.ok) return fail(history, "Recording the booking history");
   }
-  syncEntityToSupabase("bookings", input.bookingId).catch(() => {});
-  logActivity(user.id, `inspection_${input.kind}`, "booking", input.bookingId, { inspection_id: inspectionId });
+
+  await logActivity(user.id, `inspection_${input.kind}`, "booking", input.bookingId, { inspection_id: inspectionId });
   refresh();
-  return { ok: true, inspectionId };
+  return { ok: true as const, inspectionId };
 }
 
 export async function addDamageReport(input: { bookingId: number; inspectionId?: number | null; description: string; chargeAmount: number }) {
   const user = await staffUser();
   assertCan(user, "manager");
-  const db = getDb();
-  const dmgRes = db.prepare("INSERT INTO damage_reports (booking_id, inspection_id, description, charge_amount, approved_by) VALUES (?, ?, ?, ?, ?)").run(
-    input.bookingId, input.inspectionId ?? null, input.description, input.chargeAmount, user.id
-  );
-  db.prepare("UPDATE bookings SET damage_amount = damage_amount + ?, total_amount = total_amount + ?, updated_at = datetime('now') WHERE id = ?").run(
-    input.chargeAmount, input.chargeAmount, input.bookingId
-  );
-  syncEntityToSupabase("damage_reports", Number(dmgRes.lastInsertRowid)).catch(() => {});
-  syncEntityToSupabase("bookings", input.bookingId).catch(() => {});
-  logActivity(user.id, "damage_report", "booking", input.bookingId, input);
+
+  const report = await sbInsert("damage_reports", {
+    booking_id: input.bookingId,
+    inspection_id: input.inspectionId ?? null,
+    description: input.description,
+    charge_amount: input.chargeAmount,
+    approved_by: user.id,
+  });
+  if (!report.ok) return fail(report, "Saving the damage report");
+
+  const current = await sbSelectOne<{ damage_amount: string | number }>("bookings", `select=damage_amount&id=eq.${input.bookingId}`);
+  if (!current.ok) return fail(current, "Reading the booking totals");
+  if (!current.data) return { ok: false as const, error: `Booking ${input.bookingId} no longer exists.` };
+
+  const bucket = await sbUpdate("bookings", `id=eq.${input.bookingId}`, {
+    damage_amount: num(current.data.damage_amount) + input.chargeAmount,
+    updated_at: nowIso(),
+  });
+  if (!bucket.ok) return fail(bucket, "Updating the damage charges");
+
+  const total = await sbRpc("increment_booking_total", { p_booking_id: input.bookingId, p_amount: input.chargeAmount });
+  if (!total.ok) return fail(total, "Updating the booking total");
+
+  await logActivity(user.id, "damage_report", "booking", input.bookingId, input);
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 /* --------------------------------- Payments --------------------------------- */
 
 export async function addPayment(input: { bookingId: number; amount: number; kind?: string; method?: string; dueDate?: string; notes?: string }) {
   const user = await staffUser();
-  const db = getDb();
-  const booking = db.prepare("SELECT customer_id FROM bookings WHERE id = ?").get(input.bookingId) as { customer_id: number | null };
-  const pn = nextNumber("PY", null);
-  const payRes = db.prepare(
-    "INSERT INTO payments (payment_no, booking_id, customer_id, amount, kind, method, due_date, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?)"
-  ).run(pn, input.bookingId, booking.customer_id, input.amount, input.kind ?? "advance", input.method ?? null, input.dueDate ?? null, input.notes ?? null);
-  syncEntityToSupabase("payments", Number(payRes.lastInsertRowid)).catch(() => {});
-  logActivity(user.id, "payment_created", "booking", input.bookingId, { amount: input.amount });
+
+  const booking = await sbSelectOne<{ customer_id: number | null }>("bookings", `select=customer_id&id=eq.${input.bookingId}`);
+  if (!booking.ok) return fail(booking, "Reading the booking");
+  if (!booking.data) return { ok: false as const, error: `Booking ${input.bookingId} no longer exists.` };
+
+  const payment = await insertWithNumber<{ id: number }>("payments", "payment_no", "PY", {
+    booking_id: input.bookingId,
+    customer_id: booking.data.customer_id,
+    amount: input.amount,
+    kind: input.kind ?? "advance",
+    method: input.method ?? null,
+    due_date: input.dueDate ?? null,
+    status: "Pending",
+    notes: input.notes ?? null,
+  });
+  if (!payment.ok) return fail(payment, "Creating the payment");
+
+  await logActivity(user.id, "payment_created", "booking", input.bookingId, { amount: input.amount });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function markPaymentPaid(id: number, gatewayRef?: string) {
   const user = await staffUser();
-  const db = getDb();
-  const p = db.prepare("SELECT * FROM payments WHERE id = ?").get(id) as { payment_no: string; booking_id: number; customer_id: number | null; amount: number };
-  const receiptNo = nextNumber("RC", null);
-  db.prepare("UPDATE payments SET status = 'Paid', paid_at = datetime('now'), receipt_no = ?, gateway_ref = COALESCE(?, gateway_ref) WHERE id = ?").run(receiptNo, gatewayRef ?? null, id);
-  db.prepare("UPDATE bookings SET paid_amount = paid_amount + ?, updated_at = datetime('now') WHERE id = ?").run(p.amount, p.booking_id);
-  syncEntityToSupabase("payments", id).catch(() => {});
-  syncEntityToSupabase("bookings", p.booking_id).catch(() => {});
-  const customer = p.customer_id ? db.prepare("SELECT phone, name FROM customers WHERE id = ?").get(p.customer_id) as { phone: string | null; name: string } : null;
-  if (customer?.phone) {
-    sendTemplate("invoice_generated", customer.phone, { name: customer.name, amount: `₹${p.amount.toLocaleString("en-IN")}`, total: `₹${p.amount.toLocaleString("en-IN")}`, booking_no: p.payment_no }, null, p.booking_id);
+
+  const existing = await sbSelectOne<{
+    payment_no: string; booking_id: number | null; customer_id: number | null; amount: string | number; gateway_ref: string | null; status: string;
+  }>("payments", `select=payment_no,booking_id,customer_id,amount,gateway_ref,status&id=eq.${id}`);
+  if (!existing.ok) return fail(existing, "Reading the payment");
+  if (!existing.data) return { ok: false as const, error: `Payment ${id} no longer exists.` };
+
+  const payment = existing.data;
+  const amount = num(payment.amount);
+  // Derived from the payment's own id, so two lambdas cannot mint the same receipt
+  // number against the UNIQUE receipt_no column.
+  const receiptNo = docNumber("RC", id);
+
+  const updated = await sbUpdate("payments", `id=eq.${id}&status=neq.Paid`, {
+    status: "Paid",
+    paid_at: nowIso(),
+    receipt_no: receiptNo,
+    gateway_ref: gatewayRef ?? payment.gateway_ref,
+  });
+  if (!updated.ok) return fail(updated, "Marking the payment paid");
+  // The `status=neq.Paid` filter makes this idempotent: a second click matches nothing
+  // and must not increment paid_amount a second time.
+  if (updated.data.length === 0) return { ok: false as const, error: "This payment has already been marked paid." };
+
+  if (payment.booking_id) {
+    const applied = await sbRpc("increment_booking_paid", { p_booking_id: payment.booking_id, p_amount: amount });
+    if (!applied.ok) return fail(applied, "Applying the payment to the booking");
   }
-  logActivity(user.id, "payment_paid", "payment", id, { amount: p.amount, receipt: receiptNo });
+
+  if (payment.customer_id) {
+    const customer = await sbSelectOne<{ phone: string | null; name: string }>("customers", `select=phone,name&id=eq.${payment.customer_id}`);
+    if (customer.ok && customer.data?.phone) {
+      await sendTemplate(
+        "invoice_generated",
+        customer.data.phone,
+        {
+          name: customer.data.name,
+          amount: `₹${amount.toLocaleString("en-IN")}`,
+          total: `₹${amount.toLocaleString("en-IN")}`,
+          booking_no: payment.payment_no,
+        },
+        null,
+        payment.booking_id
+      ).catch(() => null);
+    }
+  }
+
+  await logActivity(user.id, "payment_paid", "payment", id, { amount, receipt: receiptNo });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 /* --------------------------------- Refunds ----------------------------------- */
@@ -533,47 +748,65 @@ export async function markPaymentPaid(id: number, gatewayRef?: string) {
 export async function decideRefund(id: number, decision: "Approved" | "Rejected" | "Partially approved", approvedAmount?: number, notes?: string) {
   const user = await staffUser();
   assertCan(user, "manager");
-  const db = getDb();
-  db.prepare("UPDATE refunds SET status = ?, approved_amount = ?, admin_notes = ?, approved_at = datetime('now') WHERE id = ?").run(
-    decision, approvedAmount ?? null, notes ?? null, id
-  );
-  logActivity(user.id, "refund_decision", "refund", id, { decision, approvedAmount });
+
+  const res = await sbUpdate("refunds", `id=eq.${id}`, {
+    status: decision,
+    approved_amount: approvedAmount ?? null,
+    admin_notes: notes ?? null,
+    approved_at: nowIso(),
+  });
+  if (!res.ok) return fail(res, "Recording the refund decision");
+
+  await logActivity(user.id, "refund_decision", "refund", id, { decision, approvedAmount });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function completeRefund(id: number, method: string, transactionRef: string) {
   const user = await staffUser();
   assertCan(user, "finance");
-  const db = getDb();
-  db.prepare("UPDATE refunds SET status = 'Completed', method = ?, transaction_ref = ?, completed_at = datetime('now') WHERE id = ?").run(method, transactionRef, id);
-  const r = db.prepare("SELECT booking_id, approved_amount, customer_id FROM refunds WHERE id = ?").get(id) as { booking_id: number; approved_amount: number | null; customer_id: number | null };
-  const customer = r.customer_id ? db.prepare("SELECT phone, name FROM customers WHERE id = ?").get(r.customer_id) as { phone: string | null; name: string } : null;
-  if (customer?.phone) {
-    sendTemplate("refund_completed", customer.phone, { name: customer.name, amount: `₹${(r.approved_amount ?? 0).toLocaleString("en-IN")}`, transaction_ref: transactionRef, booking_no: String(r.booking_id) }, null, r.booking_id);
+
+  const updated = await sbUpdate<{ booking_id: number; approved_amount: string | number | null; customer_id: number | null }>(
+    "refunds",
+    `id=eq.${id}`,
+    { status: "Completed", method, transaction_ref: transactionRef, completed_at: nowIso() }
+  );
+  if (!updated.ok) return fail(updated, "Completing the refund");
+
+  const refund = updated.data[0];
+  if (refund?.customer_id) {
+    const customer = await sbSelectOne<{ phone: string | null; name: string }>("customers", `select=phone,name&id=eq.${refund.customer_id}`);
+    if (customer.ok && customer.data?.phone) {
+      await sendTemplate(
+        "refund_completed",
+        customer.data.phone,
+        {
+          name: customer.data.name,
+          amount: `₹${num(refund.approved_amount).toLocaleString("en-IN")}`,
+          transaction_ref: transactionRef,
+          booking_no: String(refund.booking_id),
+        },
+        null,
+        refund.booking_id
+      ).catch(() => null);
+    }
   }
-  logActivity(user.id, "refund_completed", "refund", id, { method, transactionRef });
+
+  await logActivity(user.id, "refund_completed", "refund", id, { method, transactionRef });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function processOnlineRazorpayRefund(refundId: number): Promise<{ ok: true; refundId: string } | { ok: false; error: string }> {
   const user = await staffUser();
   assertCan(user, "finance");
-  const db = getDb();
 
-  const refund = db
-    .prepare(
-      `SELECT r.*, p.notes AS payment_notes, p.razorpay_payment_id AS payment_rzp_id FROM refunds r
-       LEFT JOIN payments p ON p.booking_id = r.booking_id
-       WHERE r.id = ? AND p.status = 'Paid' AND (p.razorpay_payment_id IS NOT NULL OR p.notes LIKE 'Razorpay payment ID:%')
-       ORDER BY p.id DESC LIMIT 1`
-    )
-    .get(refundId) as { id: number; booking_id: number; status: string; approved_amount: number | null; requested_amount: number; payment_notes: string | null; payment_rzp_id: string | null; customer_id: number | null } | undefined;
-
-  if (!refund) {
-    return { ok: false, error: "No paid Razorpay transaction found for this booking refund." };
-  }
+  const refundRes = await sbSelectOne<{
+    id: number; booking_id: number; status: string; approved_amount: string | number | null; requested_amount: string | number;
+  }>("refunds", `select=id,booking_id,status,approved_amount,requested_amount&id=eq.${refundId}`);
+  if (!refundRes.ok) return { ok: false, error: refundRes.error };
+  const refund = refundRes.data;
+  if (!refund) return { ok: false, error: "Refund not found." };
 
   // Guard against double refunds. Without this, two staff clicks issue two real
   // Razorpay refunds against the same payment — actual money out the door twice.
@@ -581,24 +814,29 @@ export async function processOnlineRazorpayRefund(refundId: number): Promise<{ o
     return { ok: false, error: "This refund has already been processed." };
   }
 
-  // Atomically claim the refund so two concurrent requests cannot both proceed.
-  const claimed = db
-    .prepare("UPDATE refunds SET status = 'Processing' WHERE id = ? AND status <> 'Completed' AND status <> 'Processing'")
-    .run(refundId);
-  if (!claimed.changes) {
-    return { ok: false, error: "This refund is already being processed." };
-  }
-
   // Prefer the dedicated column; fall back to the legacy free-text note only if absent.
+  const paid = await sbSelect<{ razorpay_payment_id: string | null; notes: string | null }>(
+    "payments",
+    `select=razorpay_payment_id,notes&booking_id=eq.${refund.booking_id}&status=eq.Paid&order=id.desc`
+  );
+  if (!paid.ok) return { ok: false, error: paid.error };
+
   const razorpayPaymentId =
-    refund.payment_rzp_id?.trim() || (refund.payment_notes ?? "").replace("Razorpay payment ID: ", "").trim();
+    paid.data.find((p) => p.razorpay_payment_id?.trim())?.razorpay_payment_id?.trim() ||
+    (paid.data.find((p) => p.notes?.startsWith("Razorpay payment ID:"))?.notes ?? "").replace("Razorpay payment ID: ", "").trim();
 
   if (!razorpayPaymentId) {
-    db.prepare("UPDATE refunds SET status = 'Approved' WHERE id = ?").run(refundId);
-    return { ok: false, error: "Could not determine the Razorpay payment ID for this refund." };
+    return { ok: false, error: "No paid Razorpay transaction found for this booking refund." };
   }
 
-  const amountToRefund = refund.approved_amount ?? refund.requested_amount;
+  // Claim the refund in a single UPDATE so two concurrent requests cannot both proceed.
+  // PostgREST returns the affected rows, so an empty array means somebody else won.
+  const claimFilter = `id=eq.${refundId}&status=not.in.${encodeURIComponent('("Completed","Processing")')}`;
+  const claimed = await sbUpdate("refunds", claimFilter, { status: "Processing" });
+  if (!claimed.ok) return { ok: false, error: claimed.error };
+  if (claimed.data.length === 0) return { ok: false, error: "This refund is already being processed." };
+
+  const amountToRefund = num(refund.approved_amount ?? refund.requested_amount);
 
   const result = await issueRazorpayRefund({
     razorpayPaymentId,
@@ -607,15 +845,23 @@ export async function processOnlineRazorpayRefund(refundId: number): Promise<{ o
   });
 
   if (!result.ok) {
+    // Release the claim, otherwise a gateway hiccup wedges the refund in "Processing".
+    await sbUpdate("refunds", `id=eq.${refundId}&status=eq.Processing`, { status: "Approved" });
     return { ok: false, error: result.error };
   }
 
-  db.prepare("UPDATE refunds SET status = 'Completed', method = 'Razorpay', transaction_ref = ?, completed_at = datetime('now') WHERE id = ?").run(
-    result.refundId,
-    refundId
-  );
+  const completed = await sbUpdate("refunds", `id=eq.${refundId}`, {
+    status: "Completed",
+    method: "Razorpay",
+    transaction_ref: result.refundId,
+    completed_at: nowIso(),
+  });
+  if (!completed.ok) {
+    // The money left the account; surfacing the id lets someone reconcile by hand.
+    return { ok: false, error: `Razorpay refund ${result.refundId} succeeded but the record could not be updated: ${completed.error}` };
+  }
 
-  logActivity(user.id, "razorpay_refund_processed", "refund", refundId, { refundId: result.refundId, amount: amountToRefund });
+  await logActivity(user.id, "razorpay_refund_processed", "refund", refundId, { refundId: result.refundId, amount: amountToRefund });
   refresh();
   return { ok: true, refundId: result.refundId };
 }
@@ -625,30 +871,51 @@ export async function processOnlineRazorpayRefund(refundId: number): Promise<{ o
 
 export async function updateProblemTicket(id: number, patch: { status?: string; assignedTo?: number | null; replacementVehicleId?: number | null; resolutionNotes?: string }) {
   const user = await staffUser();
-  const db = getDb();
-  db.prepare(
-    "UPDATE problem_tickets SET status = COALESCE(?, status), assigned_to = COALESCE(?, assigned_to), replacement_vehicle_id = COALESCE(?, replacement_vehicle_id), resolution_notes = COALESCE(?, resolution_notes), resolved_at = CASE WHEN ? = 'Resolved' THEN datetime('now') ELSE resolved_at END WHERE id = ?"
-  ).run(patch.status ?? null, patch.assignedTo ?? null, patch.replacementVehicleId ?? null, patch.resolutionNotes ?? null, patch.status ?? null, id);
-  logActivity(user.id, "problem_ticket_updated", "problem_ticket", id, patch);
+
+  // COALESCE(?, col) in SQL meant "leave alone when null"; over PostgREST the same
+  // thing is expressed by simply omitting the key from the patch body.
+  const body: Record<string, unknown> = {};
+  if (patch.status != null) body.status = patch.status;
+  if (patch.assignedTo != null) body.assigned_to = patch.assignedTo;
+  if (patch.replacementVehicleId != null) body.replacement_vehicle_id = patch.replacementVehicleId;
+  if (patch.resolutionNotes != null) body.resolution_notes = patch.resolutionNotes;
+  if (patch.status === "Resolved") body.resolved_at = nowIso();
+
+  if (Object.keys(body).length > 0) {
+    const res = await sbUpdate("problem_tickets", `id=eq.${id}`, body);
+    if (!res.ok) return fail(res, "Updating the ticket");
+  }
+
+  await logActivity(user.id, "problem_ticket_updated", "problem_ticket", id, patch);
 
   if (patch.status === "Resolved") {
-    const row = db
-      .prepare(
-        `SELECT t.ticket_no, t.resolution_notes, c.name, c.phone, b.booking_no FROM problem_tickets t
-         LEFT JOIN customers c ON c.id = t.customer_id LEFT JOIN bookings b ON b.id = t.booking_id WHERE t.id = ?`
-      )
-      .get(id) as { ticket_no: string; resolution_notes: string | null; name: string | null; phone: string | null; booking_no: string | null } | undefined;
-    if (row?.phone) {
-      try {
-        sendTemplate("problem_ticket_resolved", row.phone, { name: row.name ?? "", ticket_no: row.ticket_no, booking_no: row.booking_no ?? "", notes: row.resolution_notes ?? "" }, null, null);
-      } catch {
-        // best-effort — ticket status is already updated regardless
-      }
+    const row = await sbSelectOne<{
+      ticket_no: string;
+      resolution_notes: string | null;
+      customers: { name: string | null; phone: string | null } | null;
+      bookings: { booking_no: string } | null;
+    }>("problem_tickets", `select=ticket_no,resolution_notes,customers(name,phone),bookings(booking_no)&id=eq.${id}`);
+
+    const ticket = row.ok ? row.data : null;
+    if (ticket?.customers?.phone) {
+      // Best-effort — the ticket status is already updated regardless.
+      await sendTemplate(
+        "problem_ticket_resolved",
+        ticket.customers.phone,
+        {
+          name: ticket.customers.name ?? "",
+          ticket_no: ticket.ticket_no,
+          booking_no: ticket.bookings?.booking_no ?? "",
+          notes: ticket.resolution_notes ?? "",
+        },
+        null,
+        null
+      ).catch(() => null);
     }
   }
 
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 /* -------------------------------- Settings ---------------------------------- */
@@ -656,49 +923,77 @@ export async function updateProblemTicket(id: number, patch: { status?: string; 
 export async function saveBusinessInfo(info: Record<string, unknown>) {
   const user = await staffUser();
   assertCan(user, "admin");
-  setSetting("business", info);
-  logActivity(user.id, "settings_updated", "settings", null, { key: "business" });
+
+  // `setSetting` is async and throws on failure; it used to be called un-awaited,
+  // so a rejected write surfaced as an unhandled rejection long after the response.
+  try {
+    await setSetting("business", info);
+  } catch (err) {
+    return { ok: false as const, error: err instanceof Error ? err.message : "Could not save the business information." };
+  }
+
+  await logActivity(user.id, "settings_updated", "settings", null, { key: "business" });
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function saveSetting(key: string, value: unknown) {
   const user = await staffUser();
   assertCan(user, "admin");
-  setSetting(key, value);
-  logActivity(user.id, "settings_updated", "settings", null, { key });
+
+  try {
+    await setSetting(key, value);
+  } catch (err) {
+    return { ok: false as const, error: err instanceof Error ? err.message : `Could not save the setting "${key}".` };
+  }
+
+  await logActivity(user.id, "settings_updated", "settings", null, { key });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function saveTemplate(id: number | null, input: { key: string; name: string; channel: string; subject?: string; body: string; active?: boolean }) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  if (id) {
-    db.prepare("UPDATE message_templates SET name = ?, channel = ?, subject = ?, body = ?, active = ? WHERE id = ?").run(input.name, input.channel, input.subject ?? null, input.body, input.active ? 1 : 0, id);
-  } else {
-    db.prepare("INSERT INTO message_templates (key, name, channel, subject, body, active) VALUES (?, ?, ?, ?, ?, ?)").run(input.key, input.name, input.channel, input.subject ?? null, input.body, input.active ? 1 : 0);
-  }
-  logActivity(user.id, "template_saved", "settings", null, { key: input.key });
+
+  const fields = {
+    name: input.name,
+    channel: input.channel,
+    subject: input.subject ?? null,
+    body: input.body,
+    active: input.active ? 1 : 0,
+  };
+
+  const res = id ? await sbUpdate("message_templates", `id=eq.${id}`, fields) : await sbInsert("message_templates", { key: input.key, ...fields });
+  if (!res.ok) return fail(res, "Saving the template");
+
+  await logActivity(user.id, "template_saved", "settings", null, { key: input.key });
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function saveTestimonial(input: { id?: number; name: string; vehicle?: string; location?: string; rating?: number; quote: string; active?: boolean }) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  if (input.id) {
-    db.prepare("UPDATE testimonials SET name = ?, vehicle = ?, location = ?, rating = ?, quote = ?, active = ? WHERE id = ?").run(input.name, input.vehicle ?? null, input.location ?? null, input.rating ?? 5, input.quote, input.active ? 1 : 0, input.id);
-  } else {
-    db.prepare("INSERT INTO testimonials (name, vehicle, location, rating, quote, active) VALUES (?, ?, ?, ?, ?, 1)").run(input.name, input.vehicle ?? null, input.location ?? null, input.rating ?? 5, input.quote);
-  }
-  logActivity(user.id, "testimonial_saved", "settings", null, { name: input.name });
+
+  const fields = {
+    name: input.name,
+    vehicle: input.vehicle ?? null,
+    location: input.location ?? null,
+    rating: input.rating ?? 5,
+    quote: input.quote,
+  };
+
+  const res = input.id
+    ? await sbUpdate("testimonials", `id=eq.${input.id}`, { ...fields, active: input.active ? 1 : 0 })
+    : await sbInsert("testimonials", { ...fields, active: 1 });
+  if (!res.ok) return fail(res, "Saving the testimonial");
+
+  await logActivity(user.id, "testimonial_saved", "settings", null, { name: input.name });
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function saveUser(input: {
@@ -712,123 +1007,98 @@ export async function saveUser(input: {
   active?: boolean;
 }) {
   const admin = await adminUser();
-  const db = getDb();
   const { hashPassword } = await import("./auth");
   const { supabaseAdmin } = await import("./supabase");
 
   const emailClean = input.email.toLowerCase().trim();
+  // is_active is INTEGER 1/0 in the schema.
   const isActive = input.active !== undefined ? (input.active ? 1 : 0) : 1;
-  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const now = nowIso();
 
   let targetId = input.id;
   let actionName = "created";
   let leftAt: string | null = null;
 
+  const fields: Record<string, unknown> = {
+    name: input.name,
+    email: emailClean,
+    phone: input.phone ?? null,
+    role: input.role,
+    branch: input.branch ?? null,
+    is_active: isActive,
+  };
+  if (input.password) fields.password_hash = hashPassword(input.password);
+
   if (targetId) {
-    // Existing user
-    const existing = db
-      .prepare("SELECT * FROM users WHERE id = ?")
-      .get(targetId) as { is_active: number; left_at: string | null } | undefined;
+    const existing = await sbSelectOne<{ is_active: number; left_at: string | null }>("users", `select=is_active,left_at&id=eq.${targetId}`);
+    if (!existing.ok) return fail(existing, "Reading the staff member");
+    if (!existing.data) return { ok: false as const, error: `Staff member ${targetId} no longer exists.` };
 
-    if (existing) {
-      if (existing.is_active === 1 && isActive === 0) {
-        // Staff deactivated / left org
-        leftAt = now;
-        actionName = "deactivated";
-      } else if (existing.is_active === 0 && isActive === 1) {
-        // Staff reactivated
-        leftAt = null;
-        actionName = "reactivated";
-      } else {
-        leftAt = existing.left_at ?? null;
-        actionName = "updated";
-      }
-    }
-
-    const passwordHash = input.password ? hashPassword(input.password) : null;
-
-    if (passwordHash) {
-      db.prepare(
-        "UPDATE users SET name = ?, email = ?, phone = ?, role = ?, branch = ?, password_hash = ?, is_active = ?, left_at = ? WHERE id = ?"
-      ).run(input.name, emailClean, input.phone ?? null, input.role, input.branch ?? null, passwordHash, isActive, leftAt, targetId);
+    if (num(existing.data.is_active) === 1 && isActive === 0) {
+      leftAt = now;
+      actionName = "deactivated";
+    } else if (num(existing.data.is_active) === 0 && isActive === 1) {
+      leftAt = null;
+      actionName = "reactivated";
     } else {
-      db.prepare(
-        "UPDATE users SET name = ?, email = ?, phone = ?, role = ?, branch = ?, is_active = ?, left_at = ? WHERE id = ?"
-      ).run(input.name, emailClean, input.phone ?? null, input.role, input.branch ?? null, isActive, leftAt, targetId);
+      leftAt = existing.data.left_at ?? null;
+      actionName = "updated";
     }
+
+    const updated = await sbUpdate("users", `id=eq.${targetId}`, { ...fields, left_at: leftAt });
+    if (!updated.ok) return fail(updated, "Saving the staff member");
   } else {
-    // New staff user creation
     actionName = "created";
-    const passwordHash = hashPassword(input.password ?? "StaffPass123!");
-    const res = db
-      .prepare(
-        "INSERT INTO users (name, email, phone, password_hash, role, branch, is_active, left_at) VALUES (?, ?, ?, ?, ?, ?, 1, NULL)"
-      )
-      .run(input.name, emailClean, input.phone ?? null, passwordHash, input.role, input.branch ?? null);
-    targetId = Number(res.lastInsertRowid);
+    if (!fields.password_hash) fields.password_hash = hashPassword("StaffPass123!");
+
+    // Upsert on the UNIQUE email so re-adding a previously-created address updates
+    // that row instead of failing on the constraint.
+    const created = await sbUpsert<{ id: number }>("users", { ...fields, left_at: null }, "email");
+    if (!created.ok) return fail(created, "Creating the staff member");
+    targetId = Number(created.data.id);
   }
 
-  // 1. Sync to Supabase PostgreSQL Database Table
-  if (supabaseAdmin) {
+  // Supabase Auth is a separate system from the users table; keep the credential in sync.
+  if (supabaseAdmin && input.password) {
     try {
-      const passwordHash = input.password ? hashPassword(input.password) : undefined;
-      await supabaseAdmin.from("users").upsert(
-        {
-          name: input.name,
+      const { data: list } = await supabaseAdmin.auth.admin.listUsers();
+      const existingAuth = list?.users.find((u) => u.email === emailClean);
+      if (existingAuth) {
+        await supabaseAdmin.auth.admin.updateUserById(existingAuth.id, {
+          password: input.password,
+          user_metadata: { name: input.name, role: input.role, branch: input.branch },
+        });
+      } else {
+        await supabaseAdmin.auth.admin.createUser({
           email: emailClean,
-          phone: input.phone ?? null,
-          role: input.role,
-          branch: input.branch ?? null,
-          is_active: isActive,
-          left_at: leftAt,
-          ...(passwordHash ? { password_hash: passwordHash } : {}),
-        },
-        { onConflict: "email" }
-      );
-
-      // 2. Sync to Supabase Auth
-      if (input.password) {
-        const { data: list } = await supabaseAdmin.auth.admin.listUsers();
-        const existingAuth = list?.users.find((u) => u.email === emailClean);
-        if (existingAuth) {
-          await supabaseAdmin.auth.admin.updateUserById(existingAuth.id, {
-            password: input.password,
-            user_metadata: { name: input.name, role: input.role, branch: input.branch },
-          });
-        } else {
-          await supabaseAdmin.auth.admin.createUser({
-            email: emailClean,
-            password: input.password,
-            email_confirm: true,
-            user_metadata: { name: input.name, role: input.role, branch: input.branch },
-          });
-        }
+          password: input.password,
+          email_confirm: true,
+          user_metadata: { name: input.name, role: input.role, branch: input.branch },
+        });
       }
-    } catch (err: any) {
-      console.error("Supabase staff sync warning:", err?.message || err);
+    } catch (err) {
+      console.error("Supabase auth sync warning:", err instanceof Error ? err.message : err);
     }
   }
 
-  // 3. Log Audit Record in staff_history
-  db.prepare(
-    "INSERT INTO staff_history (staff_id, action, performed_by, detail) VALUES (?, ?, ?, ?)"
-  ).run(
-    targetId,
-    actionName,
-    admin.id,
-    JSON.stringify({
+  const history = await sbInsert("staff_history", {
+    staff_id: targetId,
+    action: actionName,
+    performed_by: admin.id,
+    detail: JSON.stringify({
       name: input.name,
       email: emailClean,
       role: input.role,
       is_active: isActive,
       left_at: leftAt,
       performed_by_name: admin.name,
-    })
-  );
+    }),
+  });
+  if (!history.ok) return fail(history, "Recording the staff history");
 
-  logActivity(admin.id, `staff_${actionName}`, "user", targetId, { email: emailClean, left_at: leftAt });
+  await logActivity(admin.id, `staff_${actionName}`, "user", targetId, { email: emailClean, left_at: leftAt });
   refresh();
-  return { ok: true, id: targetId };
+  return { ok: true as const, id: targetId };
 }
 
 /* --------------------------- Website content ------------------------------ */
@@ -836,211 +1106,165 @@ export async function saveUser(input: {
 export async function saveGalleryItem(input: { id?: number; title?: string; image: string; category?: string }) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  if (input.id) {
-    db.prepare("UPDATE gallery SET title = ?, image = ?, category = ? WHERE id = ?").run(input.title ?? null, input.image, input.category ?? null, input.id);
-  } else {
-    db.prepare("INSERT INTO gallery (title, image, category) VALUES (?, ?, ?)").run(input.title ?? null, input.image, input.category ?? null);
-  }
+
+  const fields = { title: input.title ?? null, image: input.image, category: input.category ?? null };
+  const res = input.id ? await sbUpdate("gallery", `id=eq.${input.id}`, fields) : await sbInsert("gallery", fields);
+  if (!res.ok) return fail(res, "Saving the gallery item");
+
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function saveFaq(input: { id?: number; question: string; answer: string; active?: boolean }) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  if (input.id) {
-    db.prepare("UPDATE faqs SET question = ?, answer = ?, active = ? WHERE id = ?").run(input.question, input.answer, input.active ? 1 : 0, input.id);
-  } else {
-    db.prepare("INSERT INTO faqs (question, answer, active) VALUES (?, ?, 1)").run(input.question, input.answer);
-  }
+
+  const res = input.id
+    ? await sbUpdate("faqs", `id=eq.${input.id}`, { question: input.question, answer: input.answer, active: input.active ? 1 : 0 })
+    : await sbInsert("faqs", { question: input.question, answer: input.answer, active: 1 });
+  if (!res.ok) return fail(res, "Saving the FAQ");
+
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function saveBlogPost(input: { id?: number; title: string; excerpt?: string; content: string; published?: boolean }) {
   const user = await staffUser();
   assertCan(user, "admin");
-  const db = getDb();
-  const slug = slugify(input.title);
-  if (input.id) {
-    db.prepare("UPDATE blog_posts SET title = ?, excerpt = ?, content = ?, published = ? WHERE id = ?").run(input.title, input.excerpt ?? null, input.content, input.published ? 1 : 0, input.id);
-  } else {
-    db.prepare("INSERT INTO blog_posts (slug, title, excerpt, content, published) VALUES (?, ?, ?, ?, 1)").run(slug, input.title, input.excerpt ?? null, input.content);
-  }
+
+  const res = input.id
+    ? await sbUpdate("blog_posts", `id=eq.${input.id}`, {
+        title: input.title,
+        excerpt: input.excerpt ?? null,
+        content: input.content,
+        published: input.published ? 1 : 0,
+      })
+    : await sbInsert("blog_posts", {
+        slug: slugify(input.title),
+        title: input.title,
+        excerpt: input.excerpt ?? null,
+        content: input.content,
+        published: 1,
+      });
+  if (!res.ok) return fail(res, "Saving the blog post");
+
   refresh("/");
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 /* -------------------- Customer Document Verification --------------------- */
 
 export async function verifyCustomerDocument(input: { documentId: number; approve: boolean; notes?: string }) {
   const staff = await staffUser();
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
+  // customer_documents.verified is INTEGER 1/0.
   const verifiedVal = input.approve ? 1 : 0;
-  db.prepare(
-    "UPDATE customer_documents SET verified = ?, verified_by = ? WHERE id = ?"
-  ).run(verifiedVal, staff.id, input.documentId);
+  const updated = await sbUpdate<{ booking_id: number | null; kind: string; customer_id: number | null }>(
+    "customer_documents",
+    `id=eq.${input.documentId}`,
+    { verified: verifiedVal, verified_by: staff.id }
+  );
+  if (!updated.ok) return fail(updated, "Verifying the document");
+  if (updated.data.length === 0) return { ok: false as const, error: `Document ${input.documentId} no longer exists.` };
 
-  const doc = db
-    .prepare("SELECT * FROM customer_documents WHERE id = ?")
-    .get(input.documentId) as { booking_id: number | null; kind: string; customer_id: number | null } | undefined;
-
-  if (doc?.booking_id) {
-    db.prepare(
-      "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, ?, ?)"
-    ).run(
-      doc.booking_id,
-      staff.id,
-      input.approve ? "document_verified" : "document_rejected",
-      JSON.stringify({ kind: doc.kind, staff_name: staff.name, notes: input.notes })
-    );
+  const doc = updated.data[0];
+  if (doc.booking_id) {
+    const history = await sbInsert("booking_history", {
+      booking_id: doc.booking_id,
+      user_id: staff.id,
+      action: input.approve ? "document_verified" : "document_rejected",
+      detail: JSON.stringify({ kind: doc.kind, staff_name: staff.name, notes: input.notes }),
+    });
+    if (!history.ok) return fail(history, "Recording the booking history");
   }
 
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("customer_documents").update({
-        verified: verifiedVal,
-        verified_by: staff.id,
-      }).eq("id", input.documentId);
-    } catch {}
-  }
-
-  logActivity(staff.id, input.approve ? "doc_verified" : "doc_rejected", "customer_documents", input.documentId);
+  await logActivity(staff.id, input.approve ? "doc_verified" : "doc_rejected", "customer_documents", input.documentId);
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function rejectBooking(input: { bookingId: number; reason: string; notes?: string }) {
   const staff = await staffUser();
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
   const fullReason = input.notes ? `${input.reason} — ${input.notes}` : input.reason;
-  db.prepare("UPDATE bookings SET status = 'Rejected', notes = ?, updated_at = datetime('now') WHERE id = ?").run(fullReason, input.bookingId);
-
-  db.prepare(
-    "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'rejected', ?)"
-  ).run(
+  const failed = await setBookingStatus(
     input.bookingId,
-    staff.id,
-    JSON.stringify({ staff_name: staff.name, reason: input.reason, notes: input.notes ?? null, new_status: "Rejected" })
+    "Rejected",
+    { notes: fullReason },
+    { userId: staff.id, action: "rejected", detail: { staff_name: staff.name, reason: input.reason, notes: input.notes ?? null, new_status: "Rejected" } }
   );
+  if (failed) return failed;
 
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("bookings").update({ status: "Rejected", notes: fullReason }).eq("id", input.bookingId);
-    } catch {}
-  }
-
-  logActivity(staff.id, "booking_rejected", "booking", input.bookingId);
+  await logActivity(staff.id, "booking_rejected", "booking", input.bookingId);
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function reopenBooking(bookingId: number) {
   const staff = await staffUser();
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
   const restoredStatus = "Pending verification";
-  db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(restoredStatus, bookingId);
-
-  db.prepare(
-    "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'booking_reopened', ?)"
-  ).run(
+  const failed = await setBookingStatus(
     bookingId,
-    staff.id,
-    JSON.stringify({ staff_name: staff.name, restored_status: restoredStatus })
+    restoredStatus,
+    {},
+    { userId: staff.id, action: "booking_reopened", detail: { staff_name: staff.name, restored_status: restoredStatus } }
   );
+  if (failed) return failed;
 
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("bookings").update({ status: restoredStatus }).eq("id", bookingId);
-    } catch {}
-  }
-
-  logActivity(staff.id, "booking_reopened", "booking", bookingId);
+  await logActivity(staff.id, "booking_reopened", "booking", bookingId);
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function quickApproveBooking(input: { bookingId: number; approve: boolean; notes?: string }) {
   const staff = await staffUser();
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
   const newStatus = input.approve ? "Confirmed" : "Rejected";
-  db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(newStatus, input.bookingId);
-
-  db.prepare(
-    "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, ?, ?)"
-  ).run(
+  const failed = await setBookingStatus(
     input.bookingId,
-    staff.id,
-    input.approve ? "quick_approved" : "quick_rejected",
-    JSON.stringify({ staff_name: staff.name, notes: input.notes ?? null, new_status: newStatus })
+    newStatus,
+    {},
+    {
+      userId: staff.id,
+      action: input.approve ? "quick_approved" : "quick_rejected",
+      detail: { staff_name: staff.name, notes: input.notes ?? null, new_status: newStatus },
+    }
   );
+  if (failed) return failed;
 
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("bookings").update({ status: newStatus }).eq("id", input.bookingId);
-    } catch {}
-  }
-
-  logActivity(staff.id, input.approve ? "booking_approved" : "booking_rejected", "booking", input.bookingId);
+  await logActivity(staff.id, input.approve ? "booking_approved" : "booking_rejected", "booking", input.bookingId);
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function revertBookingDecision(bookingId: number) {
   const staff = await staffUser();
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
   const restoredStatus = "Pending verification";
-  db.prepare("UPDATE bookings SET status = ?, updated_at = datetime('now') WHERE id = ?").run(restoredStatus, bookingId);
-
-  db.prepare(
-    "INSERT INTO booking_history (booking_id, user_id, action, detail) VALUES (?, ?, 'decision_reverted', ?)"
-  ).run(
+  const failed = await setBookingStatus(
     bookingId,
-    staff.id,
-    JSON.stringify({ staff_name: staff.name, restored_status: restoredStatus })
+    restoredStatus,
+    {},
+    { userId: staff.id, action: "decision_reverted", detail: { staff_name: staff.name, restored_status: restoredStatus } }
   );
+  if (failed) return failed;
 
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("bookings").update({ status: restoredStatus }).eq("id", bookingId);
-    } catch {}
-  }
-
-  logActivity(staff.id, "booking_decision_reverted", "booking", bookingId);
+  await logActivity(staff.id, "booking_decision_reverted", "booking", bookingId);
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function revertDocumentDecision(documentId: number) {
   const staff = await staffUser();
-  const db = getDb();
-  const { supabaseAdmin } = await import("./supabase");
 
-  db.prepare("UPDATE customer_documents SET verified = 0, verified_by = NULL WHERE id = ?").run(documentId);
+  const res = await sbUpdate("customer_documents", `id=eq.${documentId}`, { verified: 0, verified_by: null });
+  if (!res.ok) return fail(res, "Reverting the document decision");
 
-  if (supabaseAdmin) {
-    try {
-      await supabaseAdmin.from("customer_documents").update({ verified: 0, verified_by: null }).eq("id", documentId);
-    } catch {}
-  }
-
-  logActivity(staff.id, "doc_decision_reverted", "customer_documents", documentId);
+  await logActivity(staff.id, "doc_decision_reverted", "customer_documents", documentId);
   refresh();
-  return { ok: true };
+  return { ok: true as const };
 }
-

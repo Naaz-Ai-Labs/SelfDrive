@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireGatewayKey, bearerCustomer } from "@/lib/gateway-auth";
-import { getDb } from "@/lib/db";
+import { sbSelectOne } from "@/lib/supabase-rest";
 import { businessInfo } from "@/lib/settings";
 import { generateInvoiceForBooking, getInvoiceForBooking } from "@/lib/invoices";
 
@@ -11,27 +11,48 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ book
   if (!customer) return NextResponse.json({ error: "Please log in first." }, { status: 401 });
 
   const { bookingNo } = await params;
-  const db = getDb();
-  const booking = db
-    .prepare(
-      `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email, c.address AS customer_address,
-              v.name AS vehicle_name, v.registration_no
-       FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       WHERE b.booking_no = ?`
-    )
-    .get(bookingNo) as Record<string, unknown> | undefined;
-  if (!booking) return NextResponse.json({ error: "Not found." }, { status: 404 });
-  if (customer.customerId && Number(booking.customer_id) !== customer.customerId) {
+
+  // The customer/vehicle columns the invoice template prints used to come from a LEFT
+  // JOIN; PostgREST returns them as embeds, flattened below to keep the response shape.
+  const bookingRes = await sbSelectOne<Record<string, any>>(
+    "bookings",
+    `select=*,customers(name,phone,email,address),vehicles(name,registration_no)&booking_no=eq.${encodeURIComponent(bookingNo)}`
+  );
+  if (!bookingRes.ok) return NextResponse.json({ error: bookingRes.error }, { status: 502 });
+  const raw = bookingRes.data;
+  if (!raw) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  if (customer.customerId && Number(raw.customer_id) !== customer.customerId) {
     return NextResponse.json({ error: "Not authorised." }, { status: 403 });
   }
 
-  // Invoices live in Supabase now, not the SQLite mirror.
-  let invoice = await getInvoiceForBooking(Number(booking.id));
-  if (!invoice) {
-    await generateInvoiceForBooking(Number(booking.id));
-    invoice = await getInvoiceForBooking(Number(booking.id));
-  }
-  const photo = db.prepare("SELECT url FROM vehicle_photos WHERE vehicle_id = ? ORDER BY is_primary DESC, sort LIMIT 1").get(booking.vehicle_id as number) as { url: string } | undefined;
+  const { customers, vehicles, ...rest } = raw;
+  const booking = {
+    ...rest,
+    customer_name: customers?.name ?? null,
+    customer_phone: customers?.phone ?? null,
+    customer_email: customers?.email ?? null,
+    customer_address: customers?.address ?? null,
+    vehicle_name: vehicles?.name ?? null,
+    registration_no: vehicles?.registration_no ?? null,
+  };
 
-  return NextResponse.json({ booking, invoice: invoice ?? null, photoUrl: photo?.url ?? null, business: await businessInfo() });
+  let invoice = await getInvoiceForBooking(Number(raw.id));
+  if (!invoice) {
+    await generateInvoiceForBooking(Number(raw.id));
+    invoice = await getInvoiceForBooking(Number(raw.id));
+  }
+
+  const photo = raw.vehicle_id
+    ? await sbSelectOne<{ url: string }>(
+        "vehicle_photos",
+        `select=url&vehicle_id=eq.${Number(raw.vehicle_id)}&order=is_primary.desc,sort.asc`
+      )
+    : null;
+
+  return NextResponse.json({
+    booking,
+    invoice: invoice ?? null,
+    photoUrl: photo?.ok ? photo.data?.url ?? null : null,
+    business: await businessInfo(),
+  });
 }

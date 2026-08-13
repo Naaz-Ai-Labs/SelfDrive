@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireGatewayKey } from "@/lib/gateway-auth";
-import { getDb } from "@/lib/db";
+import { sbSelectOne, sbInsert, sbUpdate } from "@/lib/supabase-rest";
 import { hashOtp, createCustomerSession, findCustomerByTarget, destroyCustomerSession } from "@/lib/portal-session";
 import { normalizePhone } from "@/lib/utils";
 import { logMessage } from "@/lib/activity";
@@ -42,9 +42,22 @@ export async function POST(req: NextRequest) {
     rateLimits.set(target, Date.now());
 
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
-    getDb().prepare("INSERT INTO otp_codes (target, purpose, code_hash, expires_at) VALUES (?, 'customer_login', ?, ?)").run(target, hashOtp(code), expires);
-    logMessage(isEmail(target) ? "email" : "whatsapp", target, "Your OTP for Darshh Holiday", `Your login OTP is ${code}. It is valid for 10 minutes.`);
+    const inserted = await sbInsert("otp_codes", {
+      target,
+      purpose: "customer_login",
+      code_hash: hashOtp(code),
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      used: 0,
+      attempts: 0,
+      created_at: new Date().toISOString(),
+    });
+    // Claiming an OTP was sent when it was never stored leaves the customer entering a
+    // code that can never verify. Fail loudly instead.
+    if (!inserted.ok) {
+      rateLimits.delete(target);
+      return NextResponse.json({ error: "Could not send an OTP right now. Please try again." }, { status: 502 });
+    }
+    await logMessage(isEmail(target) ? "email" : "whatsapp", target, "Your OTP for Darshh Holiday", `Your login OTP is ${code}. It is valid for 10 minutes.`);
 
     const demo = process.env.NODE_ENV !== "production";
     return NextResponse.json({
@@ -58,21 +71,30 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return NextResponse.json({ error: "Enter the 6-digit OTP." }, { status: 400 });
     const target = isEmail(parsed.data.target) ? parsed.data.target.toLowerCase().trim() : normalizePhone(parsed.data.target);
 
-    const row = getDb()
-      .prepare("SELECT id, code_hash, expires_at, used, attempts FROM otp_codes WHERE target = ? AND purpose = 'customer_login' AND used = 0 ORDER BY id DESC LIMIT 1")
-      .get(target) as { id: number; code_hash: string; expires_at: string; used: number; attempts: number } | undefined;
+    const found = await sbSelectOne<{ id: number; code_hash: string; expires_at: string; used: number; attempts: number }>(
+      "otp_codes",
+      `select=id,code_hash,expires_at,used,attempts&target=eq.${encodeURIComponent(target)}&purpose=eq.customer_login&used=eq.0&order=id.desc`
+    );
+    if (!found.ok) return NextResponse.json({ error: "Could not verify the OTP right now. Please try again." }, { status: 502 });
 
+    const row = found.data;
     if (!row) return NextResponse.json({ error: "No active OTP found. Request a new one." }, { status: 400 });
-    if (row.expires_at < new Date().toISOString().slice(0, 19).replace("T", " ")) {
+    if (new Date(row.expires_at).getTime() < Date.now()) {
       return NextResponse.json({ error: "This OTP has expired. Request a new one." }, { status: 400 });
     }
-    if (row.attempts >= 5) return NextResponse.json({ error: "Too many wrong attempts. Request a new OTP." }, { status: 429 });
+    if (Number(row.attempts) >= 5) return NextResponse.json({ error: "Too many wrong attempts. Request a new OTP." }, { status: 429 });
 
     if (hashOtp(parsed.data.code) !== row.code_hash) {
-      getDb().prepare("UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?").run(row.id);
+      const bumped = await sbUpdate("otp_codes", `id=eq.${row.id}`, { attempts: Number(row.attempts) + 1 });
+      if (!bumped.ok) console.error("[otp] attempt counter not incremented:", bumped.error);
       return NextResponse.json({ error: "Incorrect OTP." }, { status: 401 });
     }
-    getDb().prepare("UPDATE otp_codes SET used = 1 WHERE id = ?").run(row.id);
+
+    // Burn the code with `used = 0` still in the filter: two concurrent verifications of
+    // the same OTP must not both come back with a session.
+    const burned = await sbUpdate<{ id: number }>("otp_codes", `id=eq.${row.id}&used=eq.0`, { used: 1 });
+    if (!burned.ok) return NextResponse.json({ error: "Could not verify the OTP right now. Please try again." }, { status: 502 });
+    if (burned.data.length === 0) return NextResponse.json({ error: "This OTP has already been used. Request a new one." }, { status: 400 });
 
     const customer = await findCustomerByTarget(target);
     const token = await createCustomerSession(customer?.id ?? null, target);

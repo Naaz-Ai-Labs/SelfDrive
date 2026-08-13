@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { sbSelectOne } from "./supabase-rest";
 import { logMessage } from "./activity";
 import { businessInfo } from "./settings";
 
@@ -26,7 +26,7 @@ export async function dispatchMessage(opts: {
   enquiryId?: number | null;
   bookingId?: number | null;
 }): Promise<DispatchResult> {
-  logMessage(opts.channel, opts.to, opts.subject ?? null, opts.body, opts.enquiryId ?? null, opts.bookingId ?? null);
+  await logMessage(opts.channel, opts.to, opts.subject ?? null, opts.body, opts.enquiryId ?? null, opts.bookingId ?? null);
   if (opts.channel === "whatsapp") {
     const phone = opts.to.replace(/\D/g, "");
     const wa = phone.startsWith("91") ? phone : `91${phone}`;
@@ -35,15 +35,22 @@ export async function dispatchMessage(opts: {
   return { ok: true, detail: "Recorded. Email/SMS gateway needs configuration." };
 }
 
-export function templateByKey(key: string): { name: string; channel: string; body: string; subject: string | null } | null {
-  const row = getDb()
-    .prepare("SELECT name, channel, body, subject FROM message_templates WHERE key = ? AND active = 1")
-    .get(key) as { name: string; channel: string; body: string; subject: string | null } | undefined;
-  return row ?? null;
+type MessageTemplate = { name: string; channel: string; body: string; subject: string | null };
+
+export async function templateByKey(key: string): Promise<MessageTemplate | null> {
+  const res = await sbSelectOne<MessageTemplate>(
+    "message_templates",
+    `select=name,channel,body,subject&key=eq.${encodeURIComponent(key)}&active=eq.1`
+  );
+  if (!res.ok) {
+    console.error(`[messaging] could not load template "${key}":`, res.error);
+    return null;
+  }
+  return res.data;
 }
 
 export async function sendTemplate(key: string, to: string, vars: Record<string, string | number | null | undefined>, enquiryId?: number | null, bookingId?: number | null): Promise<DispatchResult | null> {
-  const tpl = templateByKey(key);
+  const tpl = await templateByKey(key);
   if (!tpl) return null;
   const business = await businessInfo();
   const body = renderTemplate(tpl.body, { business: (business.name as string) ?? "Darshh Holiday", ...vars });

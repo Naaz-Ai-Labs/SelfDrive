@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
   const touched = await sbUpdate("users", `id=eq.${user.id}`, { last_login: new Date().toISOString() });
   if (!touched.ok) console.error("[auth] could not record last_login:", touched.error);
   try {
-    logActivity(user.id, "login", "user", user.id);
+    await logActivity(user.id, "login", "user", user.id);
   } catch {}
 
   const isProd = process.env.NODE_ENV === "production" || !!process.env.VERCEL;

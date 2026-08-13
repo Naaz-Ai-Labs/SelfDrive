@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireGatewayKey } from "@/lib/gateway-auth";
-import { getDb } from "@/lib/db";
+import { sbInsert } from "@/lib/supabase-rest";
 import { nextNumber, normalizePhone } from "@/lib/utils";
-import { logActivity, pushNotification } from "@/lib/activity";
+import { logActivity, notifyRoles } from "@/lib/activity";
 
 const schema = z.object({
   name: z.string().min(2),
@@ -21,20 +21,30 @@ export async function POST(req: NextRequest) {
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Please complete all required fields." }, { status: 400 });
 
-  const db = getDb();
   const phone = normalizePhone(parsed.data.phone);
   const enquiryNo = nextNumber("ENQ", null);
-  const id = db
-    .prepare(
-      `INSERT INTO enquiries (enquiry_no, name, phone, email, source, notes, status, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'submitted', datetime('now'))`
-    )
-    .run(enquiryNo, parsed.data.name, phone, parsed.data.email || null, parsed.data.source ?? "Contact form", parsed.data.notes)
-    .lastInsertRowid as number;
-  logActivity(null, "enquiry_created", "enquiry", id, { enquiry_no: enquiryNo, source: "website" });
+  const now = new Date().toISOString();
 
-  const staff = db.prepare("SELECT id FROM users WHERE role IN ('admin','manager') AND is_active = 1").all() as { id: number }[];
-  for (const s of staff) pushNotification(s.id, `New enquiry — ${enquiryNo}`, parsed.data.name, id, null);
+  const inserted = await sbInsert<{ id: number }>("enquiries", {
+    enquiry_no: enquiryNo,
+    name: parsed.data.name,
+    phone,
+    email: parsed.data.email || null,
+    source: parsed.data.source ?? "Contact form",
+    notes: parsed.data.notes,
+    status: "submitted",
+    submitted_at: now,
+    created_at: now,
+    updated_at: now,
+  });
+  // A dropped enquiry is a lost customer: never answer OK when the write failed.
+  if (!inserted.ok) {
+    return NextResponse.json({ error: "We could not record your enquiry. Please try again." }, { status: 502 });
+  }
+
+  const id = Number(inserted.data.id);
+  await logActivity(null, "enquiry_created", "enquiry", id, { enquiry_no: enquiryNo, source: "website" });
+  await notifyRoles(["admin", "manager"], `New enquiry — ${enquiryNo}`, parsed.data.name, id, null);
 
   return NextResponse.json({ ok: true, enquiryNo });
 }

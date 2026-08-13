@@ -1,10 +1,9 @@
 import { revalidatePath } from "next/cache";
-import { getDb } from "./db";
 import { randomToken, parseJSON, normalizePhone } from "./utils";
-import { createBooking, checkVehicleAvailable } from "./bookings";
+import { createBooking } from "./bookings";
 import { calculateQuote } from "./pricing";
 import { getVehicleById, getVehicles } from "./data";
-import { syncEntityToSupabase } from "./supabase-sync";
+import { sbSelect, sbSelectOne, sbInsert, sbUpdate, num } from "./supabase-rest";
 import { z } from "zod";
 
 export type DraftPayload = {
@@ -20,37 +19,43 @@ export type DraftPayload = {
 };
 
 export async function saveBookingDraft(input: DraftPayload & { token?: string | null }): Promise<{ token: string; savedAt: string }> {
-  const db = getDb();
   const token = input.token && /^[a-f0-9]{32,64}$/.test(input.token) ? input.token : randomToken(32);
-  const existing = db.prepare("SELECT id FROM enquiries WHERE draft_token = ?").get(token) as { id: number } | undefined;
+  const existing = await sbSelectOne<{ id: number }>("enquiries", `select=id&draft_token=eq.${encodeURIComponent(token)}`);
   const phone = input.contact.phone ? normalizePhone(input.contact.phone) : null;
   const payload = { categoryId: input.categoryId, vehicleId: input.vehicleId, pickupAt: input.pickupAt, returnAt: input.returnAt, location: input.location, passengers: input.passengers, step: input.step, contact: input.contact, notes: input.notes };
 
-  if (existing) {
-    db.prepare(
-      `UPDATE enquiries SET category_id = ?, vehicle_id = ?, pickup_date = ?, return_date = ?, location = ?, passengers = ?,
-       name = ?, phone = ?, email = ?, data = ?, status = 'draft', submitted_at = NULL, updated_at = datetime('now') WHERE id = ?`
-    ).run(
-      input.categoryId, input.vehicleId, input.pickupAt, input.returnAt, input.location || null, input.passengers,
-      input.contact.name || null, phone, input.contact.email?.trim() || null, JSON.stringify(payload), existing.id
-    );
+  const common = {
+    category_id: input.categoryId,
+    vehicle_id: input.vehicleId,
+    pickup_date: input.pickupAt,
+    return_date: input.returnAt,
+    location: input.location || null,
+    passengers: input.passengers,
+    name: input.contact.name || null,
+    phone,
+    email: input.contact.email?.trim() || null,
+    data: JSON.stringify(payload),
+    status: "draft",
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existing.ok && existing.data) {
+    await sbUpdate("enquiries", `id=eq.${Number(existing.data.id)}`, { ...common, submitted_at: null });
   } else {
-    db.prepare(
-      `INSERT INTO enquiries (enquiry_no, category_id, vehicle_id, pickup_date, return_date, location, passengers, name, phone, email, data, status, draft_token)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)`
-    ).run(
-      `DR-${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`,
-      input.categoryId, input.vehicleId, input.pickupAt, input.returnAt, input.location || null, input.passengers,
-      input.contact.name || null, phone, input.contact.email?.trim() || null, JSON.stringify(payload), token
-    );
+    await sbInsert("enquiries", {
+      ...common,
+      enquiry_no: `DR-${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`,
+      draft_token: token,
+      created_at: new Date().toISOString(),
+    });
   }
   return { token, savedAt: new Date().toISOString() };
 }
 
 export async function getDraft(token: string): Promise<DraftPayload | null> {
-  const row = getDb().prepare("SELECT data FROM enquiries WHERE draft_token = ?").get(token) as { data: string } | undefined;
-  if (!row) return null;
-  return parseJSON<DraftPayload>(row.data, {
+  const res = await sbSelectOne<{ data: string }>("enquiries", `select=data&draft_token=eq.${encodeURIComponent(token)}`);
+  if (!res.ok || !res.data) return null;
+  return parseJSON<DraftPayload>(res.data.data, {
     categoryId: null, vehicleId: null, pickupAt: null, returnAt: null, location: "", passengers: null, step: 1,
     contact: { name: "", phone: "" },
   });
@@ -116,8 +121,10 @@ export async function submitBooking(input: {
   if (!hasLicence || !hasGovtId) {
     return { ok: false, error: "Please upload your driving licence and a government ID before confirming — this is required to hand over the vehicle." };
   }
-  const db = getDb();
-  const existing = parsed.data.token ? (db.prepare("SELECT id FROM enquiries WHERE draft_token = ?").get(parsed.data.token) as { id: number } | undefined) : undefined;
+  const draft = parsed.data.token
+    ? await sbSelectOne<{ id: number }>("enquiries", `select=id&draft_token=eq.${encodeURIComponent(parsed.data.token)}`)
+    : null;
+  const existing = draft?.ok ? draft.data : null;
 
   try {
     const { bookingNo, bookingId, customerId } = await createBooking({
@@ -127,29 +134,34 @@ export async function submitBooking(input: {
       location: parsed.data.location,
       passengers: parsed.data.passengers ?? undefined,
       customer: parsed.data.contact,
-      enquiryId: existing?.id ?? null,
+      enquiryId: existing ? Number(existing.id) : null,
     });
 
+    // createBooking wrote straight to Supabase, so there is nothing left to sync: the
+    // old syncEntityToSupabase() calls copied rows out of the ephemeral SQLite file.
     if (existing) {
-      db.prepare(
-        "UPDATE enquiries SET status = 'submitted', stage = 'Confirmed', submitted_at = datetime('now'), draft_token = NULL WHERE id = ?"
-      ).run(existing.id);
-      syncEntityToSupabase("enquiries", existing.id).catch(() => {});
+      const updated = await sbUpdate("enquiries", `id=eq.${Number(existing.id)}`, {
+        status: "submitted",
+        stage: "Confirmed",
+        submitted_at: new Date().toISOString(),
+        draft_token: null,
+        updated_at: new Date().toISOString(),
+      });
+      if (!updated.ok) console.error(`[booking] enquiry ${existing.id} not marked submitted — ${updated.error}`);
     }
 
-    // Live sync customer and booking entities to Supabase FIRST so foreign keys exist
-    await syncEntityToSupabase("customers", customerId).catch(() => {});
-    await syncEntityToSupabase("bookings", bookingId).catch(() => {});
-
     if (input.documents && input.documents.length > 0) {
-      for (const d of input.documents) {
-        const normalizedKind = normalizeDocKind(d.kind);
-        const docRes = db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
-          customerId, bookingId, normalizedKind, d.number ?? null, d.expiry ?? null, d.url
-        );
-        const docId = Number(docRes.lastInsertRowid);
-        syncEntityToSupabase("customer_documents", docId).catch(() => {});
-      }
+      const rows = input.documents.map((d) => ({
+        customer_id: customerId,
+        booking_id: bookingId,
+        kind: normalizeDocKind(d.kind),
+        number: d.number ?? null,
+        expiry_date: d.expiry ?? null,
+        file_path: d.url,
+        created_at: new Date().toISOString(),
+      }));
+      const docRes = await sbInsert("customer_documents", rows);
+      if (!docRes.ok) console.error(`[booking] ${bookingNo}: documents not saved — ${docRes.error}`);
     }
 
     try {
@@ -164,142 +176,48 @@ export async function submitBooking(input: {
 }
 
 export async function getAvailableVehicles(kind: string | null, pickupAt: string | null, returnAt: string | null) {
-  // On Vercel, SQLite is ephemeral and only has seed data. Query Supabase directly.
-  if (process.env.VERCEL) {
-    return getAvailableVehiclesFromSupabase(kind, pickupAt, returnAt);
-  }
-
-  // Local dev: use SQLite (it has full hydrated data)
   const vehicles = await getVehicles({ kind: kind || undefined, onlyAvailable: true });
   if (!pickupAt || !returnAt) return vehicles;
 
-  const db = getDb();
+  const ids = vehicles.map((v) => Number(v.id)).filter((n) => Number.isFinite(n));
+  if (ids.length === 0) return vehicles;
+
+  // One query for every vehicle: per-vehicle counts would be one HTTP round trip each.
+  const clashes = await sbSelect<{ vehicle_id: number }>(
+    "bookings",
+    `select=vehicle_id&vehicle_id=in.(${ids.join(",")})` +
+      `&status=not.in.${encodeURIComponent('("Cancelled","Completed","Draft")')}` +
+      `&return_at=gt.${encodeURIComponent(pickupAt)}&pickup_at=lt.${encodeURIComponent(returnAt)}`
+  );
+  // A failed availability read must not read as "everything is free".
+  if (!clashes.ok) throw new Error(`Could not check vehicle availability: ${clashes.error}`);
+
+  const taken = new Map<number, number>();
+  for (const row of clashes.data) {
+    const key = Number(row.vehicle_id);
+    taken.set(key, (taken.get(key) ?? 0) + 1);
+  }
+
   return vehicles
-    .map((v) => {
-      const clashes = db
-        .prepare(
-          `SELECT COUNT(*) AS c FROM bookings
-           WHERE vehicle_id = ?
-             AND status NOT IN ('Cancelled', 'Completed', 'Draft')
-             AND NOT (return_at <= ? OR pickup_at >= ?)`
-        )
-        .get(v.id, pickupAt, returnAt) as { c: number } | undefined;
-
-      const taken = clashes?.c ?? 0;
-      const availableUnits = Math.max(0, (v.total_units ?? 1) - taken);
-      return {
-        ...v,
-        available_units: availableUnits,
-      };
-    })
-    .filter((v) => (v.available_units ?? 1) > 0);
-}
-
-async function getAvailableVehiclesFromSupabase(kind: string | null, _pickupAt: string | null, _returnAt: string | null) {
-  const { createClient } = await import("@supabase/supabase-js");
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_SECRET_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_PUBLISHABLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-  if (!url || !key) {
-    // Fall back to SQLite if no Supabase credentials
-    return getVehicles({ kind: kind || undefined, onlyAvailable: true });
-  }
-
-  try {
-    const supabase = createClient(url, key, { auth: { persistSession: false } });
-
-    // Fetch vehicles with their category info
-    let query = supabase
-      .from("vehicles")
-      .select("*, vehicle_categories!inner(name, kind, slug)")
-      .eq("active", true)
-      .eq("status", "available");
-
-    if (kind) {
-      query = query.eq("vehicle_categories.kind", kind);
-    }
-
-    const { data: vehicles, error } = await query.order("rate_24h", { ascending: true });
-
-    if (error || !vehicles) {
-      console.warn("Supabase vehicle query error:", error?.message);
-      return getVehicles({ kind: kind || undefined, onlyAvailable: true });
-    }
-
-    // Fetch photos for all vehicles
-    const vehicleIds = vehicles.map((v: any) => v.id);
-    const { data: photos } = await supabase
-      .from("vehicle_photos")
-      .select("vehicle_id, url, is_primary")
-      .in("vehicle_id", vehicleIds);
-
-    const photoMap = new Map<number, { photos: string[]; primary: string }>();
-    if (photos) {
-      for (const p of photos) {
-        const photoUrl = (p as any).url || (p as any).photo_url;
-        if (!photoUrl) continue;
-        const entry = photoMap.get(p.vehicle_id) || { photos: [], primary: "" };
-        entry.photos.push(photoUrl);
-        if (p.is_primary) entry.primary = photoUrl;
-        photoMap.set(p.vehicle_id, entry);
-      }
-    }
-
-    const DEFAULT_SLUG_PHOTOS: Record<string, string> = {
-      "honda-dio": "/vehicles/honda-dio.avif",
-      "honda-activa": "/vehicles/honda-activa.webp",
-      "tvs-jupiter": "/vehicles/tvs-jupiter.webp",
-      "yamaha-rayzr": "/vehicles/yamaha-rayzr.avif",
-      "tvs-ntorq": "/vehicles/tvs-ntorq.webp",
-      "tvs-ronin": "/vehicles/tvs-ronin.avif",
-      "honda-cb200x": "/vehicles/honda-cb200x.jpg",
-      "tvs-raider": "/vehicles/tvs-radar.avif",
-      "bajaj-pulsar-ns": "/vehicles/bajaj-pulsar-ns.png",
-      "honda-shine": "/vehicles/honda-shine.avif",
-      "maruti-baleno-manual": "/vehicles/baleno-manual.avif",
-      "maruti-dzire": "/vehicles/maruti-dzire.avif",
-      "maruti-ciaz": "/vehicles/maruti-ciaz.jpg",
-      "maruti-ertiga-7-seater": "/vehicles/maruti-ertiga.avif",
-      "mahindra-thar-manual": "/vehicles/mahindra-thar.avif",
-      "tempo-traveller-12": "/vehicles/tempo-traveller.jpg",
-      "tempo-traveller-2days": "/vehicles/cta-tempo-banner.jpg",
-    };
-
-    return vehicles.map((v: any) => {
-      const cat = v.vehicle_categories;
-      const ph = photoMap.get(v.id);
-      const fallback = DEFAULT_SLUG_PHOTOS[v.slug] || "/vehicles/baleno-manual.avif";
-      const vehiclePhotos = ph?.photos && ph.photos.length > 0 ? ph.photos : [fallback];
-      return {
-        ...v,
-        category_name: cat?.name || "Vehicle",
-        category_kind: cat?.kind || "car",
-        category_slug: cat?.slug || "cars",
-        photos: vehiclePhotos,
-        primary_photo: ph?.primary || vehiclePhotos[0] || fallback,
-        available_units: v.available_units ?? v.total_units ?? 1,
-        vehicle_categories: undefined, // remove nested join object
-      };
-    });
-  } catch (err: any) {
-    console.warn("Supabase getAvailableVehicles error:", err?.message);
-    return getVehicles({ kind: kind || undefined, onlyAvailable: true });
-  }
+    .map((v) => ({ ...v, available_units: Math.max(0, num(v.total_units, 1) - (taken.get(Number(v.id)) ?? 0)) }))
+    .filter((v) => v.available_units > 0);
 }
 
 export async function attachCustomerDocuments(customerId: number, bookingId: number, docs: Array<{ kind: string; url: string; number?: string; expiry?: string }>) {
-  const db = getDb();
-  for (const d of docs) {
-    const docRes = db.prepare("INSERT INTO customer_documents (customer_id, booking_id, kind, number, expiry_date, file_path) VALUES (?, ?, ?, ?, ?, ?)").run(
-      customerId, bookingId, normalizeDocKind(d.kind), d.number ?? null, d.expiry ?? null, d.url
-    );
-    const docId = Number(docRes.lastInsertRowid);
-    syncEntityToSupabase("customer_documents", docId).catch(() => {});
-  }
+  if (docs.length === 0) return { ok: true };
+  const res = await sbInsert(
+    "customer_documents",
+    docs.map((d) => ({
+      customer_id: customerId,
+      booking_id: bookingId,
+      kind: normalizeDocKind(d.kind),
+      number: d.number ?? null,
+      expiry_date: d.expiry ?? null,
+      file_path: d.url,
+      created_at: new Date().toISOString(),
+    }))
+  );
+  if (!res.ok) return { ok: false, error: res.error };
   return { ok: true };
 }
 
