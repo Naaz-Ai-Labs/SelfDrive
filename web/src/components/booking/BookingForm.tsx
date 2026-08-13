@@ -100,20 +100,6 @@ function getNextMondayISO(dateStr: string): string {
   return `${year}-${month}-${date}`;
 }
 
-function computeAutoReturnDate(pickupDateStr: string, isFridayExtended = false): string {
-  if (!pickupDateStr) return pickupDateStr;
-  const day = getDayOfWeek(pickupDateStr);
-  if (day === 6) {
-    // Saturday pickup -> Mandatory Monday return
-    return getNextMondayISO(pickupDateStr);
-  }
-  if (day === 5 && isFridayExtended) {
-    // Friday + Weekend -> Monday return
-    return getNextMondayISO(pickupDateStr);
-  }
-  return addDaysISO(pickupDateStr, 1);
-}
-
 function maxDobISO() {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 18);
@@ -203,7 +189,6 @@ export function BookingForm({
 
   const [pickupDate, setPickupDate] = useState(initialPickup);
   const [pickupTime, setPickupTime] = useState(initialPickupTime);
-  const [fridayWeekendExtension, setFridayWeekendExtension] = useState(false);
   const [returnDate, setReturnDate] = useState(initialReturnDate);
   const [returnTime, setReturnTime] = useState(initialReturnTime);
   const [passengers, setPassengers] = useState("");
@@ -230,6 +215,16 @@ export function BookingForm({
     return computeRentalDays({ pickupAt: p, returnAt: r, pickupTimeHM: pickupTime, returnTimeHM: returnTime }).days;
   }, [pickupDate, pickupTime, returnDate, returnTime]);
 
+  // Day count for a candidate return date, using the same rental clock that prices the
+  // booking — so a "2 Days" badge on a drop-off option can never disagree with the
+  // amount the customer is actually charged.
+  const daysForReturn = (candidateReturnDate: string): number => {
+    const p = istInstantFrom(pickupDate, pickupTime);
+    const r = istInstantFrom(candidateReturnDate, returnTime);
+    if (!p || !r) return 1;
+    return computeRentalDays({ pickupAt: p, returnAt: r, pickupTimeHM: pickupTime, returnTimeHM: returnTime }).days;
+  };
+
   const [vehicleId, setVehicleId] = useState<number | null>(search.get("vehicle") ? Number(search.get("vehicle")) : null);
   const [availableVehicles, setAvailableVehicles] = useState<Vehicle[]>(initialVehicles);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
@@ -253,14 +248,7 @@ export function BookingForm({
     const validTime = liveClock.getValidPickupTime(pickupTime, validDate);
     setPickupTime(validTime);
 
-    const auto = compute25HourAutoReturn(validDate, validTime, { isFridayExt: fridayWeekendExtension });
-    setReturnDate(auto.returnDate);
-    setReturnTime(auto.returnTime);
-  };
-
-  const handleFridayExtensionChange = (checked: boolean) => {
-    setFridayWeekendExtension(checked);
-    const auto = compute25HourAutoReturn(pickupDate, pickupTime, { isFridayExt: checked });
+    const auto = compute25HourAutoReturn(validDate, validTime);
     setReturnDate(auto.returnDate);
     setReturnTime(auto.returnTime);
   };
@@ -269,7 +257,7 @@ export function BookingForm({
     const validTime = liveClock.getValidPickupTime(newTime, pickupDate);
     setPickupTime(validTime);
 
-    const auto = compute25HourAutoReturn(pickupDate, validTime, { isFridayExt: fridayWeekendExtension });
+    const auto = compute25HourAutoReturn(pickupDate, validTime);
     setReturnDate(auto.returnDate);
     setReturnTime(auto.returnTime);
   };
@@ -651,26 +639,58 @@ export function BookingForm({
                 </select>
               </div>
 
-              {/* Friday Weekend Extension Checkbox - ONLY visible when Friday is selected as Pickup */}
+              {/* Friday pickup — the customer chooses which day they bring it back.
+                  This used to be a single checkbox that forced a Monday return, with no
+                  way to drop on Saturday or Sunday. Day counts below are computed by the
+                  same rental clock that prices the booking, so the badge can never
+                  disagree with what is actually charged. */}
               {isFriday && (
-                <div className="sm:col-span-2 rounded-xl border-2 border-amber-400 bg-amber-50 p-4 shadow-sm">
-                  <label className="flex items-start gap-3 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={fridayWeekendExtension}
-                      onChange={(e) => handleFridayExtensionChange(e.target.checked)}
-                      className="mt-1 h-5 w-5 rounded border-amber-500 text-brand-600 focus:ring-brand-500 accent-brand-600"
-                    />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-ink-950">Include Weekend Rental (Fri + Sat + Sun → Drop on Monday)</span>
-                        <span className="rounded bg-brand-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">3 Days</span>
-                      </div>
-                      <p className="text-xs text-ink-700 mt-1 font-medium">
-                        Priced as standard Friday rate + weekend rates for Saturday &amp; Sunday (3 days rental). Return date automatically sets to Monday.
-                      </p>
-                    </div>
-                  </label>
+                <div className="sm:col-span-2 rounded-xl border border-brand-200 bg-brand-50/70 p-4 shadow-xs">
+                  <span className="text-xs font-bold uppercase tracking-wider text-brand-900 block mb-2.5">
+                    Select Drop-off Day:
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {[
+                      { label: "Saturday Drop-off", date: addDaysISO(pickupDate, 1), accent: "brand" as const },
+                      { label: "Sunday Drop-off", date: addDaysISO(pickupDate, 2), accent: "amber" as const },
+                      { label: "Monday Drop-off", date: getNextMondayISO(pickupDate), accent: "brand" as const },
+                    ].map((opt) => {
+                      const selected = returnDate === opt.date;
+                      const optDays = daysForReturn(opt.date);
+                      return (
+                        <button
+                          key={opt.label}
+                          type="button"
+                          onClick={() => handleReturnDateChange(opt.date)}
+                          className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer ${
+                            selected
+                              ? opt.accent === "amber"
+                                ? "border-amber-500 bg-white ring-2 ring-amber-500 shadow-sm"
+                                : "border-brand-600 bg-white ring-2 ring-brand-500 shadow-sm"
+                              : "border-ink-200 bg-white/70 hover:bg-white hover:border-brand-300"
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 w-full justify-between">
+                            <span className="text-xs font-bold text-ink-950">{opt.label}</span>
+                            <span
+                              className={`rounded px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950 ${
+                                opt.accent === "amber" ? "bg-amber-500" : "bg-brand-500"
+                              }`}
+                            >
+                              {optDays} {optDays === 1 ? "Day" : "Days"}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-ink-600 mt-1">
+                            {formatDate(opt.date)} · Standard 8:00 AM Drop
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2.5 text-[11px] text-ink-600">
+                    Saturday and Sunday are charged at weekend rates. Returning after 8:00 AM on your
+                    drop day adds one more full day.
+                  </p>
                 </div>
               )}
 
