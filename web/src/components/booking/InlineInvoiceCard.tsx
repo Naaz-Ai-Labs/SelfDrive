@@ -44,7 +44,9 @@ export function InlineInvoiceCard({
             <span className="text-xs text-ink-400">#{invoiceNo}</span>
           </div>
           <h2 className="mt-1 font-display text-xl font-bold text-ink-950">Darshh Holiday Bike &amp; Car Rentals</h2>
-          <p className="text-xs text-ink-500">Main Branch: Hassan &amp; Sakleshpura, Karnataka · +91 98452 10001</p>
+          {/* Contact number matches the printed price posters and the business
+              settings row. It previously read "+91 98452 10001", which reaches nobody. */}
+          <p className="text-xs text-ink-500">Sakleshpura &amp; Hassan, Hassan District, Karnataka · +91 76768 75595</p>
         </div>
 
         <div className="text-left sm:text-right">
