@@ -5,7 +5,7 @@ import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { createRazorpayOrder, verifyRazorpaySignature, fetchRazorpayPayment, razorpayConfigured, razorpayKeyId } from "./razorpay";
 import { generateInvoiceForBooking } from "./invoices";
-import { toPaise } from "./supabase-sync";
+import { toPaise } from "./utils";
 import { sbSelectOne, sbSelect, sbInsert, sbUpdate, sbCount, sbRpc, num } from "./supabase-rest";
 
 /**

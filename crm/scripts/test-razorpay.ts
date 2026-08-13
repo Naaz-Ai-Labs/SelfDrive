@@ -15,7 +15,7 @@
 
 import crypto from "node:crypto";
 import { verifyRazorpaySignature, verifyRazorpayWebhookSignature } from "../src/lib/razorpay";
-import { toPaise, toRupees } from "../src/lib/supabase-sync";
+import { toPaise, toRupees } from "../src/lib/utils";
 
 let failures = 0;
 
