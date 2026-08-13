@@ -37,8 +37,22 @@ export type Quote = {
   weekendMinDays: number;
   belowWeekendMinimum: boolean;
   appliedRuleName: string | null;
+  /** Pickup before 08:00 IST — the one-off ₹250 surcharge applies. */
+  earlyPickup: boolean;
+  /** Drop after 08:00 IST — one extra full day is already counted in `days`. */
+  lateDrop: boolean;
+  /**
+   * ALL-IN figure, deposit INCLUDED. For disclosure and the invoice only.
+   * NEVER send this to Razorpay — see `payableNow`.
+   */
   totalAmount: number;
+  /**
+   * What the customer actually pays online: rental + surcharge + GST + gateway fee.
+   * The deposit is EXCLUDED — it is collected in cash at pickup.
+   */
   payableNow: number;
+  /** Cash deposit collected at pickup (₹1000 two-wheelers, ₹2000 cars). Not charged online. */
+  depositPayableAtPickup: number;
 };
 
 export async function saveBookingDraft(input: DraftPayload & { token?: string | null }): Promise<{ token: string; savedAt: string }> {
@@ -128,37 +142,23 @@ export async function submitBooking(input: {
 
     try {
       const { getVehicles } = await import("./data");
+      const { calculateRentalQuoteFromStrings } = await import("./pricing");
       const allVehicles = await getVehicles();
       const v = allVehicles.find((item) => Number(item.id) === Number(input.vehicleId));
       if (v) {
-        const p = new Date(input.pickupAt);
-        const r = new Date(input.returnAt);
-        const isSundayReturn = r.getDay() === 0;
-        const msPerDay = 24 * 60 * 60 * 1000;
-        const diffMs = Math.max(0, r.getTime() - p.getTime());
-        const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-        const pickupTimeStr = input.pickupAt.includes("T") ? input.pickupAt.split("T")[1] : "08:00";
-        const returnTimeStr = input.returnAt.includes("T") ? input.returnAt.split("T")[1] : "08:00";
-        const isLateDrop = returnTimeStr > "08:00";
-        // If drop-off time is after standard 08:00 AM, charge for 1 more day
-        const days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
-
-        baseAmount = 0;
-        for (let i = 0; i < days; i++) {
-          const day = new Date(p.getTime() + i * msPerDay);
-          const dayOfWeek = day.getDay();
-          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
-          const rate = isWeekend ? Number(v.weekend_rate_24h ?? (v.rate_24h + 50)) : Number(v.rate_24h);
-          baseAmount += rate;
+        // Same shared calculation the site quoted from, so the row written here carries
+        // the price the customer was actually shown.
+        const [pickupDateStr, pickupTimeStr = "08:00"] = input.pickupAt.split("T");
+        const [returnDateStr, returnTimeStr = "08:00"] = input.returnAt.split("T");
+        const quote = calculateRentalQuoteFromStrings(v, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr);
+        if (quote) {
+          baseAmount = quote.baseAmount + quote.offSchedulePickupFee;
+          depositAmount = quote.depositPayableAtPickup;
+          gstAmount = quote.gstAmount;
+          // `total_amount` is the CRM's all-in column (deposit included); the deposit is
+          // still cash at pickup and is never part of what Razorpay charges.
+          totalAmount = quote.totalAmount;
         }
-
-        const isEarlyPickup = pickupTimeStr < "08:00";
-        const timingFee = isEarlyPickup ? 250 : 0;
-
-        depositAmount = Number(v.deposit ?? 1000);
-        const taxableAmount = baseAmount + timingFee;
-        gstAmount = Math.round(taxableAmount * 0.06);
-        totalAmount = taxableAmount + depositAmount + gstAmount;
       }
     } catch (quoteErr) {
       console.error("submitBooking fallback: quote calculation failed", quoteErr);
@@ -319,26 +319,33 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
       );
 
       if (searchQuote) {
+        // The search quote is already the shared calculation from ./pricing, so it is
+        // passed through field-for-field. Re-deriving anything here is what let the
+        // weekend minimum, the km allowance and the payable amount drift from the CRM.
         return {
           days: searchQuote.days,
           weekendDaysCount: searchQuote.weekendDaysCount,
           dayBreakdown: searchQuote.dayBreakdown.map((d) => ({ date: d.date, isWeekend: d.isWeekend, rate: d.rate })),
           baseAmount: searchQuote.baseAmount,
-          offSchedulePickupFee: searchQuote.earlyPickupFee,
+          offSchedulePickupFee: searchQuote.offSchedulePickupFee,
           gstAmount: searchQuote.gstAmount,
-          gstPct: 6,
-          gatewayFeeAmount: 0,
-          gatewayFeePct: 0,
+          gstPct: searchQuote.gstPct,
+          gatewayFeeAmount: searchQuote.gatewayFeeAmount,
+          gatewayFeePct: searchQuote.gatewayFeePct,
           depositAmount: searchQuote.depositAmount,
-          includedKm: (v.included_km ?? 100) * searchQuote.days,
-          extraKmRate: v.extra_km_rate ?? 5,
-          afterHours: searchQuote.earlyPickupFee > 0,
-          offSchedulePickup: searchQuote.earlyPickupFee > 0,
-          weekendMinDays: 1,
-          belowWeekendMinimum: false,
-          appliedRuleName: null,
+          includedKm: searchQuote.includedKm,
+          extraKmRate: searchQuote.extraKmRate,
+          afterHours: searchQuote.afterHours,
+          offSchedulePickup: searchQuote.offSchedulePickup,
+          weekendMinDays: searchQuote.weekendMinDays,
+          belowWeekendMinimum: searchQuote.belowWeekendMinimum,
+          appliedRuleName: searchQuote.appliedRuleName,
+          earlyPickup: searchQuote.earlyPickup,
+          lateDrop: searchQuote.lateDrop,
           totalAmount: searchQuote.totalAmount,
-          payableNow: searchQuote.totalAmount,
+          // Deposit EXCLUDED: it is collected in cash at pickup, never via Razorpay.
+          payableNow: searchQuote.payableNow,
+          depositPayableAtPickup: searchQuote.depositPayableAtPickup,
         };
       }
     }

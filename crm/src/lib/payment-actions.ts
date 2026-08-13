@@ -68,7 +68,12 @@ export async function createBookingPaymentOrder(bookingId: number, overrideAmoun
   const paidAmount = num(booking.paid_amount);
   const depositAmount = num(booking.deposit_amount);
 
-  const due = overrideAmount && overrideAmount > 0 ? overrideAmount : Math.max(1, totalAmount - paidAmount);
+  // The security deposit is collected in CASH at pickup and must never be charged
+  // through Razorpay. `total_amount` is the all-in figure (deposit included) so the
+  // invoice can still show the full picture; the amount taken online is that minus
+  // the deposit, minus anything already paid.
+  const onlinePayable = Math.max(0, totalAmount - depositAmount);
+  const due = overrideAmount && overrideAmount > 0 ? overrideAmount : Math.max(1, onlinePayable - paidAmount);
   if (due <= 0) return { ok: false, error: "This booking is already fully paid." };
 
   const duePaise = Math.max(100, toPaise(due));

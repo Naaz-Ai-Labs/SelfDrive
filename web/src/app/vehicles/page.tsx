@@ -101,7 +101,7 @@ export default async function VehiclesPage(
               </div>
               <p className="mt-1 text-xs text-ink-700">
                 Calculated for {formatDate(pickupDate)} ({pickupTime}) → {formatDate(returnDate)} ({returnTime}).
-                {searchQuotes[0].weekendDaysCount > 0 && ` Includes weekend dynamic rates (+₹50).`}
+                {searchQuotes[0].weekendDaysCount > 0 && ` Includes each vehicle's own weekend rate for Sat/Sun.`}
               </p>
             </div>
             <Link

@@ -186,11 +186,11 @@ export default async function VehicleDetailPage(props: {
                 <p className="text-xs font-bold uppercase tracking-wider text-ink-400">Pricing</p>
                 {searchQuote && searchQuote.weekendDaysCount > 0 ? (
                   <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
-                    +₹50 Weekend Rate ({searchQuote.weekendDaysCount}d)
+                    Weekend Rate ({searchQuote.weekendDaysCount}d)
                   </span>
                 ) : weekendActive && !searchQuote ? (
                   <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
-                    +₹50 Weekend Rate
+                    Weekend Rate Today
                   </span>
                 ) : null}
               </div>
@@ -217,22 +217,25 @@ export default async function VehicleDetailPage(props: {
                     </div>
                     {searchQuote.totalTimingFees > 0 && (
                       <div className="flex justify-between text-amber-800">
-                        <span>Off-schedule timing surcharge</span>
+                        <span>Early pickup surcharge (before 8:00 AM)</span>
                         <span className="font-semibold">+{formatINR(searchQuote.totalTimingFees)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between">
-                      <span>Refundable Deposit</span>
-                      <span className="font-semibold text-ink-900">{formatINR(searchQuote.depositAmount)}</span>
-                    </div>
                     <div className="flex justify-between">
                       <span>GST (6%)</span>
                       <span className="font-semibold text-ink-900">{formatINR(searchQuote.gstAmount)}</span>
                     </div>
                     <div className="flex justify-between border-t border-brand-200 pt-1 text-sm font-bold text-ink-900">
-                      <span>Total Payable</span>
-                      <span className="text-brand-700">{formatINR(searchQuote.totalAmount)}</span>
+                      <span>Pay now online</span>
+                      <span className="text-brand-700">{formatINR(searchQuote.payableNow)}</span>
                     </div>
+                    <div className="flex justify-between text-emerald-800">
+                      <span>Security deposit (cash at pickup, refundable)</span>
+                      <span className="font-semibold">{formatINR(searchQuote.depositPayableAtPickup)}</span>
+                    </div>
+                    {searchQuote.lateDrop && (
+                      <p className="text-[11px] text-amber-800">Drop after 8:00 AM — one extra full rental day is included above.</p>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -251,9 +254,9 @@ export default async function VehicleDetailPage(props: {
                 </li>
                 <li className="flex justify-between"><span>Included km</span><span className="font-medium text-ink-800">{vehicle.included_km >= 999 ? "Unlimited KM" : `${vehicle.included_km} km/day`}</span></li>
                 <li className="flex justify-between"><span>Extra km rate</span><span className="font-medium text-ink-800">{formatINR((vehicle.category_kind === "bike" || vehicle.category_kind === "scooter") ? 4 : vehicle.extra_km_rate ?? 8)}/km</span></li>
-                <li className="flex justify-between"><span>Security deposit</span><span className="font-medium text-ink-800">{formatINR(vehicle.deposit)}</span></li>
+                <li className="flex justify-between"><span>Security deposit (cash at pickup)</span><span className="font-medium text-ink-800">{formatINR(vehicle.deposit)}</span></li>
               </ul>
-              <p className="mt-4 text-xs text-ink-500">Fixed rental — no bargaining. Vehicle rented without fuel; return with the same fuel level. GST (6%) added at checkout.</p>
+              <p className="mt-4 text-xs text-ink-500">Fixed rental — no bargaining. Vehicle rented without fuel; return with the same fuel level. GST (6%) added at checkout. The refundable security deposit is <strong>not</strong> charged online — you pay it in cash at pickup.</p>
 
               {isOutOfStock ? (
                 <div className="mt-5 w-full rounded-full bg-rose-100 py-3.5 text-center text-xs font-bold uppercase tracking-wide text-rose-700">
@@ -261,7 +264,7 @@ export default async function VehicleDetailPage(props: {
                 </div>
               ) : (
                 <Link href={bookingHref} className="btn-shine mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
-                  {searchQuote ? `Book for ${formatINR(searchQuote.totalAmount)}` : "Book this vehicle"}
+                  {searchQuote ? `Book — pay ${formatINR(searchQuote.payableNow)} now` : "Book this vehicle"}
                 </Link>
               )}
               <a href={waLink(String(info.whatsapp ?? ""), `Hi, I'd like to enquire about the ${vehicle.name}`)} target="_blank" rel="noopener noreferrer" className="btn-secondary mt-2 w-full">

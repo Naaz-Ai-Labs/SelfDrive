@@ -28,9 +28,11 @@ export function InlineInvoiceCard({
   paymentDate = formatDate(new Date().toISOString()),
 }: Props) {
   const invoiceNo = `INV-${new Date().getFullYear()}-${String(bookingId || bookingNo.replace(/\D/g, "") || "10001").slice(-5)}`;
-  const depositAmount = quote?.depositAmount ?? 1000;
-  const gstAmount = quote?.gstAmount ?? Math.round((amountPaid - depositAmount) * 0.06);
-  const baseAmount = quote?.baseAmount ?? Math.max(0, amountPaid - depositAmount - gstAmount);
+  // `amountPaid` is the ONLINE payment, which never includes the deposit — so the
+  // derived fallbacks must not subtract the deposit out of it.
+  const depositAmount = quote?.depositPayableAtPickup ?? quote?.depositAmount ?? 1000;
+  const gstAmount = quote?.gstAmount ?? Math.round((amountPaid / 1.06) * 0.06);
+  const baseAmount = quote?.baseAmount ?? Math.max(0, amountPaid - gstAmount);
 
   return (
     <div className="mt-6 overflow-hidden rounded-2xl border border-emerald-200 bg-white p-6 shadow-md transition print:border-none print:shadow-none print:p-0 text-left">
@@ -94,18 +96,18 @@ export function InlineInvoiceCard({
               <td className="py-2.5">GST (6%)</td>
               <td className="py-2.5 text-right font-medium text-ink-900">{formatINR(gstAmount)}</td>
             </tr>
-            <tr>
-              <td className="py-2.5">
-                <span>Refundable Security Deposit</span>
-                <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 print:hidden">Refundable on return</span>
-              </td>
-              <td className="py-2.5 text-right font-medium text-ink-900">{formatINR(depositAmount)}</td>
-            </tr>
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-ink-900 font-bold text-sm text-ink-950">
-              <td className="pt-3">Total Amount Paid</td>
+              <td className="pt-3">Paid Online Now</td>
               <td className="pt-3 text-right text-emerald-700">{formatINR(amountPaid)}</td>
+            </tr>
+            <tr className="text-xs text-ink-700">
+              <td className="pt-2">
+                <span>Security deposit — cash at pickup, refundable</span>
+                <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 print:hidden">Not charged online</span>
+              </td>
+              <td className="pt-2 text-right font-medium text-ink-900">{formatINR(depositAmount)}</td>
             </tr>
           </tfoot>
         </table>

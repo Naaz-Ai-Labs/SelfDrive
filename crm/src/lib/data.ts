@@ -159,7 +159,13 @@ async function hydrateVehicles(rows: RawVehicle[]): Promise<Vehicle[]> {
     // PostgREST hands back NUMERIC as a string. Without num() every one of these
     // becomes string concatenation the moment a quote is calculated.
     const baseRate24h = num(row.rate_24h);
-    const weekendRate24h = Math.max(baseRate24h + 50, num(row.weekend_rate_24h, baseRate24h + 50));
+    // The vehicle's own weekend rate is taken verbatim; only a NULL falls back to the
+    // weekday rate. The old `Math.max(base + 50, …)` forced weekend >= weekday + 50,
+    // which contradicts the owner's price list — Ronin 1800/1800, CB200X 1800/1800 and
+    // Shine 1000/1000 all charge the same on weekends.
+    const weekendRate24h = row.weekend_rate_24h === null || row.weekend_rate_24h === undefined
+      ? baseRate24h
+      : num(row.weekend_rate_24h, baseRate24h);
 
     const { vehicle_categories: category, branches: branch, ...rest } = row;
 
