@@ -89,3 +89,26 @@ export async function cacheInvalidate(key: string): Promise<void> {
 
   memoryCache.delete(key);
 }
+
+/**
+ * Invalidates every cache entry whose key starts with `prefix`.
+ *
+ * Vehicle and pricing cache keys embed their filter arguments
+ * (e.g. `vehicles:{"kind":"bike"}:true`), so there is no single key to delete after
+ * an edit. Without this, a price change stayed invisible for the full TTL — 10
+ * minutes for vehicles, an hour for categories.
+ */
+export async function cacheInvalidatePrefix(prefix: string): Promise<void> {
+  const redis = await getRedis();
+
+  if (redis) {
+    try {
+      const keys = await redis.keys(`${prefix}*`);
+      if (Array.isArray(keys) && keys.length) await redis.del(...keys);
+    } catch {}
+  }
+
+  for (const key of Array.from(memoryCache.keys())) {
+    if (key.startsWith(prefix)) memoryCache.delete(key);
+  }
+}

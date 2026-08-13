@@ -30,7 +30,11 @@ export async function POST(req: NextRequest) {
 
   const eventType = event.event ?? "unknown";
   const payload = event.payload ?? {};
-  const eventId = (event as any).event_id ?? (event as any).id ?? null;
+  // Razorpay sends the event id in the x-razorpay-event-id HEADER, not in the JSON body.
+  // Reading it from the body yielded null on every request, so the payment_events
+  // dedupe check never fired and every webhook retry was fully reprocessed.
+  const eventId =
+    req.headers.get("x-razorpay-event-id") ?? (event as any).event_id ?? (event as any).id ?? null;
 
   const entity = payload?.payment?.entity ?? payload?.order?.entity ?? payload?.refund?.entity;
   const orderId = entity?.order_id ?? entity?.id ?? null;

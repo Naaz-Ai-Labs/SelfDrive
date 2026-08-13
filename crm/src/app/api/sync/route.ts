@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { syncLatestFromSupabase } from "@/lib/hydrate-db";
 import { razorpayConfigured } from "@/lib/razorpay";
+import { requireGatewayKey } from "@/lib/gateway-auth";
 
 export async function GET(req: NextRequest) {
+  // This route reconciles live Razorpay payments and mutates booking/payment status.
+  // It must never be reachable unauthenticated.
+  const denied = requireGatewayKey(req);
+  if (denied) return denied;
+
   try {
     const db = getDb();
     const syncedSupabase = await syncLatestFromSupabase(db);

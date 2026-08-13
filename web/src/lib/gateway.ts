@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 
-function getBaseUrl(): string {
+export function getBaseUrl(): string {
   const envUrl = process.env.CRM_API_URL || process.env.NEXT_PUBLIC_CRM_API_URL;
   if (envUrl && !envUrl.includes("localhost")) {
     return envUrl.replace(/\/$/, "");
@@ -11,8 +11,13 @@ function getBaseUrl(): string {
   return envUrl ? envUrl.replace(/\/$/, "") : "http://localhost:3001";
 }
 
-const DEFAULT_GATEWAY_KEY = "adb661bf6bbe85efd79f26fa2901e580809755dc7bfb37e69f444cb7f2be305c";
-const KEY = process.env.GATEWAY_API_KEY || DEFAULT_GATEWAY_KEY;
+/** Never falls back to a literal — an unset key must fail loudly, not ship a secret in the bundle. */
+export function getGatewayKey(): string {
+  const key = process.env.GATEWAY_API_KEY;
+  if (!key) throw new Error("GATEWAY_API_KEY is not configured on the server.");
+  return key;
+}
+
 export const CUSTOMER_COOKIE = "darshh_customer";
 
 type FetchOptions = { auth?: boolean; cache?: RequestCache; revalidate?: number };
@@ -24,7 +29,11 @@ type FetchOptions = { auth?: boolean; cache?: RequestCache; revalidate?: number 
 async function gatewayFetch<T>(path: string, init: RequestInit & FetchOptions = {}): Promise<T> {
   const { auth, cache, revalidate, ...rest } = init;
   const headers = new Headers(rest.headers);
-  headers.set("x-gateway-key", KEY);
+  try {
+    headers.set("x-gateway-key", getGatewayKey());
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : "Gateway key missing." } as T;
+  }
   if (rest.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (auth) {
     try {
@@ -40,6 +49,13 @@ async function gatewayFetch<T>(path: string, init: RequestInit & FetchOptions = 
       headers,
       ...(revalidate ? { next: { revalidate } } : { cache: cache ?? "no-store" }),
     });
+    // An HTML error page (Vercel 502, CRM login redirect, …) parsed as JSON throws
+    // "Unexpected token '<'" — surface it as a typed error instead.
+    if (!res.headers.get("content-type")?.includes("application/json")) {
+      const body = await res.text().catch(() => "");
+      console.warn(`Gateway non-JSON response (${res.status}) for ${path}:`, body.slice(0, 200));
+      return { ok: false, error: `Server returned a non-JSON response (${res.status}). Please try again.` } as T;
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok && !("error" in data)) {
       return { error: `Request failed (${res.status})` } as T;

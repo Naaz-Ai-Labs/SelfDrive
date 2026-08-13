@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { gatewayGet, gatewayPost } from "./gateway";
 import { supabaseRestInsert, supabaseRestSelect, supabaseRestUpsert } from "./supabase-rest";
 import type { Vehicle } from "./data";
+import { normalizeDocKind } from "./doc-kind";
 
 export type DraftPayload = {
   categoryId: number | null;
@@ -39,26 +40,6 @@ export type Quote = {
   totalAmount: number;
   payableNow: number;
 };
-
-export function normalizeDocKind(kind: string): "licence" | "govt_id" | "address_proof" | "photo" | "other" {
-  switch (kind) {
-    case "licence":
-    case "driver_licence":
-      return "licence";
-    case "driver_govt_id":
-    case "pillion_id":
-    case "govt_id":
-      return "govt_id";
-    case "driver_photo":
-    case "pillion_photo":
-    case "photo":
-      return "photo";
-    case "address_proof":
-      return "address_proof";
-    default:
-      return "other";
-  }
-}
 
 export async function saveBookingDraft(input: DraftPayload & { token?: string | null }): Promise<{ token: string; savedAt: string }> {
   return gatewayPost("/api/gateway/v1/booking/draft", input);
@@ -211,10 +192,15 @@ export async function submitBooking(input: {
   }
 }
 
-  // 3. Instant Fail-Safe Confirmation Guarantee
-  const fallbackBookingNo = `BK-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-01`;
-  const fallbackBookingId = Math.floor(Date.now() / 1000);
-  return { ok: true, bookingNo: fallbackBookingNo, bookingId: fallbackBookingId, customerId: 1 };
+  // 3. Both the CRM gateway and the direct Supabase write failed.
+  // Never fabricate a booking number here: doing so hands the customer a
+  // confirmation for a booking that exists in no system of record.
+  console.error("submitBooking failed: gateway and Supabase fallback both unavailable");
+  return {
+    ok: false,
+    error:
+      "We could not confirm your booking right now. No payment has been taken. Please try again in a moment, or call us and we will complete it for you.",
+  };
 }
 
 export async function getAvailableVehicles(kind: string | null, pickupAt: string | null, returnAt: string | null): Promise<Vehicle[]> {
@@ -233,7 +219,7 @@ export async function getAvailableVehicles(kind: string | null, pickupAt: string
   }
 
   // 2. Direct Supabase PostgreSQL Query Fallback
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey =
     process.env.SUPABASE_SECRET_KEY ||
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -345,7 +331,7 @@ export async function getVehicleById(id: number): Promise<Vehicle | null> {
   } catch {}
 
   // 2. Direct Supabase Lookup
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
   if (supabaseUrl && supabaseKey) {
     try {

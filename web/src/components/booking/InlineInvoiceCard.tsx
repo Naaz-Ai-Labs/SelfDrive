@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { formatINR } from "@/lib/utils";
+import { formatINR, formatDate } from "@/lib/utils";
 import type { Quote } from "@/lib/booking-actions";
 
 type Props = {
@@ -25,7 +25,7 @@ export function InlineInvoiceCard({
   quote,
   amountPaid,
   paymentId,
-  paymentDate = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+  paymentDate = formatDate(new Date().toISOString()),
 }: Props) {
   const invoiceNo = `INV-${new Date().getFullYear()}-${String(bookingId || bookingNo.replace(/\D/g, "") || "10001").slice(-5)}`;
   const depositAmount = quote?.depositAmount ?? 1000;

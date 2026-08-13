@@ -221,6 +221,7 @@ function formatDisplayDate(dateStr: string | null | undefined): string {
     day: "numeric",
     month: "short",
     year: "numeric",
+    timeZone: "Asia/Kolkata",
   });
 }
 

@@ -31,8 +31,8 @@ export async function createBookingPaymentOrder(
   }
 
   // 2. High-Availability Direct Razorpay Order Creation on Web Server
-  const keyId = process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_live_TMtWnWetF4mEf8";
-  const keySecret = process.env.RAZORPAY_KEY_SECRET || "vWEQ49WAZ71sye9SJbK5eluA";
+  const keyId = process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
   if (!keyId || !keySecret) {
     return { ok: false, error: "Razorpay credentials not configured. Please choose Pay at Pickup." };
@@ -42,7 +42,7 @@ export async function createBookingPaymentOrder(
     let finalAmount = Number(amountDue) || 0;
     let bookingNo = `BK-${bookingId}`;
 
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
     if (supabaseUrl && supabaseKey) {
@@ -134,7 +134,10 @@ export async function verifyBookingPayment(input: {
   } catch {}
 
   // 2. Direct HMAC-SHA256 Signature Verification & Live Supabase / CRM Sync
-  const keySecret = process.env.RAZORPAY_KEY_SECRET || "vWEQ49WAZ71sye9SJbK5eluA";
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keySecret) {
+    return { ok: false, error: "Razorpay credentials not configured. Payment could not be verified." };
+  }
 
   const expectedSignature = crypto
     .createHmac("sha256", keySecret)

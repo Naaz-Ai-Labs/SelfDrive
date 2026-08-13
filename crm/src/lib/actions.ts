@@ -11,9 +11,31 @@ import { calculateLateFee, calculateExtraKm } from "./pricing";
 import type { SessionUser } from "./auth";
 import { issueRazorpayRefund } from "./razorpay";
 import { syncEntityToSupabase } from "./supabase-sync";
+import { cacheInvalidatePrefix } from "./redis";
 
 function refresh(path = "/dashboard") {
   revalidatePath(path, "layout");
+  // Not awaited by design: a stale cache is self-healing (it expires on TTL), so this
+  // must never delay or fail a mutation that has already been committed.
+  void invalidateContentCaches().catch(() => {});
+}
+
+/**
+ * Clears the content caches that back the public website.
+ *
+ * `revalidatePath` only busts Next's own cache — it does nothing to the Redis/memory
+ * layer in `data.ts`, whose keys embed their filter arguments. Before this, editing a
+ * vehicle or a pricing rule in the CRM left the website serving stale data for the
+ * full TTL (10 minutes for vehicles, an hour for categories/testimonials/FAQs), which
+ * read as "I changed the price and the site didn't update".
+ */
+async function invalidateContentCaches(): Promise<void> {
+  await Promise.all([
+    cacheInvalidatePrefix("vehicles:"),
+    cacheInvalidatePrefix("vehicle_categories:"),
+    cacheInvalidatePrefix("testimonials:"),
+    cacheInvalidatePrefix("faqs:"),
+  ]);
 }
 
 export async function staffUser(): Promise<SessionUser> {
@@ -542,18 +564,40 @@ export async function processOnlineRazorpayRefund(refundId: number): Promise<{ o
 
   const refund = db
     .prepare(
-      `SELECT r.*, p.notes AS payment_notes FROM refunds r
+      `SELECT r.*, p.notes AS payment_notes, p.razorpay_payment_id AS payment_rzp_id FROM refunds r
        LEFT JOIN payments p ON p.booking_id = r.booking_id
-       WHERE r.id = ? AND p.status = 'Paid' AND p.notes LIKE 'Razorpay payment ID:%'
+       WHERE r.id = ? AND p.status = 'Paid' AND (p.razorpay_payment_id IS NOT NULL OR p.notes LIKE 'Razorpay payment ID:%')
        ORDER BY p.id DESC LIMIT 1`
     )
-    .get(refundId) as { id: number; booking_id: number; approved_amount: number | null; requested_amount: number; payment_notes: string; customer_id: number | null } | undefined;
+    .get(refundId) as { id: number; booking_id: number; status: string; approved_amount: number | null; requested_amount: number; payment_notes: string | null; payment_rzp_id: string | null; customer_id: number | null } | undefined;
 
   if (!refund) {
     return { ok: false, error: "No paid Razorpay transaction found for this booking refund." };
   }
 
-  const razorpayPaymentId = refund.payment_notes.replace("Razorpay payment ID: ", "").trim();
+  // Guard against double refunds. Without this, two staff clicks issue two real
+  // Razorpay refunds against the same payment — actual money out the door twice.
+  if (refund.status === "Completed") {
+    return { ok: false, error: "This refund has already been processed." };
+  }
+
+  // Atomically claim the refund so two concurrent requests cannot both proceed.
+  const claimed = db
+    .prepare("UPDATE refunds SET status = 'Processing' WHERE id = ? AND status <> 'Completed' AND status <> 'Processing'")
+    .run(refundId);
+  if (!claimed.changes) {
+    return { ok: false, error: "This refund is already being processed." };
+  }
+
+  // Prefer the dedicated column; fall back to the legacy free-text note only if absent.
+  const razorpayPaymentId =
+    refund.payment_rzp_id?.trim() || (refund.payment_notes ?? "").replace("Razorpay payment ID: ", "").trim();
+
+  if (!razorpayPaymentId) {
+    db.prepare("UPDATE refunds SET status = 'Approved' WHERE id = ?").run(refundId);
+    return { ok: false, error: "Could not determine the Razorpay payment ID for this refund." };
+  }
+
   const amountToRefund = refund.approved_amount ?? refund.requested_amount;
 
   const result = await issueRazorpayRefund({

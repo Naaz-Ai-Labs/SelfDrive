@@ -7,7 +7,31 @@ import { supabaseAdmin } from "./supabase";
 
 const SESSION_COOKIE = "dtt_session";
 const SESSION_DAYS = 7;
-const SESSION_SECRET = process.env.SESSION_SECRET || process.env.SUPABASE_SECRET_KEY || "darshh-crm-session-secret-key-2026";
+/** Session signing key. Must be a dedicated secret — never a hardcoded literal, and
+ * never reused from another system. SUPABASE_SECRET_KEY is tolerated only as a
+ * transitional fallback so existing sessions keep working; it is logged loudly so the
+ * deployment gets a real SESSION_SECRET set. */
+function resolveSessionSecret(): string {
+  const dedicated = process.env.SESSION_SECRET;
+  if (dedicated && dedicated.length >= 32) return dedicated;
+
+  const transitional = process.env.SUPABASE_SECRET_KEY;
+  if (transitional && transitional.length >= 32) {
+    console.error(
+      "[SECURITY] SESSION_SECRET is not set. Falling back to SUPABASE_SECRET_KEY for session signing. " +
+        "Set a dedicated SESSION_SECRET (32+ random bytes) in the environment — reusing the database key for " +
+        "session HMACs means one leak compromises both."
+    );
+    return transitional;
+  }
+
+  throw new Error(
+    "SESSION_SECRET is not configured. Refusing to sign sessions with a default key. " +
+      "Set SESSION_SECRET (32+ random bytes) in the environment."
+  );
+}
+
+const SESSION_SECRET = resolveSessionSecret();
 
 export type SessionUser = {
   id: number;
