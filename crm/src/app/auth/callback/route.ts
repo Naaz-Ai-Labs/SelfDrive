@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { supabase } from "@/lib/supabase";
-import { getDb } from "@/lib/db";
-import { createSession, SESSION_COOKIE } from "@/lib/auth";
+import { createSession, persistSession, SESSION_COOKIE } from "@/lib/auth";
+import { sbSelectOne, sbInsert } from "@/lib/supabase-rest";
+
+type UserRow = { id: number; name: string; email: string; role: string; is_active: number };
 
 export async function GET(req: NextRequest) {
   const requestUrl = new URL(req.url);
@@ -33,29 +35,49 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(`${origin}/dashboard/login?error=No email returned from provider`);
     }
 
-    const db = getDb();
+    const emailClean = email.toLowerCase().trim();
 
-    // Check if user exists in CRM database
-    let userRow = db
-      .prepare("SELECT id, name, email, role, is_active FROM users WHERE email = ?")
-      .get(email) as { id: number; name: string; email: string; role: string; is_active: number } | undefined;
-
-    if (!userRow) {
-      // Auto-provision user record as staff
-      const dummyHash = "$2a$10$abcdefghijklmnopqrstuvwxyz0123456789"; // OAuth account
-      const res = db
-        .prepare("INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, 'staff', 1)")
-        .run(name, email, dummyHash);
-      const userId = Number(res.lastInsertRowid);
-      userRow = { id: userId, name, email, role: "staff", is_active: 1 };
+    const lookup = await sbSelectOne<UserRow>(
+      "users",
+      `select=id,name,email,role,is_active&email=eq.${encodeURIComponent(emailClean)}`
+    );
+    if (!lookup.ok) {
+      console.error("OAuth callback user lookup failed:", lookup.error);
+      return NextResponse.redirect(`${origin}/dashboard/login?error=${encodeURIComponent("Sign-in is temporarily unavailable")}`);
     }
 
-    if (!userRow.is_active) {
+    let userRow = lookup.data;
+
+    if (!userRow) {
+      // Auto-provision as staff. The password hash is a deliberately unusable placeholder:
+      // this account signs in through the identity provider, never with a local password.
+      const dummyHash = "$2a$10$abcdefghijklmnopqrstuvwxyz0123456789"; // OAuth account
+      const created = await sbInsert<UserRow>("users", {
+        name,
+        email: emailClean,
+        password_hash: dummyHash,
+        role: "staff",
+        is_active: 1,
+      });
+      if (!created.ok || !created.data) {
+        console.error("OAuth callback provisioning failed:", created.ok ? "no row returned" : created.error);
+        return NextResponse.redirect(`${origin}/dashboard/login?error=${encodeURIComponent("Could not create your account")}`);
+      }
+      userRow = created.data;
+    }
+
+    // `is_active` is INTEGER 1/0 per supabase/schema.sql.
+    if (Number(userRow.is_active) !== 1) {
       return NextResponse.redirect(`${origin}/dashboard/login?error=Account disabled`);
     }
 
     // Create CRM session and set cookie
-    const token = createSession(userRow.id);
+    const token = createSession(userRow.id, undefined, {
+      role: userRow.role,
+      email: userRow.email,
+      name: userRow.name,
+    });
+    await persistSession(token, userRow.id);
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE, token, {
       httpOnly: true,

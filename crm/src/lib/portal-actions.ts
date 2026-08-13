@@ -11,12 +11,12 @@ import { revalidatePath } from "next/cache";
 export async function getPortalSession(): Promise<{ customerId: number | null; target: string } | null> {
   const token = (await cookies()).get("dtt_customer")?.value;
   if (!token) return null;
-  return getCustomerSession(token);
+  return await getCustomerSession(token);
 }
 
 export async function portalLogout() {
   const token = (await cookies()).get("dtt_customer")?.value;
-  if (token) destroyCustomerSession(token);
+  if (token) await destroyCustomerSession(token);
   (await cookies()).set("dtt_customer", "", { httpOnly: true, path: "/", maxAge: 0 });
   revalidatePath("/customer", "layout");
   return { ok: true };
@@ -53,7 +53,7 @@ export async function customerRequestCancellation(bookingId: number, reason: str
 
   let refundNo: string | null = null;
   if (result.booking.paid_amount > 0) {
-    const refund = calculateCancellationRefund(pickupAt, now, result.booking.paid_amount);
+    const refund = await calculateCancellationRefund(pickupAt, now, result.booking.paid_amount);
     refundNo = nextNumber("RF", null);
     db.prepare(
       `INSERT INTO refunds (refund_no, booking_id, customer_id, reason, requested_amount, approved_amount, status, admin_notes, approved_at)

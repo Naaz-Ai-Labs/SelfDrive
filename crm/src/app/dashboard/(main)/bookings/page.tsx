@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { getDb } from "@/lib/db";
-import { syncLatestFromSupabase } from "@/lib/hydrate-db";
+import { sbSelect, num } from "@/lib/supabase-rest";
 import { BookingsTableWithTabs } from "@/components/dashboard/BookingsTableWithTabs";
 import type { BookingReviewData, CustomerDocument } from "@/components/dashboard/BookingReviewModal";
 
@@ -8,41 +7,40 @@ export const metadata: Metadata = { title: "Bookings", robots: { index: false, f
 export const revalidate = 0;
 
 export default async function BookingsPage() {
-  const db = getDb();
-  try {
-    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
-  } catch {}
+  // bookings references users twice (manager_id, after_hours_approved_by), so the
+  // manager name cannot be embedded; it is not rendered by this table anyway.
+  const bookingsRes = await sbSelect<Record<string, unknown>>(
+    "bookings",
+    "select=*,customers(name,phone,email),vehicles(name,registration_no)&order=created_at.desc,pickup_at.desc&limit=200"
+  );
+  if (!bookingsRes.ok) throw new Error(`Could not load bookings: ${bookingsRes.error}`);
 
-  let rawRows: Array<Record<string, unknown>> = [];
-  try {
-    rawRows = db
-      .prepare(
-        `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
-                v.name AS vehicle_name, v.registration_no, u.name AS manager_name
-         FROM bookings b
-         LEFT JOIN customers c ON c.id = b.customer_id
-         LEFT JOIN vehicles v ON v.id = b.vehicle_id
-         LEFT JOIN users u ON u.id = b.manager_id
-         ORDER BY b.created_at DESC, b.pickup_at DESC LIMIT 200`
-      )
-      .all() as Array<Record<string, unknown>>;
-  } catch (err) {
-    console.error("Bookings query error:", err);
-  }
+  const rawRows = bookingsRes.data.map((r): Record<string, unknown> => {
+    const customer = r.customers as { name?: string; phone?: string; email?: string } | null;
+    const vehicle = r.vehicles as { name?: string; registration_no?: string } | null;
+    return {
+      ...r,
+      customer_name: customer?.name ?? null,
+      customer_phone: customer?.phone ?? null,
+      customer_email: customer?.email ?? null,
+      vehicle_name: vehicle?.name ?? null,
+      registration_no: vehicle?.registration_no ?? null,
+    };
+  });
 
   const bookingIds = rawRows.map((r) => Number(r.id)).filter(Boolean);
   let allDocs: CustomerDocument[] = [];
   let allPayments: any[] = [];
   if (bookingIds.length > 0) {
-    try {
-      const placeholders = bookingIds.map(() => "?").join(",");
-      allDocs = db
-        .prepare(`SELECT * FROM customer_documents WHERE booking_id IN (${placeholders})`)
-        .all(...bookingIds) as CustomerDocument[];
-      allPayments = db
-        .prepare(`SELECT * FROM payments WHERE booking_id IN (${placeholders}) ORDER BY created_at DESC`)
-        .all(...bookingIds);
-    } catch {}
+    const idList = `in.(${bookingIds.join(",")})`;
+    const [docsRes, paymentsRes] = await Promise.all([
+      sbSelect<CustomerDocument>("customer_documents", `select=*&booking_id=${idList}`),
+      sbSelect<Record<string, unknown>>("payments", `select=*&booking_id=${idList}&order=created_at.desc`),
+    ]);
+    if (!docsRes.ok) throw new Error(`Could not load customer documents: ${docsRes.error}`);
+    if (!paymentsRes.ok) throw new Error(`Could not load payments: ${paymentsRes.error}`);
+    allDocs = docsRes.data;
+    allPayments = paymentsRes.data;
   }
 
   const docsByBookingId = new Map<number, CustomerDocument[]>();
@@ -72,12 +70,13 @@ export default async function BookingsPage() {
     pickup_at: (r.pickup_at as string) ?? "2026-08-12T00:00:00.000Z",
     return_at: (r.return_at as string) ?? "2026-08-13T00:00:00.000Z",
     status: (r.status as string) ?? "Pending",
-    base_amount: Number(r.base_amount ?? 0),
-    surcharge_amount: Number(r.surcharge_amount ?? 0),
-    gst_amount: Number(r.gst_amount ?? 0),
-    deposit_amount: Number(r.deposit_amount ?? 0),
-    total_amount: Number(r.total_amount ?? 0),
-    paid_amount: Number(r.paid_amount ?? 0),
+    // PostgREST returns NUMERIC as a string; num() keeps these additive.
+    base_amount: num(r.base_amount),
+    surcharge_amount: num(r.surcharge_amount),
+    gst_amount: num(r.gst_amount),
+    deposit_amount: num(r.deposit_amount),
+    total_amount: num(r.total_amount),
+    paid_amount: num(r.paid_amount),
     notes: (r.notes as string) ?? null,
     created_at: (r.created_at as string) ?? "2026-08-12T00:00:00.000Z",
     documents: (docsByBookingId.get(Number(r.id)) ?? []).map((d: any) => ({
@@ -96,7 +95,7 @@ export default async function BookingsPage() {
       customer_name: (r.customer_name as string) ?? null,
       customer_phone: (r.customer_phone as string) ?? null,
       payment_no: String(p.payment_no || `PY-${p.id}`),
-      amount: Number(p.amount || 0),
+      amount: num(p.amount),
       status: String(p.status || "Pending"),
       method: String(p.method || "online"),
       kind: String(p.kind || "full"),

@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   if (body.op === "logout") {
     const parsed = logoutSchema.safeParse(body);
-    if (parsed.success) destroyCustomerSession(parsed.data.token);
+    if (parsed.success) await destroyCustomerSession(parsed.data.token);
     return NextResponse.json({ ok: true });
   }
 
@@ -74,8 +74,8 @@ export async function POST(req: NextRequest) {
     }
     getDb().prepare("UPDATE otp_codes SET used = 1 WHERE id = ?").run(row.id);
 
-    const customer = findCustomerByTarget(target);
-    const token = createCustomerSession(customer?.id ?? null, target);
+    const customer = await findCustomerByTarget(target);
+    const token = await createCustomerSession(customer?.id ?? null, target);
     return NextResponse.json({ ok: true, token, customerId: customer?.id ?? null });
   }
 

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getDb } from "@/lib/db";
-import { syncLatestFromSupabase } from "@/lib/hydrate-db";
+import { sbSelect } from "@/lib/supabase-rest";
 import { getSetting } from "@/lib/settings";
 import { formatDateTime } from "@/lib/utils";
 import { StatusBadge, EmptyState } from "@/components/ui";
@@ -11,29 +10,26 @@ export const metadata: Metadata = { title: "Enquiries", robots: { index: false, 
 export const revalidate = 0;
 
 export default async function EnquiriesPage({ searchParams }: { searchParams: Promise<{ stage?: string }> }) {
-  const db = getDb();
-  try {
-    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
-  } catch {}
   const sp = await searchParams;
-  const stages = getSetting<string[]>("enquiry_stages", []);
-  let categories: Array<{ id: number; name: string }> = [];
-  try {
-    categories = (db.prepare("SELECT id, name FROM vehicle_categories ORDER BY name").all() as Array<Record<string, unknown>>).map((r) => ({ ...r })) as unknown as Array<{ id: number; name: string }>;
-  } catch {}
-
   const stageFilter = sp?.stage;
-  let enquiries: Array<Record<string, unknown>> = [];
-  try {
-    enquiries = db
-      .prepare(
-        `SELECT e.*, u.name AS assignee_name FROM enquiries e LEFT JOIN users u ON u.id = e.assigned_to
-         ${stageFilter ? "WHERE e.stage = ?" : ""} ORDER BY e.created_at DESC LIMIT 100`
-      )
-      .all(...(stageFilter ? [stageFilter] : [])) as Array<Record<string, unknown>>;
-  } catch (err) {
-    console.error("Enquiries query error:", err);
-  }
+
+  const [stages, categoriesRes, enquiriesRes] = await Promise.all([
+    getSetting<string[]>("enquiry_stages", []),
+    sbSelect<{ id: number; name: string }>("vehicle_categories", "select=id,name&order=name.asc"),
+    sbSelect<Record<string, unknown>>(
+      "enquiries",
+      `select=*,users(name)${stageFilter ? `&stage=eq.${encodeURIComponent(stageFilter)}` : ""}&order=created_at.desc&limit=100`
+    ),
+  ]);
+
+  if (!categoriesRes.ok) throw new Error(`Could not load vehicle categories: ${categoriesRes.error}`);
+  if (!enquiriesRes.ok) throw new Error(`Could not load enquiries: ${enquiriesRes.error}`);
+
+  const categories = categoriesRes.data;
+  const enquiries = enquiriesRes.data.map((e): Record<string, unknown> => ({
+    ...e,
+    assignee_name: (e.users as { name?: string } | null)?.name ?? null,
+  }));
 
   return (
     <div className="space-y-6">

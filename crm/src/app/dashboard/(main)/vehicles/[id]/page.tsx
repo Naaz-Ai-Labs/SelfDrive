@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getVehicleById, getVehicleCategories, getBranches } from "@/lib/data";
-import { getDb } from "@/lib/db";
+import { sbSelect, num } from "@/lib/supabase-rest";
 import { formatDateTime } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
 import { VehicleForm } from "@/components/dashboard/VehicleForm";
@@ -13,26 +13,40 @@ export const revalidate = 0;
 
 export default async function VehicleAdminDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: paramId } = await params;
-  let vehicle: ReturnType<typeof getVehicleById> = null;
-  let categories: ReturnType<typeof getVehicleCategories> = [];
-  let branches: ReturnType<typeof getBranches> = [];
-  let rules: Array<{ id: number; name: string; day_type: string; start_date: string; end_date: string; rate_24h: number | null; deposit: number | null; priority: number }> = [];
-  let bookings: Array<Record<string, unknown>> = [];
+  type PricingRule = { id: number; name: string; day_type: string; start_date: string; end_date: string; rate_24h: number | null; deposit: number | null; priority: number };
 
-  try {
-    vehicle = getVehicleById(paramId);
-    if (!vehicle) notFound();
-    categories = getVehicleCategories(false);
-    branches = getBranches(false);
-    const db = getDb();
-    rules = (db.prepare("SELECT * FROM pricing_rules WHERE vehicle_id = ? ORDER BY priority DESC").all(vehicle.id) as Array<Record<string, unknown>>).map((r) => ({ ...r })) as unknown as typeof rules;
-    bookings = db
-      .prepare("SELECT b.*, c.name AS customer_name FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id WHERE b.vehicle_id = ? ORDER BY b.pickup_at DESC LIMIT 10")
-      .all(vehicle.id) as Array<Record<string, unknown>>;
-  } catch (err: any) {
-    if (!vehicle) notFound();
-    console.error("VehicleAdminDetailPage load error:", err?.message || err);
-  }
+  const vehicle = await getVehicleById(paramId);
+  if (!vehicle) notFound();
+
+  const [categories, branches, rulesResult, bookingsResult] = await Promise.all([
+    getVehicleCategories(false),
+    getBranches(false),
+    sbSelect<Record<string, unknown>>("pricing_rules", `select=*&vehicle_id=eq.${vehicle.id}&order=priority.desc`),
+    sbSelect<Record<string, unknown>>(
+      "bookings",
+      `select=*,customers(name)&vehicle_id=eq.${vehicle.id}&order=pickup_at.desc&limit=10`
+    ),
+  ]);
+
+  if (!rulesResult.ok) throw new Error(`Could not load pricing rules: ${rulesResult.error}`);
+  if (!bookingsResult.ok) throw new Error(`Could not load bookings: ${bookingsResult.error}`);
+
+  // NUMERIC arrives as a string over PostgREST; the rule form does arithmetic on these.
+  const rules: PricingRule[] = rulesResult.data.map((r) => ({
+    id: Number(r.id),
+    name: String(r.name),
+    day_type: String(r.day_type),
+    start_date: String(r.start_date),
+    end_date: String(r.end_date),
+    rate_24h: r.rate_24h === null || r.rate_24h === undefined ? null : num(r.rate_24h),
+    deposit: r.deposit === null || r.deposit === undefined ? null : num(r.deposit),
+    priority: num(r.priority),
+  }));
+
+  const bookings = bookingsResult.data.map((b): Record<string, unknown> => ({
+    ...b,
+    customer_name: (b.customers as { name?: string } | null)?.name ?? null,
+  }));
 
   return (
     <div className="space-y-6">

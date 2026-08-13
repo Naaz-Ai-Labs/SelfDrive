@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
-import { getSetting, rentalRules } from "@/lib/settings";
+import { getAllSettings } from "@/lib/settings";
+import { sbSelect } from "@/lib/supabase-rest";
 import { BusinessForm } from "@/components/dashboard/settings/BusinessForm";
 import { ConfigForm } from "@/components/dashboard/settings/ConfigForm";
 import { CategoryEditor } from "@/components/dashboard/settings/CategoryEditor";
@@ -28,36 +28,61 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   if (!user) redirect("/dashboard/login");
   if (user.role !== "admin") redirect("/dashboard");
   const isAdmin = true;
-  const db = getDb();
 
   const sp = await searchParams;
   const active = TABS.some((t) => t.id === sp.tab) ? sp.tab! : "business";
-  const business = getSetting<Record<string, unknown>>("business", {});
-  const taxPct = Number(getSetting("tax_pct", 5));
-  const enquiryStages = getSetting<string[]>("enquiry_stages", []);
-  const paymentStatuses = getSetting<string[]>("payment_statuses", []);
-  const bookingStatuses = getSetting<string[]>("booking_statuses", []);
-  const refundStatuses = getSetting<string[]>("refund_statuses", []);
-  const leadSources = getSetting<string[]>("lead_sources", []);
 
-  const categories = (db.prepare("SELECT * FROM vehicle_categories ORDER BY sort, name").all() as Array<Record<string, unknown>>).map((r) => ({ ...r })) as unknown as Array<{ id: number; name: string; kind: string; icon: string | null; image: string | null; short_desc: string | null; description: string | null; active: number; sort: number }>;
-  const templates = (db.prepare("SELECT * FROM message_templates ORDER BY name").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const testimonials = (db.prepare("SELECT * FROM testimonials ORDER BY sort, id").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const faqs = (db.prepare("SELECT * FROM faqs ORDER BY sort, id").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const posts = (db.prepare("SELECT * FROM blog_posts ORDER BY created_at DESC").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const galleryItems = (db.prepare("SELECT * FROM gallery ORDER BY sort, id").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const users = (db.prepare("SELECT * FROM users ORDER BY is_active DESC, role, name").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const staffHistory = (
-    db
-      .prepare(
-        `SELECT h.*, u.name AS staff_name, u.email AS staff_email, p.name AS admin_name
-         FROM staff_history h
-         LEFT JOIN users u ON u.id = h.staff_id
-         LEFT JOIN users p ON p.id = h.performed_by
-         ORDER BY h.created_at DESC LIMIT 50`
-      )
-      .all() as Array<Record<string, unknown>>
-  ).map((r) => ({ ...r }));
+  const [settings, categoriesRes, templatesRes, testimonialsRes, faqsRes, postsRes, galleryRes, usersRes, historyRes] =
+    await Promise.all([
+      getAllSettings(),
+      sbSelect<Record<string, unknown>>("vehicle_categories", "select=*&order=sort.asc,name.asc"),
+      sbSelect<Record<string, unknown>>("message_templates", "select=*&order=name.asc"),
+      sbSelect<Record<string, unknown>>("testimonials", "select=*&order=sort.asc,id.asc"),
+      sbSelect<Record<string, unknown>>("faqs", "select=*&order=sort.asc,id.asc"),
+      sbSelect<Record<string, unknown>>("blog_posts", "select=*&order=created_at.desc"),
+      sbSelect<Record<string, unknown>>("gallery", "select=*&order=sort.asc,id.asc"),
+      sbSelect<Record<string, unknown>>("users", "select=*&order=is_active.desc,role.asc,name.asc"),
+      sbSelect<Record<string, unknown>>("staff_history", "select=*&order=created_at.desc&limit=50"),
+    ]);
+
+  for (const [label, res] of [
+    ["vehicle categories", categoriesRes],
+    ["message templates", templatesRes],
+    ["testimonials", testimonialsRes],
+    ["FAQs", faqsRes],
+    ["blog posts", postsRes],
+    ["gallery", galleryRes],
+    ["staff accounts", usersRes],
+    ["staff history", historyRes],
+  ] as const) {
+    if (!res.ok) throw new Error(`Could not load ${label}: ${res.error}`);
+  }
+
+  const business = (settings.business ?? {}) as Record<string, unknown>;
+  const taxPct = Number(settings.tax_pct ?? 5);
+  const enquiryStages = (settings.enquiry_stages ?? []) as string[];
+  const paymentStatuses = (settings.payment_statuses ?? []) as string[];
+  const bookingStatuses = (settings.booking_statuses ?? []) as string[];
+  const refundStatuses = (settings.refund_statuses ?? []) as string[];
+  const leadSources = (settings.lead_sources ?? []) as string[];
+  const rules = (settings.rental_rules ?? {}) as Record<string, unknown>;
+
+  const categories = (categoriesRes.ok ? categoriesRes.data : []) as unknown as Array<{ id: number; name: string; kind: string; icon: string | null; image: string | null; short_desc: string | null; description: string | null; active: number; sort: number }>;
+  const templates = templatesRes.ok ? templatesRes.data : [];
+  const testimonials = testimonialsRes.ok ? testimonialsRes.data : [];
+  const faqs = faqsRes.ok ? faqsRes.data : [];
+  const posts = postsRes.ok ? postsRes.data : [];
+  const galleryItems = galleryRes.ok ? galleryRes.data : [];
+  const users = usersRes.ok ? usersRes.data : [];
+
+  // staff_history has two foreign keys into users, so PostgREST cannot infer the
+  // embed. Resolve the two name columns from the users list already loaded.
+  const usersById = new Map(users.map((u) => [Number(u.id), u]));
+  const staffHistory = (historyRes.ok ? historyRes.data : []).map((h): Record<string, unknown> => {
+    const staff = usersById.get(Number(h.staff_id));
+    const admin = usersById.get(Number(h.performed_by));
+    return { ...h, staff_name: staff?.name ?? null, staff_email: staff?.email ?? null, admin_name: admin?.name ?? null };
+  });
 
   return (
     <div className="space-y-6">
@@ -84,7 +109,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
       {active === "business" && <BusinessForm initial={business} isAdmin={isAdmin} />}
       {active === "config" && (
-        <ConfigForm isAdmin={isAdmin} initial={{ taxPct, enquiryStages, paymentStatuses, bookingStatuses, refundStatuses, leadSources, rentalRules: rentalRules() }} />
+        <ConfigForm isAdmin={isAdmin} initial={{ taxPct, enquiryStages, paymentStatuses, bookingStatuses, refundStatuses, leadSources, rentalRules: rules }} />
       )}
       {active === "categories" && <CategoryEditor items={categories} isAdmin={isAdmin} />}
       {active === "templates" && <TemplateEditor items={templates} isAdmin={isAdmin} />}

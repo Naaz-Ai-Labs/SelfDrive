@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getVehicles, getVehicleCategories, getBranches } from "@/lib/data";
-import { getDb } from "@/lib/db";
+import { sbSelect } from "@/lib/supabase-rest";
 import { formatINR } from "@/lib/utils";
 import { StatusBadge, EmptyState } from "@/components/ui";
 import { VehicleForm } from "@/components/dashboard/VehicleForm";
@@ -11,9 +11,9 @@ export const metadata: Metadata = { title: "Vehicles Management", robots: { inde
 export const revalidate = 0;
 
 export default async function VehiclesAdminPage() {
-  let vehicles: ReturnType<typeof getVehicles> = [];
-  let categories: ReturnType<typeof getVehicleCategories> = [];
-  let branches: ReturnType<typeof getBranches> = [];
+  let vehicles: Awaited<ReturnType<typeof getVehicles>> = [];
+  let categories: Awaited<ReturnType<typeof getVehicleCategories>> = [];
+  let branches: Awaited<ReturnType<typeof getBranches>> = [];
   let rawBookings: Array<{
     id: number;
     bookingNo: string;
@@ -24,35 +24,31 @@ export default async function VehiclesAdminPage() {
     status: string;
   }> = [];
 
-  try {
-    vehicles = getVehicles({}, false);
-    categories = getVehicleCategories(false);
-    branches = getBranches(false);
+  const [vehiclesResult, categoriesResult, branchesResult, bookingsResult] = await Promise.all([
+    getVehicles({}, false),
+    getVehicleCategories(false),
+    getBranches(false),
+    sbSelect<Record<string, unknown>>(
+      "bookings",
+      `select=id,booking_no,vehicle_id,pickup_at,return_at,status,customers(name)&status=not.${encodeURIComponent('in.("Cancelled","Draft")')}`
+    ),
+  ]);
 
-    const db = getDb();
-    const rows = (
-      db
-        .prepare(
-          `SELECT b.id, b.booking_no, b.vehicle_id, b.pickup_at, b.return_at, b.status, c.name AS customer_name
-           FROM bookings b
-           LEFT JOIN customers c ON c.id = b.customer_id
-           WHERE b.status NOT IN ('Cancelled', 'Draft')`
-        )
-        .all() as Array<Record<string, unknown>>
-    );
+  vehicles = vehiclesResult;
+  categories = categoriesResult;
+  branches = branchesResult;
 
-    rawBookings = rows.map((r) => ({
-      id: Number(r.id),
-      bookingNo: String(r.booking_no),
-      customerName: String(r.customer_name ?? "Guest"),
-      vehicleId: Number(r.vehicle_id),
-      pickupAt: String(r.pickup_at),
-      returnAt: String(r.return_at),
-      status: String(r.status),
-    }));
-  } catch (err: any) {
-    console.error("VehiclesAdminPage data load error:", err?.message || err);
-  }
+  if (!bookingsResult.ok) throw new Error(`Could not load the fleet schedule: ${bookingsResult.error}`);
+
+  rawBookings = bookingsResult.data.map((r) => ({
+    id: Number(r.id),
+    bookingNo: String(r.booking_no),
+    customerName: String((r.customers as { name?: string } | null)?.name ?? "Guest"),
+    vehicleId: Number(r.vehicle_id),
+    pickupAt: String(r.pickup_at),
+    returnAt: String(r.return_at),
+    status: String(r.status),
+  }));
 
   const ganttVehicles = vehicles.map((v) => ({
     id: v.id,

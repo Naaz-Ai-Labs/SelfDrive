@@ -28,11 +28,13 @@ export function requireGatewayKey(req: NextRequest): NextResponse | null {
   return null;
 }
 
-export function bearerCustomer(req: NextRequest): { token: string; customerId: number | null; target: string } | null {
+export async function bearerCustomer(
+  req: NextRequest
+): Promise<{ token: string; customerId: number | null; target: string } | null> {
   const auth = req.headers.get("authorization");
   const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
   if (!token) return null;
-  const session = getCustomerSession(token);
+  const session = await getCustomerSession(token);
   if (!session) return null;
   return { token, customerId: session.customerId, target: session.target };
 }

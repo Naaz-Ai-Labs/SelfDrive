@@ -55,9 +55,9 @@ export function checkVehicleAvailable(vehicleId: number, pickupAt: string, retur
 }
 
 /** Creates or reuses a customer, computes the quote, and inserts a booking in 'Pending verification' status. */
-export function createBooking(payload: BookingPayload): { bookingId: number; bookingNo: string; customerId: number } {
+export async function createBooking(payload: BookingPayload): Promise<{ bookingId: number; bookingNo: string; customerId: number }> {
   const db = getDb();
-  const vehicle = getVehicleById(payload.vehicleId);
+  const vehicle = await getVehicleById(payload.vehicleId);
   if (!vehicle) throw new Error("Vehicle not found");
 
   const pickup = new Date(payload.pickupAt);
@@ -68,11 +68,11 @@ export function createBooking(payload: BookingPayload): { bookingId: number; boo
   }
 
   const customerId = findOrCreateCustomer(payload.customer);
-  const quote = calculateQuote(vehicle, pickup, ret);
+  const quote = await calculateQuote(vehicle, pickup, ret);
   if (quote.belowWeekendMinimum) {
     throw new Error(`Weekend bookings need a minimum of ${quote.weekendMinDays} days for this vehicle.`);
   }
-  const terms = getActiveTermsVersion();
+  const terms = await getActiveTermsVersion();
   const bookingNo = nextNumber("BK", null);
   const otherFees = quote.offSchedulePickupFee + quote.gatewayFeeAmount;
 
@@ -105,7 +105,7 @@ export function createBooking(payload: BookingPayload): { bookingId: number; boo
   }
 
   try {
-    sendTemplate(
+    await sendTemplate(
       "booking_submitted",
       normalizePhone(payload.customer.phone),
       { name: payload.customer.name, booking_no: bookingNo, vehicle: vehicle.name, pickup_at: payload.pickupAt },

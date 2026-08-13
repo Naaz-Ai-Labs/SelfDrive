@@ -120,7 +120,7 @@ export async function submitBooking(input: {
   const existing = parsed.data.token ? (db.prepare("SELECT id FROM enquiries WHERE draft_token = ?").get(parsed.data.token) as { id: number } | undefined) : undefined;
 
   try {
-    const { bookingNo, bookingId, customerId } = createBooking({
+    const { bookingNo, bookingId, customerId } = await createBooking({
       vehicleId: parsed.data.vehicleId,
       pickupAt: parsed.data.pickupAt,
       returnAt: parsed.data.returnAt,
@@ -170,7 +170,7 @@ export async function getAvailableVehicles(kind: string | null, pickupAt: string
   }
 
   // Local dev: use SQLite (it has full hydrated data)
-  const vehicles = getVehicles({ kind: kind || undefined, onlyAvailable: true });
+  const vehicles = await getVehicles({ kind: kind || undefined, onlyAvailable: true });
   if (!pickupAt || !returnAt) return vehicles;
 
   const db = getDb();
@@ -305,7 +305,7 @@ export async function attachCustomerDocuments(customerId: number, bookingId: num
 
 
 export async function getQuoteEstimate(vehicleId: number, pickupAt: string, returnAt: string) {
-  const vehicle = getVehicleById(vehicleId);
+  const vehicle = await getVehicleById(vehicleId);
   if (!vehicle) return null;
   const pickup = new Date(pickupAt);
   const ret = new Date(returnAt);

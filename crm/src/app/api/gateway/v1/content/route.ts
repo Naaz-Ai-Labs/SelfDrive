@@ -14,18 +14,37 @@ export async function GET(req: NextRequest) {
   const denied = requireGatewayKey(req);
   if (denied) return denied;
 
+  // These are all async reads now. Handing the unawaited promises to
+  // NextResponse.json serialises every one of them as `{}`.
+  const [
+    business, rules, categories, vehicles, branches,
+    testimonials, gallery, faqs, staff, terms, blogPosts,
+  ] = await Promise.all([
+    businessInfo(),
+    rentalRules(),
+    getVehicleCategories(),
+    getVehicles({ onlyAvailable: true }),
+    getBranches(),
+    getTestimonials(),
+    getGallery(),
+    getFaqs(),
+    getStaff(),
+    getActiveTermsVersion(),
+    getBlogPosts(),
+  ]);
+
   return NextResponse.json({
-    business: businessInfo(),
-    rentalRules: rentalRules(),
-    categories: getVehicleCategories(),
-    vehicles: getVehicles({ onlyAvailable: true }),
-    branches: getBranches(),
-    testimonials: getTestimonials(),
-    gallery: getGallery(),
-    faqs: getFaqs(),
-    staff: getStaff(),
-    terms: getActiveTermsVersion(),
-    blogPosts: getBlogPosts(),
+    business,
+    rentalRules: rules,
+    categories,
+    vehicles,
+    branches,
+    testimonials,
+    gallery,
+    faqs,
+    staff,
+    terms,
+    blogPosts,
   });
 }
 

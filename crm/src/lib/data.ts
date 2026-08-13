@@ -1,5 +1,14 @@
-import { getDb } from "./db";
-import { getDynamicRate24h } from "./pricing";
+/**
+ * Read models for CRM content: fleet, categories, branches and website content.
+ *
+ * Every read goes straight to Supabase. There is no local mirror and no hardcoded
+ * fallback inventory: the previous version answered a failed query with a canned
+ * seventeen-vehicle array, so an unreachable database looked exactly like a healthy
+ * one — right down to prices customers could book against. A read that fails now
+ * throws, and the dashboard error boundary shows it.
+ */
+
+import { sbSelect, sbSelectOne, num } from "./supabase-rest";
 
 export type VehicleCategory = {
   id: number;
@@ -73,64 +82,134 @@ const DEFAULT_SLUG_PHOTOS: Record<string, string> = {
   "tempo-traveller-2days": "/vehicles/cta-tempo-banner.jpg",
 };
 
-function attachPhotos(vehicle: Record<string, unknown>): Vehicle {
-  const db = getDb();
-  const rawPhotos = db
-    .prepare("SELECT url FROM vehicle_photos WHERE vehicle_id = ? ORDER BY is_primary DESC, sort")
-    .all(vehicle.id as number) as Array<{ url: string }>;
+/** A booking in one of these states is holding a unit, so it reduces availability. */
+const HOLDING_STATUSES = [
+  "Confirmed",
+  "Vehicle handed over",
+  "Active rental",
+  "Pending verification",
+  "Enquiry",
+  "Draft",
+];
 
-  const slug = String(vehicle.slug ?? "");
-  const fallbackPhoto = DEFAULT_SLUG_PHOTOS[slug] || "/vehicles/baleno-manual.avif";
-  const photoUrls = rawPhotos.length > 0 ? rawPhotos.map((p) => p.url) : [fallbackPhoto];
-
-  const booked = db
-    .prepare(
-      `SELECT COUNT(*) AS c FROM bookings
-       WHERE vehicle_id = ?
-         AND status IN ('Confirmed', 'Vehicle handed over', 'Active rental', 'Pending verification', 'Enquiry', 'Draft')
-         AND datetime(return_at) >= datetime('now')`
-    )
-    .get(vehicle.id as number) as { c: number } | undefined;
-
-  const totalUnits = Number(vehicle.total_units ?? 1);
-  const bookedCount = booked?.c ?? 0;
-  const availableUnits = Math.max(0, totalUnits - bookedCount);
-
-  const baseRate24h = Number(vehicle.rate_24h ?? 0);
-  const weekendRate24h = Math.max(baseRate24h + 50, Number(vehicle.weekend_rate_24h ?? (baseRate24h + 50)));
-
-  return {
-    ...(vehicle as unknown as Vehicle),
-    rate_24h: baseRate24h,
-    weekend_rate_24h: weekendRate24h,
-    total_units: totalUnits,
-    available_units: availableUnits,
-    photos: photoUrls,
-    primary_photo: photoUrls[0] ?? fallbackPhoto,
-  };
+/** Builds a PostgREST `in.(…)` predicate; values are quoted so spaces survive. */
+function inList(values: Array<string | number>): string {
+  return `in.(${values.map((v) => (typeof v === "number" ? String(v) : `"${v}"`)).join(",")})`;
 }
 
-export function getVehicleCategories(onlyActive = true): VehicleCategory[] {
-  try {
-    const rows = getDb()
-      .prepare(`SELECT * FROM vehicle_categories ${onlyActive ? "WHERE active = 1" : ""} ORDER BY sort, name`)
-      .all() as Array<Record<string, unknown>>;
-    if (rows.length > 0) return rows.map((r) => ({ ...r })) as unknown as VehicleCategory[];
-  } catch {}
-  return [
-    { id: 1, name: "Cars", slug: "cars", kind: "car", description: "Hatchbacks, Sedans & SUVs", icon: "car", sort: 1, active: 1 },
-    { id: 2, name: "Bikes", slug: "bikes", kind: "bike", description: "Cruisers & Commuters", icon: "bike", sort: 2, active: 1 },
-    { id: 3, name: "Scooters", slug: "scooters", kind: "scooter", description: "Gearless Scooters", icon: "scooter", sort: 3, active: 1 },
-    { id: 4, name: "Tempo Traveller", slug: "tempo-traveller", kind: "van", description: "Group Tour Vans", icon: "van", sort: 4, active: 1 },
-  ] as VehicleCategory[];
+type RawVehicle = Record<string, unknown> & {
+  id: number;
+  vehicle_categories?: { name: string; kind: string; slug: string } | null;
+  branches?: { name: string } | null;
+};
+
+const VEHICLE_EMBED = "*,vehicle_categories(name,kind,slug),branches(name)";
+const VEHICLE_EMBED_INNER = "*,vehicle_categories!inner(name,kind,slug),branches(name)";
+
+/**
+ * Attaches photos and live availability to raw vehicle rows.
+ *
+ * Batched deliberately: the SQLite version ran two queries per vehicle, which over
+ * HTTP would be forty round trips to render the fleet page.
+ */
+async function hydrateVehicles(rows: RawVehicle[]): Promise<Vehicle[]> {
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
+  const idPredicate = encodeURIComponent(inList(ids));
+  const nowIso = new Date().toISOString();
+
+  const [photosRes, holdsRes] = await Promise.all([
+    sbSelect<{ vehicle_id: number; url: string }>(
+      "vehicle_photos",
+      `select=vehicle_id,url&vehicle_id=${idPredicate}&order=is_primary.desc,sort.asc`
+    ),
+    sbSelect<{ vehicle_id: number }>(
+      "bookings",
+      `select=vehicle_id&vehicle_id=${idPredicate}&status=${encodeURIComponent(inList(HOLDING_STATUSES))}&return_at=gte.${encodeURIComponent(nowIso)}`
+    ),
+  ]);
+
+  if (!photosRes.ok) throw new Error(`Could not load vehicle photos: ${photosRes.error}`);
+  if (!holdsRes.ok) throw new Error(`Could not load vehicle availability: ${holdsRes.error}`);
+
+  const photosByVehicle = new Map<number, string[]>();
+  for (const photo of photosRes.data) {
+    const list = photosByVehicle.get(Number(photo.vehicle_id)) ?? [];
+    list.push(photo.url);
+    photosByVehicle.set(Number(photo.vehicle_id), list);
+  }
+
+  const holdsByVehicle = new Map<number, number>();
+  for (const hold of holdsRes.data) {
+    const key = Number(hold.vehicle_id);
+    holdsByVehicle.set(key, (holdsByVehicle.get(key) ?? 0) + 1);
+  }
+
+  return rows.map((row) => {
+    const id = Number(row.id);
+    const slug = String(row.slug ?? "");
+    const fallbackPhoto = DEFAULT_SLUG_PHOTOS[slug] || "/vehicles/baleno-manual.avif";
+    const photoUrls = photosByVehicle.get(id) ?? [];
+    const photos = photoUrls.length > 0 ? photoUrls : [fallbackPhoto];
+
+    const totalUnits = num(row.total_units, 1);
+    const availableUnits = Math.max(0, totalUnits - (holdsByVehicle.get(id) ?? 0));
+
+    // PostgREST hands back NUMERIC as a string. Without num() every one of these
+    // becomes string concatenation the moment a quote is calculated.
+    const baseRate24h = num(row.rate_24h);
+    const weekendRate24h = Math.max(baseRate24h + 50, num(row.weekend_rate_24h, baseRate24h + 50));
+
+    const { vehicle_categories: category, branches: branch, ...rest } = row;
+
+    return {
+      ...(rest as unknown as Vehicle),
+      id,
+      slug,
+      category_id: row.category_id === null || row.category_id === undefined ? null : Number(row.category_id),
+      category_name: category?.name ?? null,
+      category_kind: category?.kind ?? null,
+      category_slug: category?.slug ?? null,
+      branch_id: row.branch_id === null || row.branch_id === undefined ? null : Number(row.branch_id),
+      branch_name: branch?.name ?? null,
+      year: row.year === null || row.year === undefined ? null : Number(row.year),
+      cc: row.cc === null || row.cc === undefined ? null : Number(row.cc),
+      seats: num(row.seats, 2),
+      included_km: num(row.included_km, 100),
+      extra_km_rate: num(row.extra_km_rate),
+      rate_12h: num(row.rate_12h),
+      rate_24h: baseRate24h,
+      hourly_rate: num(row.hourly_rate),
+      weekend_rate_24h: weekendRate24h,
+      deposit: num(row.deposit),
+      late_fee_per_hour: num(row.late_fee_per_hour),
+      total_units: totalUnits,
+      available_units: availableUnits,
+      active: num(row.active, 1),
+      photos,
+      primary_photo: photos[0] ?? fallbackPhoto,
+    };
+  });
 }
 
-export function getVehicleCategory(slug: string): VehicleCategory | null {
-  try {
-    const row = getDb().prepare("SELECT * FROM vehicle_categories WHERE slug = ? AND active = 1").get(slug) as VehicleCategory | undefined;
-    if (row) return row;
-  } catch {}
-  return getVehicleCategories().find((c) => c.slug === slug) ?? null;
+export async function getVehicleCategories(onlyActive = true): Promise<VehicleCategory[]> {
+  const res = await sbSelect<VehicleCategory>(
+    "vehicle_categories",
+    `select=*${onlyActive ? "&active=eq.1" : ""}&order=sort.asc,name.asc`
+  );
+  if (!res.ok) throw new Error(`Could not load vehicle categories: ${res.error}`);
+  return res.data.map((row) => ({ ...row, active: num(row.active, 1), sort: num(row.sort) }));
+}
+
+export async function getVehicleCategory(slug: string): Promise<VehicleCategory | null> {
+  const res = await sbSelectOne<VehicleCategory>(
+    "vehicle_categories",
+    `select=*&slug=eq.${encodeURIComponent(slug)}&active=eq.1`
+  );
+  if (!res.ok) throw new Error(`Could not load vehicle category "${slug}": ${res.error}`);
+  if (!res.data) return null;
+  return { ...res.data, active: num(res.data.active, 1), sort: num(res.data.sort) };
 }
 
 export type VehicleFilters = {
@@ -143,168 +222,118 @@ export type VehicleFilters = {
   onlyAvailable?: boolean;
 };
 
-const FALLBACK_VEHICLES: Vehicle[] = [
-  // Scooters (Category 3)
-  { id: 1, slug: "honda-dio", name: "Honda Dio", brand: "Honda", model: "Dio", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-1234", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "45 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 3, available_units: 3, description: "Light, easy-to-ride scooter.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-dio.avif"], primary_photo: "/vehicles/honda-dio.avif" },
-  { id: 2, slug: "honda-activa", name: "Honda Activa 6G", brand: "Honda", model: "Activa 6G", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-5678", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "50 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 4, available_units: 4, description: "Automatic, light and simple to ride.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-activa.webp"], primary_photo: "/vehicles/honda-activa.webp" },
-  { id: 3, slug: "tvs-jupiter", name: "TVS Jupiter", brand: "TVS", model: "Jupiter", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-9012", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "50 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 3, available_units: 3, description: "Smooth ride with high comfort.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-jupiter.webp"], primary_photo: "/vehicles/tvs-jupiter.webp" },
-  { id: 4, slug: "yamaha-rayzr", name: "Yamaha RayZR", brand: "Yamaha", model: "RayZR", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-3456", cc: 125, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "52 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 550, rate_24h: 950, hourly_rate: 100, weekend_rate_24h: 1000, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Sporty 125cc scooter.", terms: null, status: "available", active: 1, photos: ["/vehicles/yamaha-rayzr.avif"], primary_photo: "/vehicles/yamaha-rayzr.avif" },
-  { id: 5, slug: "tvs-ntorq", name: "TVS NTorq 125", brand: "TVS", model: "NTorq", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-7890", cc: 125, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "45 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 600, rate_24h: 1000, hourly_rate: 110, weekend_rate_24h: 1050, deposit: 1000, late_fee_per_hour: 100, total_units: 3, available_units: 3, description: "Performance scooter with bluetooth console.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-ntorq.webp"], primary_photo: "/vehicles/tvs-ntorq.webp" },
+export async function getVehicles(filters: VehicleFilters = {}, onlyActive = true): Promise<Vehicle[]> {
+  // Filtering on an embedded table requires an inner join, but forcing one
+  // unconditionally would hide every vehicle whose category was deleted.
+  const needsCategoryJoin = Boolean(filters.categorySlug || filters.kind);
+  const parts = [`select=${needsCategoryJoin ? VEHICLE_EMBED_INNER : VEHICLE_EMBED}`];
 
-  // Bikes (Category 2)
-  { id: 6, slug: "tvs-ronin", name: "TVS Ronin 225", brand: "TVS", model: "Ronin", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-9012", cc: 225, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "35 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 1000, rate_24h: 1800, hourly_rate: 150, weekend_rate_24h: 1850, deposit: 1000, late_fee_per_hour: 120, total_units: 2, available_units: 2, description: "Modern cruiser styling.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-ronin.avif"], primary_photo: "/vehicles/tvs-ronin.avif" },
-  { id: 7, slug: "honda-cb200x", name: "Honda CB200X", brand: "Honda", model: "CB200X", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-3456", cc: 184, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "38 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 1000, rate_24h: 1800, hourly_rate: 150, weekend_rate_24h: 1850, deposit: 1000, late_fee_per_hour: 120, total_units: 2, available_units: 2, description: "Adventure-styled bike.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-cb200x.jpg"], primary_photo: "/vehicles/honda-cb200x.jpg" },
-  { id: 8, slug: "tvs-raider", name: "TVS Raider 125", brand: "TVS", model: "Raider", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-1122", cc: 125, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "55 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 700, rate_24h: 1200, hourly_rate: 110, weekend_rate_24h: 1250, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Sleek commuter bike.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-radar.avif"], primary_photo: "/vehicles/tvs-radar.avif" },
-  { id: 9, slug: "bajaj-pulsar-ns", name: "Bajaj Pulsar NS200", brand: "Bajaj", model: "Pulsar NS", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-3344", cc: 200, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "35 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 800, rate_24h: 1300, hourly_rate: 120, weekend_rate_24h: 1350, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Naked streetfighter performance.", terms: null, status: "available", active: 1, photos: ["/vehicles/bajaj-pulsar-ns.png"], primary_photo: "/vehicles/bajaj-pulsar-ns.png" },
-  { id: 10, slug: "honda-shine", name: "Honda Shine 125", brand: "Honda", model: "Shine", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-5566", cc: 125, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "55 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 600, rate_24h: 1000, hourly_rate: 100, weekend_rate_24h: 1050, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Reliable and comfortable commuter.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-shine.avif"], primary_photo: "/vehicles/honda-shine.avif" },
+  if (onlyActive) parts.push("active=eq.1");
+  if (filters.categorySlug) parts.push(`vehicle_categories.slug=eq.${encodeURIComponent(filters.categorySlug)}`);
+  if (filters.kind) parts.push(`vehicle_categories.kind=eq.${encodeURIComponent(filters.kind)}`);
+  if (filters.minSeats) parts.push(`seats=gte.${filters.minSeats}`);
+  if (filters.transmission) parts.push(`transmission=eq.${encodeURIComponent(filters.transmission)}`);
+  if (filters.fuelType) parts.push(`fuel_type=eq.${encodeURIComponent(filters.fuelType)}`);
+  if (filters.maxPrice) parts.push(`rate_24h=lte.${filters.maxPrice}`);
+  if (filters.onlyAvailable) parts.push("status=eq.available");
+  parts.push("order=rate_24h.asc");
 
-  // Cars (Category 1) — ALL 7 CARS
-  { id: 11, slug: "maruti-baleno-manual", name: "Maruti Suzuki Baleno", brand: "Maruti Suzuki", model: "Baleno", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-7890", cc: 1197, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "21 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2000, rate_24h: 3500, hourly_rate: 200, weekend_rate_24h: 3550, deposit: 2000, late_fee_per_hour: 150, total_units: 2, available_units: 2, description: "Comfortable premium hatchback.", terms: null, status: "available", active: 1, photos: ["/vehicles/baleno-manual.avif"], primary_photo: "/vehicles/baleno-manual.avif" },
-  { id: 13, slug: "maruti-dzire", name: "Maruti Dzire", brand: "Maruti Suzuki", model: "Dzire", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-1122", cc: 1197, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "23 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2000, rate_24h: 3500, hourly_rate: 200, weekend_rate_24h: 3550, deposit: 2000, late_fee_per_hour: 150, total_units: 2, available_units: 2, description: "Fuel-efficient compact sedan.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-dzire.avif"], primary_photo: "/vehicles/maruti-dzire.avif" },
-  { id: 14, slug: "maruti-ciaz", name: "Maruti Ciaz", brand: "Maruti Suzuki", model: "Ciaz", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-3344", cc: 1462, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "20 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2400, rate_24h: 4000, hourly_rate: 240, weekend_rate_24h: 4050, deposit: 2500, late_fee_per_hour: 180, total_units: 1, available_units: 1, description: "Spacious premium sedan for highway trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-ciaz.jpg"], primary_photo: "/vehicles/maruti-ciaz.jpg" },
-  { id: 15, slug: "maruti-ertiga-7-seater", name: "Maruti Ertiga 7 Seater", brand: "Maruti Suzuki", model: "Ertiga", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-5566", cc: 1462, fuel_type: "Petrol", transmission: "Manual", seats: 7, mileage: "19 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2800, rate_24h: 4500, hourly_rate: 280, weekend_rate_24h: 4550, deposit: 3000, late_fee_per_hour: 200, total_units: 1, available_units: 1, description: "Spacious 7-seater MPV for family trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-ertiga.avif"], primary_photo: "/vehicles/maruti-ertiga.avif" },
-  { id: 16, slug: "mahindra-thar-manual", name: "Mahindra Thar 4x4", brand: "Mahindra", model: "Thar", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-9999", cc: 2184, fuel_type: "Diesel", transmission: "Manual", seats: 4, mileage: "15 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 3000, rate_24h: 5000, hourly_rate: 300, weekend_rate_24h: 5500, deposit: 3000, late_fee_per_hour: 250, total_units: 1, available_units: 1, description: "Iconic 4x4 SUV for offroad exploration.", terms: null, status: "available", active: 1, photos: ["/vehicles/mahindra-thar.avif"], primary_photo: "/vehicles/mahindra-thar.avif" },
+  const res = await sbSelect<RawVehicle>("vehicles", parts.join("&"));
+  if (!res.ok) throw new Error(`Could not load vehicles: ${res.error}`);
+  return hydrateVehicles(res.data);
+}
 
-  // Tempo Traveller (Category 4)
-  { id: 18, slug: "tempo-traveller-12", name: "Tempo Traveller — Sakleshpura Sightseeing", brand: "Force Motors", model: "Traveller", year: 2023, category_id: 4, category_name: "Tempo Traveller", category_kind: "van", category_slug: "tempo-traveller", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-V-1212", cc: 2596, fuel_type: "Diesel", transmission: "Manual", seats: 12, mileage: "12 km/l", included_km: 999, extra_km_rate: 0, rate_12h: 8000, rate_24h: 12000, hourly_rate: 500, weekend_rate_24h: 12050, deposit: 2000, late_fee_per_hour: 250, total_units: 1, available_units: 1, description: "Chauffeur driven 12 seater for day trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/tempo-traveller.jpg"], primary_photo: "/vehicles/tempo-traveller.jpg" },
-  { id: 19, slug: "tempo-traveller-2days", name: "Tempo Traveller — Sakleshpura & Chikmagalur (2 Days)", brand: "Force Motors", model: "Traveller", year: 2023, category_id: 4, category_name: "Tempo Traveller", category_kind: "van", category_slug: "tempo-traveller", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-V-1213", cc: 2596, fuel_type: "Diesel", transmission: "Manual", seats: 12, mileage: "12 km/l", included_km: 999, extra_km_rate: 0, rate_12h: 8000, rate_24h: 12000, hourly_rate: 500, weekend_rate_24h: 12050, deposit: 2000, late_fee_per_hour: 250, total_units: 1, available_units: 1, description: "Chauffeur driven 12 seater for 2-day hill station tours.", terms: null, status: "available", active: 1, photos: ["/vehicles/cta-tempo-banner.jpg"], primary_photo: "/vehicles/cta-tempo-banner.jpg" },
-];
+export async function getVehicle(slug: string): Promise<Vehicle | null> {
+  const res = await sbSelect<RawVehicle>(
+    "vehicles",
+    `select=${VEHICLE_EMBED}&slug=eq.${encodeURIComponent(slug)}&active=eq.1&limit=1`
+  );
+  if (!res.ok) throw new Error(`Could not load vehicle "${slug}": ${res.error}`);
+  const hydrated = await hydrateVehicles(res.data);
+  return hydrated[0] ?? null;
+}
 
-export function getVehicles(filters: VehicleFilters = {}, onlyActive = true): Vehicle[] {
+export async function getVehicleById(idOrSlug: number | string): Promise<Vehicle | null> {
+  const asText = String(idOrSlug);
+  const asNumber = Number(idOrSlug);
+
+  // `id.eq.<non-numeric>` is a hard PostgREST error, so only ask about the id
+  // column when the input could actually be one.
+  const predicates = [`slug.eq.${asText}`, `registration_no.eq.${asText}`];
+  if (Number.isInteger(asNumber) && asNumber > 0) predicates.unshift(`id.eq.${asNumber}`);
+
+  const res = await sbSelect<RawVehicle>(
+    "vehicles",
+    `select=${VEHICLE_EMBED}&or=${encodeURIComponent(`(${predicates.join(",")})`)}&limit=1`
+  );
+  if (!res.ok) throw new Error(`Could not load vehicle "${asText}": ${res.error}`);
+  const hydrated = await hydrateVehicles(res.data);
+  return hydrated[0] ?? null;
+}
+
+export async function getBranches(onlyActive = true): Promise<Branch[]> {
+  const res = await sbSelect<Branch>("branches", `select=*${onlyActive ? "&active=eq.1" : ""}&order=name.asc`);
+  if (!res.ok) throw new Error(`Could not load branches: ${res.error}`);
+  return res.data.map((row) => ({ ...row, active: num(row.active, 1) }));
+}
+
+export async function getTestimonials(): Promise<Array<Record<string, unknown>>> {
+  const res = await sbSelect("testimonials", "select=*&active=eq.1&order=sort.asc,id.desc");
+  if (!res.ok) throw new Error(`Could not load testimonials: ${res.error}`);
+  return res.data;
+}
+
+export async function getGallery(): Promise<Array<Record<string, unknown>>> {
+  const res = await sbSelect("gallery", "select=*&active=eq.1&order=sort.asc,id.desc");
+  if (!res.ok) throw new Error(`Could not load gallery: ${res.error}`);
+  return res.data;
+}
+
+export async function getFaqs(): Promise<Array<Record<string, unknown>>> {
+  const res = await sbSelect("faqs", "select=*&active=eq.1&order=sort.asc,id.asc");
+  if (!res.ok) throw new Error(`Could not load FAQs: ${res.error}`);
+  return res.data;
+}
+
+export async function getBlogPosts(publishedOnly = true): Promise<Array<Record<string, unknown>>> {
+  const res = await sbSelect(
+    "blog_posts",
+    `select=id,slug,title,excerpt,author,created_at${publishedOnly ? "&published=eq.1" : ""}&order=created_at.desc`
+  );
+  if (!res.ok) throw new Error(`Could not load blog posts: ${res.error}`);
+  return res.data;
+}
+
+export async function getBlogPost(slug: string): Promise<Record<string, unknown> | null> {
+  const res = await sbSelectOne("blog_posts", `select=*&slug=eq.${encodeURIComponent(slug)}&published=eq.1`);
+  if (!res.ok) throw new Error(`Could not load blog post "${slug}": ${res.error}`);
+  return res.data;
+}
+
+export type StaffMember = { id: number; name: string; email: string; role: string; phone: string | null; is_active: number };
+
+export async function getStaff(): Promise<StaffMember[]> {
+  const res = await sbSelect<StaffMember>(
+    "users",
+    "select=id,name,email,role,phone,is_active&is_active=eq.1&order=role.asc,name.asc"
+  );
+  if (!res.ok) throw new Error(`Could not load staff: ${res.error}`);
+  return res.data.map((row) => ({ ...row, id: Number(row.id), is_active: num(row.is_active, 1) }));
+}
+
+export async function getActiveTermsVersion(): Promise<{ id: number; version: number; content: string[] } | null> {
+  const res = await sbSelectOne<{ id: number; version: number; content: string }>(
+    "terms_versions",
+    "select=id,version,content&active=eq.1&order=version.desc"
+  );
+  if (!res.ok) throw new Error(`Could not load terms: ${res.error}`);
+  if (!res.data) return null;
+
+  const row = res.data;
   try {
-    const db = getDb();
-    const clauses: string[] = [];
-    const params: Array<string | number> = [];
-    if (onlyActive) clauses.push("v.active = 1");
-    if (filters.categorySlug) {
-      clauses.push("c.slug = ?");
-      params.push(filters.categorySlug);
-    }
-    if (filters.kind) {
-      clauses.push("c.kind = ?");
-      params.push(filters.kind);
-    }
-    if (filters.minSeats) {
-      clauses.push("v.seats >= ?");
-      params.push(filters.minSeats);
-    }
-    if (filters.transmission) {
-      clauses.push("v.transmission = ?");
-      params.push(filters.transmission);
-    }
-    if (filters.fuelType) {
-      clauses.push("v.fuel_type = ?");
-      params.push(filters.fuelType);
-    }
-    if (filters.maxPrice) {
-      clauses.push("v.rate_24h <= ?");
-      params.push(filters.maxPrice);
-    }
-    if (filters.onlyAvailable) {
-      clauses.push("v.status = 'available'");
-    }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = db
-      .prepare(
-        `SELECT v.*, c.name AS category_name, c.kind AS category_kind, c.slug AS category_slug, b.name AS branch_name
-         FROM vehicles v
-         LEFT JOIN vehicle_categories c ON c.id = v.category_id
-         LEFT JOIN branches b ON b.id = v.branch_id
-         ${where}
-         ORDER BY v.rate_24h ASC`
-      )
-      .all(...params) as Array<Record<string, unknown>>;
-    if (rows && rows.length > 0) {
-      return rows.map(attachPhotos);
-    }
-  } catch (err: any) {
-    console.warn("getVehicles SQLite error:", err?.message || err);
-  }
-  return FALLBACK_VEHICLES;
-}
-
-export function getVehicle(slug: string): Vehicle | null {
-  try {
-    const row = getDb()
-      .prepare(
-        `SELECT v.*, c.name AS category_name, c.kind AS category_kind, c.slug AS category_slug, b.name AS branch_name
-         FROM vehicles v
-         LEFT JOIN vehicle_categories c ON c.id = v.category_id
-         LEFT JOIN branches b ON b.id = v.branch_id
-         WHERE v.slug = ? AND v.active = 1`
-      )
-      .get(slug) as Record<string, unknown> | undefined;
-    if (row) return attachPhotos(row);
-  } catch {}
-  return getVehicles().find((v) => v.slug === slug) ?? null;
-}
-
-export function getVehicleById(idOrSlug: number | string): Vehicle | null {
-  try {
-    const num = Number(idOrSlug);
-    const row = getDb()
-      .prepare(
-        `SELECT v.*, c.name AS category_name, c.kind AS category_kind, c.slug AS category_slug, b.name AS branch_name
-         FROM vehicles v
-         LEFT JOIN vehicle_categories c ON c.id = v.category_id
-         LEFT JOIN branches b ON b.id = v.branch_id
-         WHERE v.id = ? OR v.slug = ? OR v.registration_no = ?`
-      )
-      .get(num || 0, String(idOrSlug), String(idOrSlug)) as Record<string, unknown> | undefined;
-    if (row) return attachPhotos(row);
-  } catch {}
-  const numId = Number(idOrSlug);
-  return getVehicles({}, false).find((v) => v.id === numId || v.slug === String(idOrSlug)) ?? null;
-}
-
-export function getBranches(onlyActive = true): Branch[] {
-  try {
-    const rows = getDb()
-      .prepare(`SELECT * FROM branches ${onlyActive ? "WHERE active = 1" : ""} ORDER BY name`)
-      .all() as Array<Record<string, unknown>>;
-    if (rows && rows.length > 0) return rows.map((r) => ({ ...r })) as unknown as Branch[];
-  } catch {}
-  return [{ id: 1, name: "Sakleshpura Main Branch", city: "Sakleshpura", address: "BM Road, Sakleshpura", phone: "+91 94801 23456", active: 1 }];
-}
-
-export function getTestimonials(): Array<Record<string, unknown>> {
-  return getDb().prepare("SELECT * FROM testimonials WHERE active = 1 ORDER BY sort, id DESC").all() as Array<Record<string, unknown>>;
-}
-
-export function getGallery(): Array<Record<string, unknown>> {
-  return getDb().prepare("SELECT * FROM gallery WHERE active = 1 ORDER BY sort, id DESC").all() as Array<Record<string, unknown>>;
-}
-
-export function getFaqs(): Array<Record<string, unknown>> {
-  return getDb().prepare("SELECT * FROM faqs WHERE active = 1 ORDER BY sort, id").all() as Array<Record<string, unknown>>;
-}
-
-export function getBlogPosts(publishedOnly = true): Array<Record<string, unknown>> {
-  return getDb()
-    .prepare(`SELECT id, slug, title, excerpt, author, created_at FROM blog_posts ${publishedOnly ? "WHERE published = 1" : ""} ORDER BY created_at DESC`)
-    .all() as Array<Record<string, unknown>>;
-}
-
-export function getBlogPost(slug: string): Record<string, unknown> | null {
-  const row = getDb().prepare("SELECT * FROM blog_posts WHERE slug = ? AND published = 1").get(slug) as Record<string, unknown> | undefined;
-  return row ?? null;
-}
-
-export function getStaff(): Array<{ id: number; name: string; email: string; role: string; phone: string | null; is_active: number }> {
-  return (getDb()
-    .prepare("SELECT id, name, email, role, phone, is_active FROM users WHERE is_active = 1 ORDER BY role, name")
-    .all() as Array<Record<string, unknown>>).map((r) => ({ ...r })) as Array<{ id: number; name: string; email: string; role: string; phone: string | null; is_active: number }>;
-}
-
-export function getActiveTermsVersion(): { id: number; version: number; content: string[] } | null {
-  const row = getDb().prepare("SELECT * FROM terms_versions WHERE active = 1 ORDER BY version DESC LIMIT 1").get() as
-    | { id: number; version: number; content: string }
-    | undefined;
-  if (!row) return null;
-  try {
-    return { id: row.id, version: row.version, content: JSON.parse(row.content) as string[] };
+    return { id: Number(row.id), version: Number(row.version), content: JSON.parse(row.content) as string[] };
   } catch {
-    return { id: row.id, version: row.version, content: [] };
+    return { id: Number(row.id), version: Number(row.version), content: [] };
   }
 }
 
@@ -316,7 +345,7 @@ export async function getVehiclesCached(filters: VehicleFilters = {}, onlyActive
   const cached = await cacheGet<Vehicle[]>(cacheKey);
   if (cached) return cached;
 
-  const fresh = getVehicles(filters, onlyActive);
+  const fresh = await getVehicles(filters, onlyActive);
   await cacheSet(cacheKey, fresh, 600);
   return fresh;
 }
@@ -326,7 +355,7 @@ export async function getVehicleCategoriesCached(onlyActive = true): Promise<Veh
   const cached = await cacheGet<VehicleCategory[]>(cacheKey);
   if (cached) return cached;
 
-  const fresh = getVehicleCategories(onlyActive);
+  const fresh = await getVehicleCategories(onlyActive);
   await cacheSet(cacheKey, fresh, 3600);
   return fresh;
 }
@@ -336,7 +365,7 @@ export async function getTestimonialsCached(): Promise<Array<Record<string, unkn
   const cached = await cacheGet<Array<Record<string, unknown>>>(cacheKey);
   if (cached) return cached;
 
-  const fresh = getTestimonials();
+  const fresh = await getTestimonials();
   await cacheSet(cacheKey, fresh, 3600);
   return fresh;
 }
@@ -346,7 +375,7 @@ export async function getFaqsCached(): Promise<Array<Record<string, unknown>>> {
   const cached = await cacheGet<Array<Record<string, unknown>>>(cacheKey);
   if (cached) return cached;
 
-  const fresh = getFaqs();
+  const fresh = await getFaqs();
   await cacheSet(cacheKey, fresh, 3600);
   return fresh;
 }

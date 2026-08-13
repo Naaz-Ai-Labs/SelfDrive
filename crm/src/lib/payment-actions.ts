@@ -205,7 +205,11 @@ export async function verifyBookingPayment(input: {
   );
   syncEntityToSupabase("booking_history", Number(histRes.lastInsertRowid)).catch(() => {});
   logActivity(null, "payment_verified", "payment", payment.id, { amount: payment.amount, razorpay_payment_id: input.razorpayPaymentId });
-  const invoice = generateInvoiceForBooking(payment.booking_id);
+  // Invoicing must never block a verified payment from being recorded.
+  const invoice = await generateInvoiceForBooking(payment.booking_id).catch((err) => {
+    console.error("[payments] invoice generation failed", err);
+    return null;
+  });
 
   const booking = db
     .prepare(`SELECT b.booking_no, b.pickup_at, c.name, c.phone, v.name AS vehicle_name FROM bookings b
@@ -214,9 +218,11 @@ export async function verifyBookingPayment(input: {
 
   if (booking && booking.phone) {
     try {
-      sendTemplate("payment_receipt", booking.phone, { name: booking.name ?? "", amount: `₹${payment.amount.toLocaleString("en-IN")}`, reference: input.razorpayPaymentId, receipt_no: receiptNo, booking_no: booking.booking_no }, null, payment.booking_id);
-      sendTemplate("booking_confirmation", booking.phone, { name: booking.name ?? "", booking_no: booking.booking_no, vehicle: booking.vehicle_name ?? "", pickup_at: booking.pickup_at, location: "" }, null, payment.booking_id);
-      sendTemplate("invoice_generated", booking.phone, { name: booking.name ?? "", invoice_no: invoice.invoiceNo, booking_no: booking.booking_no, total: `₹${payment.amount.toLocaleString("en-IN")}` }, null, payment.booking_id);
+      await sendTemplate("payment_receipt", booking.phone, { name: booking.name ?? "", amount: `₹${payment.amount.toLocaleString("en-IN")}`, reference: input.razorpayPaymentId, receipt_no: receiptNo, booking_no: booking.booking_no }, null, payment.booking_id);
+      await sendTemplate("booking_confirmation", booking.phone, { name: booking.name ?? "", booking_no: booking.booking_no, vehicle: booking.vehicle_name ?? "", pickup_at: booking.pickup_at, location: "" }, null, payment.booking_id);
+      if (invoice) {
+        await sendTemplate("invoice_generated", booking.phone, { name: booking.name ?? "", invoice_no: invoice.invoiceNo, booking_no: booking.booking_no, total: `₹${payment.amount.toLocaleString("en-IN")}` }, null, payment.booking_id);
+      }
     } catch {
       // best-effort — messaging must never block a verified payment from being recorded
     }

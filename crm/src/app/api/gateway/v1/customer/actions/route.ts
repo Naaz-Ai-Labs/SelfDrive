@@ -23,7 +23,7 @@ function ownedBooking(customerId: number | null, bookingId: number) {
 export async function POST(req: NextRequest) {
   const denied = requireGatewayKey(req);
   if (denied) return denied;
-  const customer = bearerCustomer(req);
+  const customer = await bearerCustomer(req);
   if (!customer) return NextResponse.json({ error: "Please log in first." }, { status: 401 });
 
   const body = await req.json().catch(() => null);
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     let refundNo: string | null = null;
     if (result.booking.paid_amount > 0) {
-      const refund = calculateCancellationRefund(pickupAt, now, result.booking.paid_amount);
+      const refund = await calculateCancellationRefund(pickupAt, now, result.booking.paid_amount);
       refundNo = nextNumber("RF", null);
       db.prepare(
         `INSERT INTO refunds (refund_no, booking_id, customer_id, reason, requested_amount, approved_amount, status, admin_notes, approved_at)
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
       .get(result.booking.id) as { name: string | null; phone: string | null; booking_no: string } | undefined;
     if (customerRow?.phone) {
       try {
-        sendTemplate("problem_ticket_created", customerRow.phone, { name: customerRow.name ?? "", category: String(body.category ?? "other").replace("_", " "), booking_no: customerRow.booking_no }, null, result.booking.id);
+        await sendTemplate("problem_ticket_created", customerRow.phone, { name: customerRow.name ?? "", category: String(body.category ?? "other").replace("_", " "), booking_no: customerRow.booking_no }, null, result.booking.id);
       } catch {
         // best-effort — ticket is already recorded regardless
       }

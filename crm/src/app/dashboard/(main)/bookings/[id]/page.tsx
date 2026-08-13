@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getDb } from "@/lib/db";
-import { syncLatestFromSupabase } from "@/lib/hydrate-db";
+import { sbSelect, num } from "@/lib/supabase-rest";
 import { getSetting } from "@/lib/settings";
 import { getStaff } from "@/lib/data";
 import { formatDateTime, formatINR, waLink } from "@/lib/utils";
@@ -20,69 +19,97 @@ export const revalidate = 0;
 
 export default async function BookingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: paramId } = await params;
-  const db = getDb();
-  try {
-    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
-  } catch {}
   const numId = Number(paramId);
 
-  const rawBooking = db
-    .prepare(
-      `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
-              v.name AS vehicle_name, v.registration_no, v.deposit AS vehicle_deposit
-       FROM bookings b
-       LEFT JOIN customers c ON c.id = b.customer_id
-       LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       WHERE b.id = ? OR b.booking_no = ?`
-    )
-    .get(numId || 0, paramId) as Record<string, unknown> | undefined;
+  const predicates = [`booking_no.eq.${paramId}`];
+  if (Number.isInteger(numId) && numId > 0) predicates.unshift(`id.eq.${numId}`);
 
+  // bookings has two foreign keys into users (manager_id, after_hours_approved_by),
+  // so users is resolved from the staff list rather than embedded.
+  const bookingRes = await sbSelect<Record<string, unknown>>(
+    "bookings",
+    `select=*,customers(name,phone,email),vehicles(name,registration_no,deposit)&or=${encodeURIComponent(`(${predicates.join(",")})`)}&limit=1`
+  );
+  if (!bookingRes.ok) throw new Error(`Could not load the booking: ${bookingRes.error}`);
+
+  const rawBooking = bookingRes.data[0];
   if (!rawBooking) notFound();
-  const booking = { ...rawBooking };
-  const id = Number(booking.id);
 
-  let statuses: string[] = [];
-  try {
-    statuses = getSetting<string[]>("booking_statuses", []) || [];
-  } catch {}
-  if (!statuses || statuses.length === 0) {
-    statuses = ["Pending", "Payment received", "Confirmed", "Vehicle handed over", "Active rental", "Completed", "Cancelled", "Rejected"];
+  const customer = rawBooking.customers as { name?: string; phone?: string; email?: string } | null;
+  const vehicle = rawBooking.vehicles as { name?: string; registration_no?: string; deposit?: unknown } | null;
+  const booking: Record<string, unknown> = {
+    ...rawBooking,
+    customer_name: customer?.name ?? null,
+    customer_phone: customer?.phone ?? null,
+    customer_email: customer?.email ?? null,
+    vehicle_name: vehicle?.name ?? null,
+    registration_no: vehicle?.registration_no ?? null,
+    vehicle_deposit: vehicle?.deposit === undefined ? null : num(vehicle.deposit),
+  };
+  const id = Number(booking.id);
+  const customerId = booking.customer_id === null || booking.customer_id === undefined ? 0 : Number(booking.customer_id);
+
+  const [statusSetting, staff, historyRes, inspectionsRes, damagesRes, adjustmentsRes, paymentsRes, documentsRes] =
+    await Promise.all([
+      getSetting<string[]>("booking_statuses", []),
+      getStaff(),
+      sbSelect<Record<string, unknown>>("booking_history", `select=*,users(name)&booking_id=eq.${id}&order=created_at.desc`),
+      sbSelect<Record<string, unknown>>("inspections", `select=*&booking_id=eq.${id}&order=created_at.asc`),
+      sbSelect<Record<string, unknown>>("damage_reports", `select=*&booking_id=eq.${id}`),
+      sbSelect<Record<string, unknown>>("manual_adjustments", `select=*&booking_id=eq.${id}`),
+      sbSelect<Record<string, unknown>>("payments", `select=*&booking_id=eq.${id}&order=created_at.desc`),
+      sbSelect<Record<string, unknown>>(
+        "customer_documents",
+        `select=*&or=${encodeURIComponent(`(booking_id.eq.${id},customer_id.eq.${customerId})`)}`
+      ),
+    ]);
+
+  for (const [label, res] of [
+    ["history", historyRes],
+    ["inspections", inspectionsRes],
+    ["damage reports", damagesRes],
+    ["adjustments", adjustmentsRes],
+    ["payments", paymentsRes],
+    ["documents", documentsRes],
+  ] as const) {
+    if (!res.ok) throw new Error(`Could not load booking ${label}: ${res.error}`);
   }
 
-  let staff: any[] = [];
-  try {
-    staff = getStaff();
-  } catch {}
+  const statuses = statusSetting?.length
+    ? statusSetting
+    : ["Pending", "Payment received", "Confirmed", "Vehicle handed over", "Active rental", "Completed", "Cancelled", "Rejected"];
 
-  let history: any[] = [];
-  let inspections: any[] = [];
-  let inspectionPhotos: any[] = [];
-  let damages: any[] = [];
-  let adjustments: any[] = [];
-  let payments: any[] = [];
-  let documents: any[] = [];
+  const staffNameById = new Map(staff.map((s) => [s.id, s.name]));
 
-  try {
-    history = (db.prepare("SELECT h.*, u.name AS user_name FROM booking_history h LEFT JOIN users u ON u.id = h.user_id WHERE h.booking_id = ? ORDER BY h.created_at DESC").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  } catch {}
-  try {
-    inspections = (db.prepare("SELECT * FROM inspections WHERE booking_id = ? ORDER BY created_at").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  } catch {}
-  try {
-    inspectionPhotos = (db.prepare("SELECT * FROM inspection_photos WHERE inspection_id IN (SELECT id FROM inspections WHERE booking_id = ?)").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  } catch {}
-  try {
-    damages = (db.prepare("SELECT * FROM damage_reports WHERE booking_id = ?").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  } catch {}
-  try {
-    adjustments = (db.prepare("SELECT a.*, u.name AS employee_name FROM manual_adjustments a LEFT JOIN users u ON u.id = a.employee_id WHERE a.booking_id = ?").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  } catch {}
-  try {
-    payments = (db.prepare("SELECT * FROM payments WHERE booking_id = ? ORDER BY created_at DESC").all(id) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  } catch {}
-  try {
-    documents = (db.prepare("SELECT * FROM customer_documents WHERE booking_id = ? OR (customer_id IS NOT NULL AND customer_id = ?)").all(id, booking.customer_id as number | null ?? 0) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  } catch {}
+  const history = (historyRes.ok ? historyRes.data : []).map((h): Record<string, unknown> => ({
+    ...h,
+    user_name: (h.users as { name?: string } | null)?.name ?? null,
+  }));
+  const inspections = inspectionsRes.ok ? inspectionsRes.data : [];
+  const damages = (damagesRes.ok ? damagesRes.data : []).map((d): Record<string, unknown> => ({ ...d, charge_amount: num(d.charge_amount) }));
+  // manual_adjustments references users twice (employee_id, approved_by).
+  const adjustments = (adjustmentsRes.ok ? adjustmentsRes.data : []).map((a): Record<string, unknown> => ({
+    ...a,
+    amount: num(a.amount),
+    employee_name: staffNameById.get(Number(a.employee_id)) ?? "—",
+  }));
+  const payments = (paymentsRes.ok ? paymentsRes.data : []).map((p): Record<string, unknown> => ({
+    ...p,
+    amount: num(p.amount),
+    amount_paise: num(p.amount_paise),
+  }));
+  const documents = documentsRes.ok ? documentsRes.data : [];
+
+  const inspectionIds = inspections.map((i) => Number(i.id)).filter(Boolean);
+  let inspectionPhotos: Array<Record<string, unknown>> = [];
+  if (inspectionIds.length > 0) {
+    const photosRes = await sbSelect<Record<string, unknown>>(
+      "inspection_photos",
+      `select=*&inspection_id=in.(${inspectionIds.join(",")})`
+    );
+    if (!photosRes.ok) throw new Error(`Could not load inspection photos: ${photosRes.error}`);
+    inspectionPhotos = photosRes.data;
+  }
 
   const hasHandover = inspections.some((i) => i.kind === "handover");
   const hasReturn = inspections.some((i) => i.kind === "return");

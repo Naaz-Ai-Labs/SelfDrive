@@ -153,7 +153,7 @@ async function runQodoStrixSuite() {
     photos: [],
     primary_photo: null,
   };
-  const quote = calculateQuote(testVehicle, sat, new Date("2026-08-17T10:00:00"));
+  const quote = await calculateQuote(testVehicle, sat, new Date("2026-08-17T10:00:00"));
   assertUnit("calculateQuote computes 2 days rental correctly", quote.days === 2);
   assertUnit("calculateQuote includes 6% GST", quote.gstPct === 6 && quote.gstAmount > 0);
 

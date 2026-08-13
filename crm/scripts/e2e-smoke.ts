@@ -78,10 +78,10 @@ async function main() {
   check("booking_confirmation template exists", !!templateByKey("booking_confirmation"));
 
   // ---- 4. Customer OTP session ----
-  const cust = findCustomerByTarget(phone);
+  const cust = await findCustomerByTarget(phone);
   check("customer found by phone", !!cust, cust ? `id=${cust.id}` : "");
-  const ctoken = createCustomerSession(cust?.id ?? null, phone);
-  const cses = getCustomerSession(ctoken);
+  const ctoken = await createCustomerSession(cust?.id ?? null, phone);
+  const cses = await getCustomerSession(ctoken);
   check("customer session works", !!cses && cses.target === phone);
   const otpHash = hashOtp("123456");
   check("otp hash stable", hashOtp("123456") === otpHash);

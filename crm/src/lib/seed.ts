@@ -288,7 +288,7 @@ Get this sorted before you arrive and pickup genuinely takes a few minutes — i
 
 export async function seed() {
   const db = getDb();
-  ensureDefaultSettings();
+  await ensureDefaultSettings();
 
   const userCount = db.prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number };
   if (userCount.c === 0) {
@@ -455,7 +455,7 @@ async function seedDemoActivity() {
     let bookingId: number;
     let bookingNo: string;
     try {
-      const result = createBooking({
+      const result = await createBooking({
         vehicleId, pickupAt, returnAt,
         location: "Sakleshpura Branch",
         customer: d.customer,

@@ -18,15 +18,14 @@ export type DispatchResult = { ok: boolean; detail: string };
  * Production providers (WhatsApp Business API / SMS / Email) are pluggable here.
  * NEEDS CLIENT CONFIRMATION: provider credentials.
  */
-export function dispatchMessage(opts: {
+export async function dispatchMessage(opts: {
   channel: string;
   to: string;
   subject?: string | null;
   body: string;
   enquiryId?: number | null;
   bookingId?: number | null;
-}): DispatchResult {
-  const info = businessInfo();
+}): Promise<DispatchResult> {
   logMessage(opts.channel, opts.to, opts.subject ?? null, opts.body, opts.enquiryId ?? null, opts.bookingId ?? null);
   if (opts.channel === "whatsapp") {
     const phone = opts.to.replace(/\D/g, "");
@@ -43,9 +42,10 @@ export function templateByKey(key: string): { name: string; channel: string; bod
   return row ?? null;
 }
 
-export function sendTemplate(key: string, to: string, vars: Record<string, string | number | null | undefined>, enquiryId?: number | null, bookingId?: number | null): DispatchResult | null {
+export async function sendTemplate(key: string, to: string, vars: Record<string, string | number | null | undefined>, enquiryId?: number | null, bookingId?: number | null): Promise<DispatchResult | null> {
   const tpl = templateByKey(key);
   if (!tpl) return null;
-  const body = renderTemplate(tpl.body, { business: (businessInfo().name as string) ?? "Darshh Holiday", ...vars });
+  const business = await businessInfo();
+  const body = renderTemplate(tpl.body, { business: (business.name as string) ?? "Darshh Holiday", ...vars });
   return dispatchMessage({ channel: tpl.channel, to, subject: tpl.subject, body, enquiryId, bookingId });
 }

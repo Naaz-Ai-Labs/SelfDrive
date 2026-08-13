@@ -86,7 +86,7 @@ export async function assignEnquiry(id: number, assigneeId: number | null) {
 export async function changeEnquiryStage(id: number, stage: string) {
   const user = await staffUser();
   const db = getDb();
-  const stages = getSetting<string[]>("enquiry_stages", []);
+  const stages = await getSetting<string[]>("enquiry_stages", []);
   if (!stages.includes(stage)) return { error: "Unknown stage" };
   db.prepare("UPDATE enquiries SET stage = ?, updated_at = datetime('now') WHERE id = ?").run(stage, id);
   db.prepare("INSERT INTO enquiry_history (enquiry_id, user_id, action, detail) VALUES (?, ?, 'stage_change', ?)").run(id, user.id, stage);

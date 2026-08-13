@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { sbSelect, num } from "./supabase-rest";
 import { getSetting } from "./settings";
 import type { Vehicle } from "./data";
 
@@ -53,21 +53,57 @@ export function getDynamicRate24h(baseRate: number, date: Date = new Date()): nu
 }
 
 /** A seasonal/festival/long-weekend override that applies to the whole booking period, taking priority over standard weekday/weekend rates. */
-function findSeasonalRule(vehicle: Vehicle, pickup: Date, ret: Date): PricingRuleRow | null {
-  const db = getDb();
+async function findSeasonalRule(vehicle: Vehicle, pickup: Date, ret: Date): Promise<PricingRuleRow | null> {
   const pickupDate = pickup.toISOString().slice(0, 10);
   const returnDate = ret.toISOString().slice(0, 10);
-  const row = db
-    .prepare(
-      `SELECT * FROM pricing_rules
-       WHERE active = 1 AND day_type != 'weekend'
-         AND (vehicle_id = ? OR category_id = ? OR (vehicle_id IS NULL AND category_id IS NULL))
-         AND NOT (end_date < ? OR start_date > ?)
-       ORDER BY priority DESC, (vehicle_id IS NOT NULL) DESC
-       LIMIT 1`
-    )
-    .get(vehicle.id, vehicle.category_id, pickupDate, returnDate) as PricingRuleRow | undefined;
-  return row ?? null;
+
+  // `NOT (end_date < pickup OR start_date > return)` is the overlap test, rewritten
+  // as two inclusive bounds because PostgREST has no NOT-of-a-group.
+  const scopes = [`vehicle_id.eq.${vehicle.id}`, "and(vehicle_id.is.null,category_id.is.null)"];
+  if (vehicle.category_id !== null && vehicle.category_id !== undefined) {
+    scopes.splice(1, 0, `category_id.eq.${vehicle.category_id}`);
+  }
+
+  const query = [
+    "select=*",
+    "active=eq.1",
+    "day_type=neq.weekend",
+    `or=${encodeURIComponent(`(${scopes.join(",")})`)}`,
+    `end_date=gte.${pickupDate}`,
+    `start_date=lte.${returnDate}`,
+    "order=priority.desc",
+  ].join("&");
+
+  const res = await sbSelect<Record<string, unknown>>("pricing_rules", query);
+  if (!res.ok) throw new Error(`Could not load pricing rules: ${res.error}`);
+  if (res.data.length === 0) return null;
+
+  // The SQL tiebreak `(vehicle_id IS NOT NULL) DESC` has no PostgREST equivalent;
+  // the candidate set is tiny, so resolve it here instead.
+  const rows = [...res.data].sort((a, b) => {
+    const byPriority = num(b.priority) - num(a.priority);
+    if (byPriority !== 0) return byPriority;
+    return (b.vehicle_id ? 1 : 0) - (a.vehicle_id ? 1 : 0);
+  });
+
+  const row = rows[0];
+  return {
+    id: Number(row.id),
+    name: String(row.name),
+    vehicle_id: row.vehicle_id === null || row.vehicle_id === undefined ? null : Number(row.vehicle_id),
+    category_id: row.category_id === null || row.category_id === undefined ? null : Number(row.category_id),
+    day_type: String(row.day_type),
+    start_date: String(row.start_date),
+    end_date: String(row.end_date),
+    rate_24h: row.rate_24h === null || row.rate_24h === undefined ? null : num(row.rate_24h),
+    rate_12h: row.rate_12h === null || row.rate_12h === undefined ? null : num(row.rate_12h),
+    deposit: row.deposit === null || row.deposit === undefined ? null : num(row.deposit),
+    included_km: row.included_km === null || row.included_km === undefined ? null : num(row.included_km),
+    extra_km_rate: row.extra_km_rate === null || row.extra_km_rate === undefined ? null : num(row.extra_km_rate),
+    min_days: num(row.min_days, 1),
+    priority: num(row.priority),
+    active: num(row.active, 1),
+  };
 }
 
 /**
@@ -77,9 +113,11 @@ function findSeasonalRule(vehicle: Vehicle, pickup: Date, ret: Date): PricingRul
  * booking that spans both. A seasonal/festival rule, if active for the period, overrides
  * the whole booking at its own flat day rate instead.
  */
-export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date, pickupTimeHM?: string, returnTimeHM?: string): Quote {
-  const rentalRules = getSetting<Record<string, unknown>>("rental_rules", {});
-  const gstPct = getSetting<number>("tax_pct", 6);
+export async function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date, pickupTimeHM?: string, returnTimeHM?: string): Promise<Quote> {
+  const [rentalRules, gstPct] = await Promise.all([
+    getSetting<Record<string, unknown>>("rental_rules", {}),
+    getSetting<number>("tax_pct", 6),
+  ]);
   const gatewayFeePassThrough = Boolean(rentalRules.gateway_fee_pass_through ?? false);
   const gatewayFeePct = gatewayFeePassThrough ? Number(rentalRules.gateway_fee_pct ?? 2) : 0;
   const weekendMinDays = Number(rentalRules.weekend_min_days ?? 2);
@@ -110,7 +148,7 @@ export function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt: Date,
     days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
   }
 
-  const seasonalRule = findSeasonalRule(vehicle, pickupAt, returnAt);
+  const seasonalRule = await findSeasonalRule(vehicle, pickupAt, returnAt);
   const dayBreakdown: Quote["dayBreakdown"] = [];
   let baseAmount = 0;
 
@@ -202,8 +240,8 @@ export function calculateExtraKm(includedKm: number, startOdo: number, endOdo: n
 }
 
 /** Cancellation refund slabs, based on how far ahead of pickup the request is made. */
-export function calculateCancellationRefund(pickupAt: Date, requestedAt: Date, paidAmount: number): { pct: number; amount: number; slab: string } {
-  const rentalRules = getSetting<Record<string, unknown>>("rental_rules", {});
+export async function calculateCancellationRefund(pickupAt: Date, requestedAt: Date, paidAmount: number): Promise<{ pct: number; amount: number; slab: string }> {
+  const rentalRules = await getSetting<Record<string, unknown>>("rental_rules", {});
   const hoursBefore = (pickupAt.getTime() - requestedAt.getTime()) / (1000 * 60 * 60);
   const fullRefundHours = Number(rentalRules.cancel_full_refund_hours ?? 24);
   const partialRefundHours = Number(rentalRules.cancel_partial_refund_hours ?? 6);

@@ -7,6 +7,6 @@ export async function GET(req: NextRequest) {
   if (denied) return denied;
   const id = Number(new URL(req.url).searchParams.get("id"));
   if (!id) return NextResponse.json({ vehicle: null });
-  const vehicle = getVehicleById(id);
+  const vehicle = await getVehicleById(id);
   return NextResponse.json({ vehicle });
 }

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
+import { sbSelect, num } from "@/lib/supabase-rest";
 import { formatINR } from "@/lib/utils";
 import { AreaTrend } from "@/components/dashboard/charts/AreaTrend";
 import { BarRows } from "@/components/dashboard/charts/BarRow";
@@ -17,22 +17,40 @@ export default async function ReportsAnalyticsPage() {
   if (!user) redirect("/dashboard/login");
   if (user.role !== "admin") redirect("/dashboard");
 
-  const db = getDb();
-  const totalRevenue = db
-    .prepare("SELECT COALESCE(SUM(total_amount), 0) AS t FROM bookings WHERE status IN ('Confirmed', 'Completed', 'Vehicle handed over', 'Active rental')")
-    .get() as { t: number };
+  // PostgREST cannot express GROUP BY across joins, so this page pulls the booking
+  // ledger once and aggregates in memory. Everything below derives from that single
+  // read rather than the eight separate SQL aggregates it replaces.
+  const [bookingsRes, vehiclesRes, categoriesRes, customersRes] = await Promise.all([
+    sbSelect<Record<string, unknown>>(
+      "bookings",
+      "select=booking_no,customer_id,vehicle_id,total_amount,extra_km_amount,late_fee_amount,deposit_amount,status,created_at&order=created_at.desc"
+    ),
+    sbSelect<Record<string, unknown>>("vehicles", "select=id,name,total_units,rate_24h,category_id"),
+    sbSelect<{ id: number; name: string }>("vehicle_categories", "select=id,name"),
+    sbSelect<{ id: number; name: string }>("customers", "select=id,name"),
+  ]);
 
-  const totalExtraKm = db
-    .prepare("SELECT COALESCE(SUM(extra_km_amount), 0) AS t FROM bookings WHERE status NOT IN ('Cancelled', 'Draft')")
-    .get() as { t: number };
+  if (!bookingsRes.ok) throw new Error(`Could not load bookings: ${bookingsRes.error}`);
+  if (!vehiclesRes.ok) throw new Error(`Could not load vehicles: ${vehiclesRes.error}`);
+  if (!categoriesRes.ok) throw new Error(`Could not load vehicle categories: ${categoriesRes.error}`);
+  if (!customersRes.ok) throw new Error(`Could not load customers: ${customersRes.error}`);
 
-  const totalLateFees = db
-    .prepare("SELECT COALESCE(SUM(late_fee_amount), 0) AS t FROM bookings WHERE status NOT IN ('Cancelled', 'Draft')")
-    .get() as { t: number };
+  const allBookings = bookingsRes.data;
+  const categoryNameById = new Map(categoriesRes.data.map((c) => [Number(c.id), c.name]));
+  const customerNameById = new Map(customersRes.data.map((c) => [Number(c.id), c.name]));
+  const vehicleNameById = new Map(vehiclesRes.data.map((v) => [Number(v.id), String(v.name)]));
 
-  const totalDeposits = db
-    .prepare("SELECT COALESCE(SUM(deposit_amount), 0) AS t FROM bookings WHERE status NOT IN ('Cancelled', 'Draft')")
-    .get() as { t: number };
+  const REVENUE_STATUSES = new Set(["Confirmed", "Completed", "Vehicle handed over", "Active rental"]);
+  const EXCLUDED_STATUSES = new Set(["Cancelled", "Draft"]);
+  const counted = allBookings.filter((b) => !EXCLUDED_STATUSES.has(String(b.status)));
+
+  // num() on every money field: these are NUMERIC columns and arrive as strings.
+  const sum = (rows: Array<Record<string, unknown>>, key: string) => rows.reduce((acc, r) => acc + num(r[key]), 0);
+
+  const totalRevenue = { t: sum(allBookings.filter((b) => REVENUE_STATUSES.has(String(b.status))), "total_amount") };
+  const totalExtraKm = { t: sum(counted, "extra_km_amount") };
+  const totalLateFees = { t: sum(counted, "late_fee_amount") };
+  const totalDeposits = { t: sum(counted, "deposit_amount") };
 
   const monthlyRevenue: Array<{ label: string; value: number }> = [];
   const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -41,62 +59,67 @@ export default async function ReportsAnalyticsPage() {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     const label = `${MONTH_NAMES[d.getMonth()]}`;
-    const row = db
-      .prepare("SELECT COALESCE(SUM(total_amount), 0) AS t FROM bookings WHERE strftime('%Y-%m', created_at) = ? AND status NOT IN ('Cancelled', 'Draft')")
-      .get(monthStr) as { t: number } | undefined;
-    monthlyRevenue.push({ label, value: row?.t ?? 0 });
+    const inMonth = counted.filter((b) => String(b.created_at ?? "").slice(0, 7) === monthStr);
+    monthlyRevenue.push({ label, value: sum(inMonth, "total_amount") });
   }
 
-  const categoryBreakdown = (
-    db.prepare(
-      `SELECT c.name AS label, COUNT(b.id) AS value
-       FROM vehicle_categories c
-       LEFT JOIN vehicles v ON v.category_id = c.id
-       LEFT JOIN bookings b ON b.vehicle_id = v.id
-       GROUP BY c.id ORDER BY value DESC`
-    ).all() as Array<{ label: string; value: number }>
-  ).map((r) => ({ ...r }));
+  const categoryIdByVehicle = new Map(vehiclesRes.data.map((v) => [Number(v.id), Number(v.category_id)]));
+  const categoryCounts = new Map<number, number>();
+  for (const b of allBookings) {
+    const categoryId = categoryIdByVehicle.get(Number(b.vehicle_id));
+    if (categoryId === undefined || Number.isNaN(categoryId)) continue;
+    categoryCounts.set(categoryId, (categoryCounts.get(categoryId) ?? 0) + 1);
+  }
+  const categoryBreakdown = categoriesRes.data
+    .map((c) => ({ label: c.name, value: categoryCounts.get(Number(c.id)) ?? 0 }))
+    .sort((a, b) => b.value - a.value);
 
-  const rawReportBookings = (
-    db.prepare(
-      `SELECT b.booking_no, c.name AS customer_name, v.name AS vehicle_name, b.total_amount, b.status, b.created_at
-       FROM bookings b
-       LEFT JOIN customers c ON c.id = b.customer_id
-       LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       ORDER BY b.created_at DESC LIMIT 100`
-    ).all() as Array<Record<string, unknown>>
-  ).map((r) => ({
+  const rawReportBookings = allBookings.slice(0, 100).map((r) => ({
     bookingNo: String(r.booking_no),
-    customer: String(r.customer_name ?? "Guest"),
-    vehicle: String(r.vehicle_name ?? "Vehicle"),
-    amount: Number(r.total_amount ?? 0),
+    customer: customerNameById.get(Number(r.customer_id)) ?? "Guest",
+    vehicle: vehicleNameById.get(Number(r.vehicle_id)) ?? "Vehicle",
+    amount: num(r.total_amount),
     status: String(r.status),
     date: String(r.created_at).slice(0, 10),
   }));
 
   // Per-vehicle performance & ROI matrix
-  const rawVehiclePerf = (
-    db.prepare(
-      `SELECT v.id, v.name, v.total_units, c.name AS category_name, v.rate_24h,
-              COUNT(b.id) AS bookings_count,
-              COALESCE(SUM(b.total_amount), 0) AS gross_revenue,
-              COALESCE(SUM(b.extra_km_amount), 0) AS extra_km_revenue,
-              COALESCE(SUM(b.late_fee_amount), 0) AS late_fee_revenue
-       FROM vehicles v
-       LEFT JOIN vehicle_categories c ON c.id = v.category_id
-       LEFT JOIN bookings b ON b.vehicle_id = v.id AND b.status NOT IN ('Cancelled', 'Draft')
-       GROUP BY v.id
-       ORDER BY gross_revenue DESC`
-    ).all() as Array<Record<string, unknown>>
-  ).map((r) => ({ ...r }));
+  const perVehicle = new Map<number, { count: number; gross: number; extraKm: number; lateFee: number }>();
+  for (const b of counted) {
+    const key = Number(b.vehicle_id);
+    if (!Number.isFinite(key)) continue;
+    const acc = perVehicle.get(key) ?? { count: 0, gross: 0, extraKm: 0, lateFee: 0 };
+    acc.count += 1;
+    acc.gross += num(b.total_amount);
+    acc.extraKm += num(b.extra_km_amount);
+    acc.lateFee += num(b.late_fee_amount);
+    perVehicle.set(key, acc);
+  }
+
+  const rawVehiclePerf = vehiclesRes.data
+    .map((v) => {
+      const stats = perVehicle.get(Number(v.id)) ?? { count: 0, gross: 0, extraKm: 0, lateFee: 0 };
+      return {
+        id: Number(v.id),
+        name: String(v.name),
+        total_units: num(v.total_units, 1),
+        category_name: categoryNameById.get(Number(v.category_id)) ?? null,
+        rate_24h: num(v.rate_24h, 1000),
+        bookings_count: stats.count,
+        gross_revenue: stats.gross,
+        extra_km_revenue: stats.extraKm,
+        late_fee_revenue: stats.lateFee,
+      };
+    })
+    .sort((a, b) => b.gross_revenue - a.gross_revenue);
 
   const vehiclePerformance: VehiclePerformanceItem[] = rawVehiclePerf.map((r) => {
-    const totalUnits = Number(r.total_units ?? 1);
-    const bookingsCount = Number(r.bookings_count ?? 0);
-    const grossRevenue = Number(r.gross_revenue ?? 0);
-    const extraKmRevenue = Number(r.extra_km_revenue ?? 0);
-    const lateFeeRevenue = Number(r.late_fee_revenue ?? 0);
-    const rate24h = Number(r.rate_24h ?? 1000);
+    const totalUnits = r.total_units || 1;
+    const bookingsCount = r.bookings_count;
+    const grossRevenue = r.gross_revenue;
+    const extraKmRevenue = r.extra_km_revenue;
+    const lateFeeRevenue = r.late_fee_revenue;
+    const rate24h = r.rate_24h || 1000;
     const daysRented = Math.max(bookingsCount, Math.round(grossRevenue / Math.max(1, rate24h)));
     const avgDailyRate = daysRented > 0 ? Math.round(grossRevenue / daysRented) : rate24h;
     const utilizationPct = Math.min(100, Math.round(((daysRented / 30) / Math.max(1, totalUnits)) * 100));

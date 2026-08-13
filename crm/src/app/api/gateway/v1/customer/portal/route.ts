@@ -5,7 +5,7 @@ import { getDb } from "@/lib/db";
 export async function GET(req: NextRequest) {
   const denied = requireGatewayKey(req);
   if (denied) return denied;
-  const customer = bearerCustomer(req);
+  const customer = await bearerCustomer(req);
   if (!customer) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
 
   const db = getDb();

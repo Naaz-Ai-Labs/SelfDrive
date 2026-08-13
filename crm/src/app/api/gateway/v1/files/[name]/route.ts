@@ -9,7 +9,7 @@ const MIME: Record<string, string> = { jpeg: "image/jpeg", jpg: "image/jpeg", pn
 export async function GET(req: NextRequest, { params }: { params: Promise<{ name: string }> }) {
   const denied = requireGatewayKey(req);
   if (denied) return denied;
-  const customer = bearerCustomer(req);
+  const customer = await bearerCustomer(req);
   if (!customer) return NextResponse.json({ error: "Not authorised." }, { status: 401 });
 
   const { name } = await params;

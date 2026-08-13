@@ -1,9 +1,8 @@
-import { getDb } from "./db";
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { randomToken } from "./utils";
 import crypto from "node:crypto";
-import { supabaseAdmin } from "./supabase";
+import { sbSelectOne, sbInsert, sbDelete } from "./supabase-rest";
 
 const SESSION_COOKIE = "dtt_session";
 const SESSION_DAYS = 7;
@@ -60,6 +59,19 @@ function signPayload(payload: string): string {
   return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
 }
 
+/** The opaque half of a composed cookie value, i.e. the `sessions.token` primary key.
+ * A raw (uncomposed) token is returned as-is so legacy cookies still resolve. */
+function rawTokenOf(token: string): string {
+  const parts = token.split(":");
+  return parts.length >= 6 ? parts[5] : token;
+}
+
+/**
+ * Mints the session cookie value. Deliberately synchronous so every existing caller
+ * keeps working; the durable `sessions` row is written by `persistSession` below,
+ * which the auth routes await. The cookie itself is self-contained (HMAC signed), so
+ * a failed row write degrades revocation, not login.
+ */
 export function createSession(
   userId: number,
   ip?: string,
@@ -67,20 +79,6 @@ export function createSession(
 ): string {
   const tokenRaw = randomToken(32);
   const expiresMs = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
-  const expiresISO = new Date(expiresMs)
-    .toISOString()
-    .slice(0, 19)
-    .replace("T", " ");
-
-  try {
-    const db = getDb();
-    db.prepare("INSERT INTO sessions (token, user_id, expires_at, ip) VALUES (?, ?, ?, ?)").run(
-      tokenRaw,
-      userId,
-      expiresISO,
-      ip ?? null
-    );
-  } catch {}
 
   const role = userMeta?.role || "staff";
   const email = userMeta?.email || "";
@@ -91,12 +89,77 @@ export function createSession(
   return `${payload}:${sig}:${tokenRaw}`;
 }
 
-export function destroySession(token: string) {
-  try {
-    const parts = token.split(":");
-    const tokenRaw = parts.length >= 6 ? parts[5] : token;
-    getDb().prepare("DELETE FROM sessions WHERE token = ?").run(tokenRaw);
-  } catch {}
+/** Writes the durable `sessions` row for a cookie produced by `createSession`. */
+export async function persistSession(token: string, userId: number, ip?: string): Promise<void> {
+  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 3600 * 1000).toISOString();
+  const res = await sbInsert("sessions", {
+    token: rawTokenOf(token),
+    user_id: userId,
+    expires_at: expiresAt,
+    ip: ip ?? null,
+  });
+  if (!res.ok) console.error("[auth] could not persist session row:", res.error);
+}
+
+export async function destroySession(token: string): Promise<void> {
+  const res = await sbDelete("sessions", `token=eq.${encodeURIComponent(rawTokenOf(token))}`);
+  if (!res.ok) console.error("[auth] could not delete session row:", res.error);
+}
+
+type UserRow = {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  branch: string | null;
+  is_active: number;
+};
+
+const USER_COLUMNS = "select=id,name,email,role,branch,is_active";
+
+function toSessionUser(row: UserRow): SessionUser {
+  return {
+    id: Number(row.id),
+    name: String(row.name),
+    email: String(row.email),
+    role: String(row.role),
+    branch: row.branch ? String(row.branch) : null,
+  };
+}
+
+/** `users.is_active` is declared INTEGER NOT NULL DEFAULT 1 in supabase/schema.sql. */
+function isActive(row: UserRow): boolean {
+  return Number(row.is_active) === 1;
+}
+
+/**
+ * Looks the cookie's subject up in Supabase.
+ *
+ * Three outcomes, deliberately distinguished by the caller:
+ *  - `{ reachable: true, user }`  — Supabase answered and the account is live.
+ *  - `{ reachable: true, user: null }` — Supabase answered: absent or deactivated. Deny.
+ *  - `{ reachable: false }` — Supabase could not be consulted. The caller may fall back
+ *    to the signed identity so an outage does not log the whole company out.
+ */
+async function lookupUser(
+  userId: number,
+  email: string
+): Promise<{ reachable: true; user: SessionUser | null } | { reachable: false }> {
+  const cleanEmail = email.toLowerCase().trim();
+
+  if (Number.isFinite(userId) && userId > 0) {
+    const byId = await sbSelectOne<UserRow>("users", `${USER_COLUMNS}&id=eq.${userId}`);
+    if (!byId.ok) return { reachable: false };
+    if (byId.data) return { reachable: true, user: isActive(byId.data) ? toSessionUser(byId.data) : null };
+  }
+
+  if (cleanEmail) {
+    const byEmail = await sbSelectOne<UserRow>("users", `${USER_COLUMNS}&email=eq.${encodeURIComponent(cleanEmail)}`);
+    if (!byEmail.ok) return { reachable: false };
+    if (byEmail.data) return { reachable: true, user: isActive(byEmail.data) ? toSessionUser(byEmail.data) : null };
+  }
+
+  return { reachable: true, user: null };
 }
 
 export async function getCurrentUser(): Promise<SessionUser | null> {
@@ -104,7 +167,9 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   const rawToken = store.get(SESSION_COOKIE)?.value;
   if (!rawToken) return null;
 
-  // 1. Verify signed HMAC session token (stateless & instant across Vercel serverless containers)
+  // 1. Verify signed HMAC session token (stateless & instant across serverless containers).
+  //    The signature only proves *which* account the cookie claims; role and account
+  //    standing always come from the database row below.
   const parts = rawToken.split(":");
   if (parts.length >= 5) {
     const [userIdStr, role, expiresMsStr, encEmail, encName, sig] = parts;
@@ -120,56 +185,43 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       const email = decodeURIComponent(encEmail || "");
       const name = decodeURIComponent(encName || "");
 
-      // Quick SQLite lookup
-      try {
-        const db = getDb();
-        const userRow = db
-          .prepare("SELECT id, name, email, role, branch FROM users WHERE (id = ? OR email = ?) AND is_active = 1")
-          .get(userId, email.toLowerCase().trim()) as SessionUser | undefined;
-        if (userRow) {
-          return {
-            id: Number(userRow.id),
-            name: String(userRow.name),
-            email: String(userRow.email),
-            role: String(userRow.role) as SessionUser["role"],
-            branch: userRow.branch ? String(userRow.branch) : null,
-          };
-        }
-      } catch {}
+      const lookup = await lookupUser(userId, email);
 
-      // Bulletproof stateless session return: token is HMAC verified and unexpired
+      if (lookup.reachable) {
+        // Supabase answered. Its verdict is final — including "this account is gone",
+        // which is what makes deactivating a staff member take effect immediately.
+        if (!lookup.user) {
+          console.warn(`[auth] rejecting session for user ${userId}: absent or inactive in Supabase.`);
+          return null;
+        }
+        return lookup.user;
+      }
+
+      // Supabase could not be consulted. Ride out the outage on the signed identity
+      // rather than logging everyone out; the role here is the cookie's, so it is only
+      // ever as trustworthy as the signing secret.
+      console.error("[auth] Supabase unreachable — falling back to the signed session identity.");
       return {
         id: userId,
         name: name || (role === "admin" ? "Administrator" : "Staff User"),
-        email: email || "admin@darshhrentals.in",
-        role: (role || "staff") as SessionUser["role"],
+        email,
+        role: role || "staff",
         branch: null,
       };
     }
   }
 
-  // 2. Fallback to SQLite DB token lookup
-  try {
-    const db = getDb();
-    const row = db
-      .prepare(
-        `SELECT u.id, u.name, u.email, u.role, u.branch FROM sessions s
-         JOIN users u ON u.id = s.user_id
-         WHERE s.token = ? AND datetime(s.expires_at) > datetime('now') AND u.is_active = 1`
-      )
-      .get(rawToken) as SessionUser | undefined;
-    if (row) {
-      return {
-        id: Number(row.id),
-        name: String(row.name),
-        email: String(row.email),
-        role: String(row.role) as SessionUser["role"],
-        branch: row.branch ? String(row.branch) : null,
-      };
-    }
-  } catch {}
-  
-  console.log("[AUTH_DEBUG] getCurrentUser returned null");
+  // 2. Legacy / opaque cookie: resolve it through the sessions table.
+  const session = await sbSelectOne<{ user_id: number }>(
+    "sessions",
+    `select=user_id&token=eq.${encodeURIComponent(rawTokenOf(rawToken))}&expires_at=gt.${encodeURIComponent(new Date().toISOString())}`
+  );
+
+  if (session.ok && session.data) {
+    const lookup = await lookupUser(Number(session.data.user_id), "");
+    if (lookup.reachable && lookup.user) return lookup.user;
+  }
+
   return null;
 }
 
