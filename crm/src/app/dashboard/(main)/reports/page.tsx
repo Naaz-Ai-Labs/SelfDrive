@@ -63,6 +63,29 @@ export default async function ReportsAnalyticsPage() {
     monthlyRevenue.push({ label, value: sum(inMonth, "total_amount") });
   }
 
+  // Real month-on-month growth from the two most recent points above — this
+  // replaced a hardcoded "+14.8% MoM Growth" badge that never changed regardless
+  // of the actual numbers.
+  const lastMonthRevenue = monthlyRevenue[monthlyRevenue.length - 1]?.value ?? 0;
+  const prevMonthRevenue = monthlyRevenue[monthlyRevenue.length - 2]?.value ?? 0;
+  const momGrowthPct = prevMonthRevenue > 0 ? ((lastMonthRevenue - prevMonthRevenue) / prevMonthRevenue) * 100 : null;
+
+  // Day-level trend: "booking trends should be for a day, not a month". Buckets by
+  // the booking's own created_at date string (already IST-correct at the source —
+  // every booking write uses new Date().toISOString(), and this only needs the
+  // date portion for grouping, not a timezone-sensitive comparison).
+  const dailyRevenue: Array<{ label: string; value: number }> = [];
+  const dailyBookingCount: Array<{ label: string; value: number }> = [];
+  const DAY_WINDOW = 14;
+  for (let i = DAY_WINDOW - 1; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    const dayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const label = `${d.getDate()}/${d.getMonth() + 1}`;
+    const inDay = counted.filter((b) => String(b.created_at ?? "").slice(0, 10) === dayStr);
+    dailyRevenue.push({ label, value: sum(inDay, "total_amount") });
+    dailyBookingCount.push({ label, value: inDay.length });
+  }
+
   const categoryIdByVehicle = new Map(vehiclesRes.data.map((v) => [Number(v.id), Number(v.category_id)]));
   const categoryCounts = new Map<number, number>();
   for (const b of allBookings) {
@@ -205,9 +228,14 @@ export default async function ReportsAnalyticsPage() {
               <h2 className="font-display text-lg font-semibold text-ink-900">Gross Revenue Growth Trend</h2>
               <p className="text-xs text-ink-500">Monthly gross income stream in INR</p>
             </div>
-            <span className="badge bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-              +14.8% MoM Growth
-            </span>
+            {momGrowthPct !== null && (
+              <span
+                className={`badge font-bold text-[10px] ${momGrowthPct >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}
+              >
+                {momGrowthPct >= 0 ? "+" : ""}
+                {momGrowthPct.toFixed(1)}% MoM
+              </span>
+            )}
           </div>
           <div className="mt-4" style={{ ["--chart-accent" as string]: "#10b981" }}>
             <AreaTrend data={monthlyRevenue} />
@@ -221,6 +249,26 @@ export default async function ReportsAnalyticsPage() {
           </div>
           <div className="mt-5">
             <BarRows data={paymentModes} />
+          </div>
+        </div>
+
+        <div className="card p-5 lg:col-span-2 shadow-sm">
+          <div className="border-b border-ink-100 pb-3">
+            <h2 className="font-display text-lg font-semibold text-ink-900">Daily Revenue Trend</h2>
+            <p className="text-xs text-ink-500">Last {DAY_WINDOW} days, by the day the booking was made</p>
+          </div>
+          <div className="mt-4" style={{ ["--chart-accent" as string]: "#f2b705" }}>
+            <AreaTrend data={dailyRevenue} />
+          </div>
+        </div>
+
+        <div className="card p-5 shadow-sm">
+          <div className="border-b border-ink-100 pb-3">
+            <h2 className="font-display text-lg font-semibold text-ink-900">Daily Booking Count</h2>
+            <p className="text-xs text-ink-500">Last {DAY_WINDOW} days</p>
+          </div>
+          <div className="mt-5">
+            <BarRows data={dailyBookingCount} />
           </div>
         </div>
       </div>

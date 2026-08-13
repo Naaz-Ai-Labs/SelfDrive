@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { sbSelect, num } from "@/lib/supabase-rest";
 import { BookingsTableWithTabs } from "@/components/dashboard/BookingsTableWithTabs";
 import type { BookingReviewData, CustomerDocument } from "@/components/dashboard/BookingReviewModal";
+import { AfterHoursPanel, type AfterHoursRequest } from "@/components/dashboard/AfterHoursPanel";
 
 export const metadata: Metadata = { title: "Bookings", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -42,6 +43,16 @@ export default async function BookingsPage() {
     allDocs = docsRes.data;
     allPayments = paymentsRes.data;
   }
+
+  const afterHoursRequests: AfterHoursRequest[] = rawRows
+    .filter((r) => Number(r.after_hours) === 1 && !r.after_hours_approved_by)
+    .map((r) => ({
+      id: Number(r.id),
+      booking_no: (r.booking_no as string) ?? `BK-${r.id}`,
+      customer_name: (r.customer_name as string) ?? null,
+      vehicle_name: (r.vehicle_name as string) ?? null,
+      pickup_at: (r.pickup_at as string) ?? "",
+    }));
 
   const docsByBookingId = new Map<number, CustomerDocument[]>();
   for (const doc of allDocs) {
@@ -114,6 +125,8 @@ export default async function BookingsPage() {
           </p>
         </div>
       </div>
+
+      <AfterHoursPanel requests={afterHoursRequests} />
 
       <BookingsTableWithTabs initialBookings={bookings} />
     </div>

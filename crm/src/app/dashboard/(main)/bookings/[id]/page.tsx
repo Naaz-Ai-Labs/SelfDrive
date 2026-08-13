@@ -47,7 +47,6 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
     vehicle_deposit: vehicle?.deposit === undefined ? null : num(vehicle.deposit),
   };
   const id = Number(booking.id);
-  const customerId = booking.customer_id === null || booking.customer_id === undefined ? 0 : Number(booking.customer_id);
 
   const [statusSetting, staff, historyRes, inspectionsRes, damagesRes, adjustmentsRes, paymentsRes, documentsRes] =
     await Promise.all([
@@ -58,10 +57,12 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
       sbSelect<Record<string, unknown>>("damage_reports", `select=*&booking_id=eq.${id}`),
       sbSelect<Record<string, unknown>>("manual_adjustments", `select=*&booking_id=eq.${id}`),
       sbSelect<Record<string, unknown>>("payments", `select=*&booking_id=eq.${id}&order=created_at.desc`),
-      sbSelect<Record<string, unknown>>(
-        "customer_documents",
-        `select=*&or=${encodeURIComponent(`(booking_id.eq.${id},customer_id.eq.${customerId})`)}`
-      ),
+      // Scoped to THIS booking only. It previously also matched any document
+      // uploaded under the same customer_id — so a repeat customer's ID card from
+      // an unrelated earlier booking leaked into every new booking's document list.
+      // Every insert always sets booking_id, so there is no legitimate document
+      // that only this OR clause would catch.
+      sbSelect<Record<string, unknown>>("customer_documents", `select=*&booking_id=eq.${id}`),
     ]);
 
   for (const [label, res] of [
