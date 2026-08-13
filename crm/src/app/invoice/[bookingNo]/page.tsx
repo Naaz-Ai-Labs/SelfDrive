@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import Image from "next/image";
+
 import { sbSelect } from "@/lib/supabase-rest";
 import { getCurrentUser } from "@/lib/auth";
 import { businessInfo } from "@/lib/settings";
@@ -45,16 +45,14 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
     model: vehicle?.model ?? null,
   };
 
-  const [invoiceRes, photoRes, info] = await Promise.all([
+  // No vehicle photo is fetched: an invoice is a financial document and carries
+  // billing detail only. Dropping the query as well as the markup keeps the page
+  // from doing work whose only purpose was imagery.
+  const [invoiceRes, info] = await Promise.all([
     sbSelect<Record<string, unknown>>("invoices", `select=*&booking_id=eq.${Number(booking.id)}&limit=1`),
-    sbSelect<{ url: string }>(
-      "vehicle_photos",
-      `select=url&vehicle_id=eq.${Number(booking.vehicle_id)}&order=is_primary.desc,sort.asc&limit=1`
-    ),
     businessInfo(),
   ]);
   if (!invoiceRes.ok) throw new Error(`Could not load the invoice: ${invoiceRes.error}`);
-  if (!photoRes.ok) throw new Error(`Could not load the vehicle photo: ${photoRes.error}`);
 
   // lib/invoices.ts writes to Supabase now, so viewing an invoice can persist it
   // again. Generation is idempotent (it returns any existing row), and a failure
@@ -73,8 +71,6 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
       if (reread.ok) invoice = reread.data[0];
     }
   }
-  const photo = photoRes.data[0];
-
   const lines = [
     ["Base rental", Number(booking.base_amount)],
     ["Off-schedule / other fees", Number(booking.other_fees_amount)],
@@ -115,11 +111,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
           </div>
         </div>
 
-        {photo?.url && (
-          <div className="relative mt-6 h-48 w-full overflow-hidden rounded-xl bg-ink-100">
-            <Image src={photo.url} alt={String(booking.vehicle_name)} fill className="object-cover" sizes="700px" />
-          </div>
-        )}
+        {/* Deliberately no vehicle photography — see the note above the query. */}
 
         <table className="mt-6 w-full text-sm">
           <thead>

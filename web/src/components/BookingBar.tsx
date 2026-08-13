@@ -65,6 +65,19 @@ export function BookingBar({
 
   const handleReturnDateChange = (newDate: string) => {
     setReturnDate(newDate);
+
+    // Switching the drop date onto a Sunday can leave a previously-valid time
+    // (07:00, 08:00) selected that is no longer offered — the option disappears
+    // from the list but the state keeps it, and the booking submits a time the
+    // counter will not accept. Pull it forward to the earliest Sunday slot.
+    const parts = newDate.split("-").map(Number);
+    const landsOnSunday =
+      parts.length === 3 && !parts.some(isNaN) && new Date(parts[0], parts[1] - 1, parts[2]).getDay() === 0;
+    if (landsOnSunday && returnTime < "09:00") {
+      setReturnTime("09:00");
+      return;
+    }
+
     const isSameDay = pickupDate && newDate && pickupDate === newDate;
     if (isSameDay && returnTime <= pickupTime) {
       const validReturnHour = Math.min(23, parseInt(pickupTime.split(":")[0], 10) + 1);
@@ -177,8 +190,10 @@ export function BookingBar({
           >
             {TIME_SLOTS.filter((t) => {
               // Staff won't accept a vehicle return between midnight and 7 AM — no
-              // one is on-site to inspect and check it back in overnight.
-              if (t.value >= "00:00" && t.value < "07:00") {
+              // one is on-site to inspect and check it back in overnight. On
+              // Sundays the counter opens later still, so nothing before 9 AM.
+              const earliestReturn = isSundayReturn ? "09:00" : "07:00";
+              if (t.value < earliestReturn) {
                 return false;
               }
               const isSameDay = pickupDate && returnDate && pickupDate === returnDate;

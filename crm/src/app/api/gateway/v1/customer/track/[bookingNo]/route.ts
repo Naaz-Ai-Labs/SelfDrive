@@ -39,7 +39,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ boo
       : Promise.resolve({ ok: true as const, data: null }),
     sbSelect<Record<string, unknown>>(
       "customer_documents",
-      `select=id,kind,number,verified,created_at&or=${encodeURIComponent(`(booking_id.eq.${bookingId},customer_id.eq.${customerId})`)}`
+      // Scoped to THIS booking. It previously also matched on customer_id, so a
+      // returning customer saw every document from every past booking stacked onto
+      // whichever one they were viewing — seventeen entries on a booking with five.
+      // Every insert always sets booking_id, so nothing legitimate is lost.
+      `select=id,kind,number,verified,created_at&booking_id=eq.${bookingId}`
     ),
     sbSelect<Record<string, unknown>>(
       "payments",

@@ -265,6 +265,15 @@ export function BookingForm({
   const handleReturnDateChange = (newReturnDate: string) => {
     const targetDate = newReturnDate < minReturnDate ? minReturnDate : newReturnDate;
     setReturnDate(targetDate);
+
+    // A Sunday drop cannot be earlier than 09:00. Moving the date onto a Sunday
+    // would otherwise leave an already-selected 07:00/08:00 in state even though
+    // the option is no longer listed, submitting a time the counter won't accept.
+    if (getDayOfWeek(targetDate) === 0 && returnTime < "09:00") {
+      setReturnTime("09:00");
+      return;
+    }
+
     const isSameDay = pickupDate && targetDate && pickupDate === targetDate;
     if (isSameDay && returnTime <= pickupTime) {
       const validReturnHour = Math.min(23, parseInt(pickupTime.split(":")[0], 10) + 1);
@@ -401,12 +410,13 @@ export function BookingForm({
   const payNowAmount = activeQuote?.payableNow ?? 0;
   const depositAtPickup = activeQuote?.depositPayableAtPickup ?? activeQuote?.depositAmount ?? 0;
 
+  // Only the DRIVER's three documents are mandatory. Pillion documents remain
+  // available to upload — a customer travelling with a passenger can provide them —
+  // but they must never block a booking, since most rides are solo.
   const kycComplete = Boolean(
     (documents.licence?.url || documents.driver_licence?.url) &&
     (documents.govt_id?.url || documents.driver_govt_id?.url) &&
-    documents.driver_photo?.url &&
-    documents.pillion_id?.url &&
-    documents.pillion_photo?.url
+    documents.driver_photo?.url
   );
 
   function validateStep(n: number): boolean {
@@ -423,7 +433,7 @@ export function BookingForm({
     }
     if (n === 4) {
       if (!kycComplete) {
-        e.documents = "Please upload Driver Licence, Driver Govt ID, Driver Passport Photo, Pillion ID Proof, and Pillion Passport Photo before proceeding.";
+        e.documents = "Please upload the Driver Licence, Driver Government ID and Driver Passport Photo before proceeding.";
       }
       const dlNum = documents.licence?.number?.trim() ?? "";
       if (!dlNum) {
@@ -585,7 +595,12 @@ export function BookingForm({
         {step === 1 && (
           <div className="space-y-4">
             <h2 className="font-display text-xl font-semibold text-ink-900">When and what do you need?</h2>
-            <p className="text-sm text-ink-500">Pick up at any time and return within 24 hours (or 48 hours for Saturday bookings). Included drive limit is 100 km/day (Bikes &amp; Scooters) / 300 km/day (Cars). Extra KM fee is ₹4/km for bikes &amp; scooters / ₹8/km for cars.</p>
+            <p className="text-sm text-ink-500">
+              The rental day runs 8:00 AM to 8:00 AM. Picking up before 8:00 AM adds a ₹250
+              early-pickup fee; returning after 8:00 AM is charged as one additional full day.
+              Included drive limit is 100&nbsp;km/day (Bikes &amp; Scooters) / 300&nbsp;km/day
+              (Cars &amp; Tempo). Extra KM is ₹4/km for bikes &amp; scooters, ₹8/km for cars.
+            </p>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="label">Vehicle type</label>
@@ -770,7 +785,8 @@ export function BookingForm({
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`)
                     .filter((t) => {
                       // Staff won't accept a vehicle return between midnight and 7 AM.
-                      if (t >= "00:00" && t < "07:00") {
+                      // On Sundays the counter opens later, so nothing before 9 AM.
+                      if (t < (isSundayReturn ? "09:00" : "07:00")) {
                         return false;
                       }
                       const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
@@ -808,7 +824,7 @@ export function BookingForm({
               </div>
             </div>
             <p className="text-xs text-ink-500 font-medium">
-              Calculated Duration: {days} day{days > 1 ? "s" : ""} · Standard Daily Limit: 100 km/day (Bikes/Scooters) / 300 km/day (Cars) / Unlimited (Tempo) · Extra KM: ₹4/km (Bikes &amp; Scooters) / ₹8/km (Cars)
+              Calculated Duration: {days} day{days > 1 ? "s" : ""} · Standard Daily Limit: 100 km/day (Bikes/Scooters) / 300 km/day (Cars &amp; Tempo) · Extra KM: ₹4/km (Bikes &amp; Scooters) / ₹8/km (Cars)
             </p>
             <p className="mt-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900 shadow-xs">
               <strong>NOTE:</strong> Standard pickup is 8:00 AM and standard drop-off is 8:00 AM. Returning the vehicle after the standard 8:00 AM drop-off time will be billed as a full additional day charge.
@@ -997,14 +1013,17 @@ export function BookingForm({
         {step === 4 && (
           <div className="space-y-4">
             <h2 className="font-display text-xl font-semibold text-ink-900">Driving licence &amp; documents</h2>
-            <p className="text-sm text-ink-500">Upload documents for both the driver and pillion — mandatory for handover verification.</p>
+            <p className="text-sm text-ink-500">
+              The driver&rsquo;s three documents are required for handover verification. Pillion
+              documents are optional — add them only if someone is riding with you.
+            </p>
             <div className="grid gap-4 sm:grid-cols-2">
               {[
                 ["licence", "Driver Driving licence photo *"],
                 ["driver_govt_id", "Driver Government ID (Aadhaar/Passport) *"],
                 ["driver_photo", "Driver Passport Size Photo *"],
-                ["pillion_id", "Pillion ID Proof (Aadhaar/Passport) *"],
-                ["pillion_photo", "Pillion Passport Size Photo *"],
+                ["pillion_id", "Pillion ID Proof (Aadhaar/Passport) — optional"],
+                ["pillion_photo", "Pillion Passport Size Photo — optional"],
               ].map(([kind, label]) => (
                 <label key={kind} className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-5 text-center text-sm text-ink-500 hover:border-brand-500">
                   {documents[kind]?.url ? <span className="font-semibold text-emerald-700">✓ {label.replace(" *", "")} uploaded</span> : <span>{uploading === kind ? "Uploading…" : `Upload ${label}`}</span>}

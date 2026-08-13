@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import Image from "next/image";
+
 import { gatewayGet } from "@/lib/gateway";
 import { formatINR, formatDateTime } from "@/lib/utils";
 import { createClient } from "@supabase/supabase-js";
@@ -13,7 +13,6 @@ export const revalidate = 0;
 type InvoiceResponse = {
   booking: Record<string, unknown>;
   invoice: Record<string, unknown> | null;
-  photoUrl: string | null;
   business: Record<string, unknown>;
   error?: string;
 };
@@ -113,7 +112,6 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
           invoiceData = {
             booking: bookingObj,
             invoice: invoiceObj,
-            photoUrl: veh.primary_photo || (Array.isArray(veh.photos) ? veh.photos[0] : null) || "/vehicles/mahindra-thar.avif",
             business: businessObj,
           };
 
@@ -133,7 +131,7 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
     redirect("/customer/portal");
   }
 
-  const { booking, invoice, photoUrl, business: info } = invoiceData;
+  const { booking, invoice, business: info } = invoiceData;
 
   const lines = [
     ["Base rental", Number(booking.base_amount)],
@@ -175,11 +173,9 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
           </div>
         </div>
 
-        {photoUrl && (
-          <div className="relative mt-6 h-48 w-full overflow-hidden rounded-xl bg-ink-100">
-            <Image src={photoUrl} alt={String(booking.vehicle_name)} fill className="object-cover" sizes="700px" />
-          </div>
-        )}
+        {/* No vehicle photography on invoices. A tax invoice is a financial
+            document — it carries billing detail only. Do not reintroduce imagery
+            here or on the CRM's copy of this page. */}
 
         <table className="mt-6 w-full text-sm">
           <thead>
