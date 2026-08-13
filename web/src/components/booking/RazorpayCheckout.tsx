@@ -124,7 +124,7 @@ export function RazorpayCheckout({
           <button
             type="button"
             onClick={() => setShowBreakdown((prev) => !prev)}
-            className="inline-flex items-center gap-1 rounded-lg bg-brand-200/80 px-2.5 py-1 text-xs font-semibold text-ink-900 transition hover:bg-brand-300"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg bg-brand-200/80 px-3 py-2 text-xs font-semibold text-ink-900 transition hover:bg-brand-300"
           >
             <span>{showBreakdown ? "Hide Breakdown ▲" : "View Price Breakdown ▼"}</span>
           </button>

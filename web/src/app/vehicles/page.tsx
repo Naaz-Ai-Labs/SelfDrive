@@ -12,6 +12,13 @@ import { getCachedVehicleSearchPrice, parseDateParts } from "@/lib/search-pricin
 export const metadata: Metadata = {
   title: "Browse Vehicles",
   description: "Browse our full fleet of self-drive bikes, scooters and cars with fixed, transparent pricing.",
+  alternates: { canonical: "/vehicles" },
+  openGraph: {
+    title: "Browse Vehicles | Darshh Holiday",
+    description: "Browse our full fleet of self-drive bikes, scooters and cars with fixed, transparent pricing.",
+    type: "website",
+    images: [{ url: "/logo.jpeg", width: 792, height: 685, alt: "Darshh Holiday vehicle fleet" }],
+  },
 };
 export const revalidate = 60;
 

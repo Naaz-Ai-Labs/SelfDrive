@@ -14,11 +14,17 @@ export async function generateMetadata(props: { params: Promise<{ slug: string }
   const params = await props.params;
   const vehicle = await getVehicle(params.slug);
   if (!vehicle) return { title: "Vehicle not found" };
+  const description = `Rent the ${vehicle.name} — ${formatINR(vehicle.rate_24h)}/24h, ${vehicle.included_km} km included, ₹${vehicle.deposit} deposit. Fixed pricing, no bargaining.`;
   return {
     title: vehicle.name,
-    description: `Rent the ${vehicle.name} — ${formatINR(vehicle.rate_24h)}/24h, ${vehicle.included_km} km included, ₹${vehicle.deposit} deposit. Fixed pricing, no bargaining.`,
+    description,
     alternates: { canonical: `/vehicles/${vehicle.slug}` },
-    openGraph: vehicle.primary_photo ? { images: [{ url: vehicle.primary_photo }] } : undefined,
+    openGraph: {
+      title: vehicle.name,
+      description,
+      type: "website",
+      images: vehicle.primary_photo ? [{ url: vehicle.primary_photo }] : undefined,
+    },
   };
 }
 

@@ -43,7 +43,7 @@ export function FeedbackForm({ bookingId }: { bookingId: number }) {
             type="button"
             onClick={() => setRating(r)}
             aria-label={`${r} star${r > 1 ? "s" : ""}`}
-            className={`text-2xl transition ${r <= rating ? "text-amber-500" : "text-ink-200 hover:text-amber-300"}`}
+            className={`flex h-11 w-11 items-center justify-center text-2xl transition ${r <= rating ? "text-amber-500" : "text-ink-200 hover:text-amber-300"}`}
           >
             ★
           </button>

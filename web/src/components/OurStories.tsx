@@ -344,7 +344,7 @@ export function OurStories({ variant = "dark" }: { variant?: "dark" | "light" })
             <button
               onClick={() => setSelectedStory(null)}
               aria-label="Close story detail"
-              className={`absolute top-4 right-4 flex h-9 w-9 items-center justify-center rounded-full transition ${
+              className={`absolute top-4 right-4 flex h-11 w-11 items-center justify-center rounded-full transition ${
                 isLight ? "bg-ink-100 text-ink-700 hover:bg-ink-200" : "bg-white/10 text-white hover:bg-white/20"
               }`}
             >

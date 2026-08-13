@@ -7,6 +7,13 @@ import { BookingForm } from "@/components/booking/BookingForm";
 export const metadata: Metadata = {
   title: "Book a Vehicle",
   description: "Book your bike, scooter or car in minutes. Your progress is saved automatically so you can pick up where you left off.",
+  alternates: { canonical: "/booking" },
+  openGraph: {
+    title: "Book a Vehicle | Darshh Holiday",
+    description: "Book your bike, scooter or car in minutes. Your progress is saved automatically so you can pick up where you left off.",
+    type: "website",
+    images: [{ url: "/logo.jpeg", width: 792, height: 685, alt: "Darshh Holiday booking" }],
+  },
 };
 
 export default async function BookingPage() {

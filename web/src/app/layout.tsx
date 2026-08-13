@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Archivo_Black, Jost } from "next/font/google";
 import "./globals.css";
 import { Header } from "@/components/Header";
@@ -23,6 +23,13 @@ const sans = Jost({
   display: "swap",
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: "#f7f2eb",
+};
+
 export async function generateMetadata(): Promise<Metadata> {
   const info = await businessInfo();
   const name = (info.name as string) ?? "Darshh Holiday";
@@ -35,6 +42,7 @@ export async function generateMetadata(): Promise<Metadata> {
       template: `%s | ${name}`,
     },
     description: `Self-drive bike, scooter and car rentals across Hassan district, Karnataka. Fixed transparent pricing, well-maintained vehicles, refundable deposit, no bargaining. Book online in minutes.`,
+    alternates: { canonical: "/" },
     keywords: [
       "self drive car rental Hassan",
       "bike rental Hassan",
