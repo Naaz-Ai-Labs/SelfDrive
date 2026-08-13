@@ -133,11 +133,9 @@ ON CONFLICT (slug) DO UPDATE SET
 --
 --    extra_km_rate = 8, deposit = 2000, included_km = 300 for every car.
 --
---    NOTE: the car poster is a SINGLE price list with no weekend column. There
---    is no weekend rate to record, so weekend_rate_24h is set EQUAL to
---    rate_24h rather than left NULL — the booking engine falls back to
---    rate_24h on NULL anyway, but an explicit equal value makes the "no
---    weekend premium on cars" rule visible in the data.
+--    NOTE: the car poster's single price list is the WEEKDAY rate. Owner
+--    confirmed separately: cars carry a flat Rs. 50 weekend premium (Sat/Sun),
+--    same rule as most of the two-wheelers. weekend_rate_24h = rate_24h + 50.
 -- ---------------------------------------------------------------------------
 INSERT INTO public.vehicles (
   slug, name, brand, model, category_id, fuel_type, transmission, seats,
@@ -148,7 +146,7 @@ SELECT
   v.slug, v.name, v.brand, v.model,
   (SELECT id FROM public.vehicle_categories WHERE slug = 'car'),
   'Petrol', v.transmission, v.seats,
-  300, 8, v.rate_24h, v.rate_24h, 2000,
+  300, 8, v.rate_24h, v.rate_24h + 50, 2000,
   0, 1, 'available'
 FROM (VALUES
   ('balleno-manual-car',      'Balleno Manual Car',      'Maruti Suzuki', 'Baleno',  'Manual',    5, 3500::NUMERIC),
