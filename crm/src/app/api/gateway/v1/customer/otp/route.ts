@@ -5,6 +5,7 @@ import { sbSelectOne, sbInsert, sbUpdate } from "@/lib/supabase-rest";
 import { hashOtp, createCustomerSession, findCustomerByTarget, destroyCustomerSession } from "@/lib/portal-session";
 import { normalizePhone } from "@/lib/utils";
 import { logMessage } from "@/lib/activity";
+import { getOtpProvider } from "@/lib/otp-provider";
 
 const requestSchema = z.object({ op: z.literal("request"), target: z.string().min(3).max(120) });
 const verifySchema = z.object({ op: z.literal("verify"), target: z.string().min(3).max(120), code: z.string().regex(/^\d{6}$/) });
@@ -58,6 +59,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Could not send an OTP right now. Please try again." }, { status: 502 });
     }
     await logMessage(isEmail(target) ? "email" : "whatsapp", target, "Your OTP for Darshh Holiday", `Your login OTP is ${code}. It is valid for 10 minutes.`);
+
+    // Best-effort real delivery via a configured provider. This must never block or
+    // fail the request — until the owner supplies WhatsApp/MSG91 credentials this
+    // always resolves to NullOtpProvider's expected failure, and the existing
+    // demo-mode/on-screen fallback below keeps working exactly as before.
+    if (!isEmail(target)) {
+      try {
+        const provider = getOtpProvider();
+        const result = await provider.send(target, code, "whatsapp");
+        if (!result.ok) console.warn(`[otp] provider "${provider.name}" did not send: ${result.error}`);
+      } catch (err) {
+        console.warn("[otp] provider send threw:", err);
+      }
+    }
 
     const demo = process.env.NODE_ENV !== "production";
     return NextResponse.json({

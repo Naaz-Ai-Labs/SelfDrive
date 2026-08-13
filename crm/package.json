@@ -7,7 +7,6 @@
     "dev": "next dev -H 0.0.0.0 -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
-    "seed": "tsx src/lib/seed.ts",
     "migrate:supabase": "tsx scripts/migrate_to_supabase.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -16,7 +15,6 @@
     "@supabase/supabase-js": "^2.112.0",
     "@upstash/redis": "^1.38.2",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^13.0.3",
     "next": "16.2.12",
     "razorpay": "^2.9.8",
     "react": "19.2.8",

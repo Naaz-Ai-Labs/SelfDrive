@@ -79,6 +79,21 @@ export async function POST(req: NextRequest) {
         await cacheSet(`otp:${target}`, code, 600);
       } catch {}
 
+      // Best-effort real delivery via a configured provider. Never blocks or fails the
+      // request — until the owner supplies WhatsApp/MSG91 credentials this always
+      // resolves to NullOtpProvider's expected failure, and the demo-mode/on-screen
+      // fallback above (ALLOW_DEMO_OTP) keeps working exactly as before.
+      if (!target.includes("@")) {
+        try {
+          const { getOtpProvider } = await import("@/lib/otp-provider");
+          const provider = getOtpProvider();
+          const result = await provider.send(target, code, "whatsapp");
+          if (!result.ok) console.warn(`[otp] provider "${provider.name}" did not send: ${result.error}`);
+        } catch (err) {
+          console.warn("[otp] provider send threw:", err);
+        }
+      }
+
       // Returning the OTP to the caller defeats the entire purpose of an OTP: anyone
       // could request a code for any phone number and read it out of this response.
       // It stays available only behind an explicit opt-in flag for local demos.

@@ -541,6 +541,7 @@ export async function addManualAdjustment(input: { bookingId: number; type: stri
 export async function recordInspection(input: {
   bookingId: number; kind: "handover" | "return"; odometer?: number; fuelLevel?: string; notes?: string;
   photos: Array<{ side: string; url: string; notes?: string }>;
+  geo?: { lat: number; lng: number; accuracyM?: number } | null;
 }) {
   const user = await staffUser();
 
@@ -551,6 +552,11 @@ export async function recordInspection(input: {
     odometer: input.odometer ?? null,
     fuel_level: input.fuelLevel ?? null,
     notes: input.notes ?? null,
+    // Best-effort: geolocation may be denied, unavailable, or absent (desktop CRM
+    // without a GPS). Never block the inspection on it — just record what we have.
+    geo_lat: input.geo?.lat ?? null,
+    geo_lng: input.geo?.lng ?? null,
+    geo_accuracy_m: input.geo?.accuracyM ?? null,
   });
   if (!inspection.ok) return fail(inspection, "Recording the inspection");
   const inspectionId = Number(inspection.data.id);

@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomToken } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/auth";
 import { getPortalSession } from "@/lib/portal-actions";
-import { getWritableUploadsDir } from "@/lib/db";
+import { getWritableUploadsDir } from "@/lib/uploads-dir";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const MAX_BYTES = 8 * 1024 * 1024;

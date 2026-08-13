@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { requireGatewayKey } from "@/lib/gateway-auth";
 import { randomToken } from "@/lib/utils";
-import { getWritableUploadsDir } from "@/lib/db";
+import { getWritableUploadsDir } from "@/lib/uploads-dir";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const MAX_BYTES = 8 * 1024 * 1024;
