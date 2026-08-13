@@ -8,7 +8,7 @@
  * Every write here is awaited, and a failed write is reported as a failure.
  */
 
-import { normalizePhone } from "./utils";
+import { normalizePhone, nextNumber } from "./utils";
 import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { calculateQuote } from "./pricing";
@@ -151,11 +151,12 @@ export async function checkVehicleAvailable(
  * the collision surfaced as a failed insert. This mixes the epoch millisecond with
  * randomness, and `createBooking` retries on the unique violation regardless.
  */
+/** Delegates to the shared generator so booking numbers get the same entropy as
+ * every other reference number. The previous local copy drew from 46,656 random
+ * values, which collides across a burst inside one millisecond — survivable here
+ * only because the insert retries, but it burned retries for no reason. */
 function makeBookingNo(): string {
-  const year = new Date().getFullYear();
-  const stamp = Date.now().toString(36).toUpperCase().slice(-6);
-  const rand = Math.floor(Math.random() * 46656).toString(36).toUpperCase().padStart(3, "0");
-  return `BK-${year}-${stamp}${rand}`;
+  return nextNumber("BK", null);
 }
 
 function isUniqueViolation(error: string, status?: number): boolean {

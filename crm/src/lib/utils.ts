@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 export function formatINR(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return new Intl.NumberFormat("en-IN", {
@@ -71,7 +73,11 @@ export function slugify(text: string): string {
 export function nextNumber(prefix: string, id: number | null | undefined): string {
   if (id) return `${prefix}-${new Date().getFullYear()}-${String(id).padStart(5, "0")}`;
   const stamp = Date.now().toString(36).toUpperCase().slice(-6);
-  const rand = Math.floor(Math.random() * 46656).toString(36).toUpperCase().padStart(3, "0");
+  // 8 hex chars (~4.3e9 values) drawn from the CSPRNG. An earlier version used
+  // Math.random() over 46,656 values, which collides ~1% of the time across a burst
+  // inside a single millisecond — and every column this feeds is UNIQUE NOT NULL,
+  // so a collision is a failed insert, not a cosmetic duplicate.
+  const rand = randomBytes(4).toString("hex").toUpperCase();
   return `${prefix}-${new Date().getFullYear()}-${stamp}${rand}`;
 }
 
