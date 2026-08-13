@@ -9,6 +9,8 @@ import { saveBookingDraft, getDraft, submitBooking, getAvailableVehicles, getQuo
 import { RazorpayCheckout } from "./RazorpayCheckout";
 import { InlineInvoiceCard } from "./InlineInvoiceCard";
 import type { Vehicle } from "@/lib/data";
+import { calculateRentalQuoteFromStrings, istInstantFrom } from "@/lib/pricing";
+import { computeRentalDays } from "@/lib/rental-clock";
 import { compressImageFile } from "@/lib/image-compression";
 
 type Category = { id: number; name: string; kind: string; icon: string | null };
@@ -20,8 +22,8 @@ const DEFAULT_TERMS = [
   "Valid original Driving Licence & Government ID (Aadhaar/Passport) mandatory for vehicle handover.",
   "Included drive limit per day. Driving beyond this limit is charged per KM.",
   "Fuel policy: Return the vehicle with the same fuel level as provided at pickup.",
-  "Security deposit is fully refundable upon safe vehicle return inspection.",
-  "Late returns exceeding 1 minute add full 24-hour additional day rental charges.",
+  "Security deposit is paid in cash at pickup (not online) and is fully refundable upon safe vehicle return inspection.",
+  "Returning after the standard 8:00 AM drop time adds one full additional rental day at that day's rate.",
   "In case of any accident or damages, notify the owner immediately and do not do anything on your own.",
 ];
 
@@ -124,6 +126,12 @@ function formatDlNumber(val: string): string {
   return `${clean.slice(0, 4)} ${clean.slice(4, 15)}`;
 }
 
+/**
+ * The client-side quote. It no longer does any pricing arithmetic of its own — the maths
+ * lives in @/lib/pricing (which mirrors the CRM), so what the form shows is what the CRM
+ * charges. The previous local copy invented a ₹50 weekend hike, a Sunday-return extra
+ * day and a `weekendMinDays: 1`, and folded the deposit into the payable total.
+ */
 function computeClientQuote(
   vehicle: Vehicle | null | undefined,
   pickupDateStr: string | null,
@@ -131,86 +139,8 @@ function computeClientQuote(
   returnDateStr: string | null,
   returnTimeStr: string | null
 ) {
-  if (!vehicle || !pickupDateStr || !returnDateStr) return null;
-  const pParts = parseDateParts(pickupDateStr);
-  const rParts = parseDateParts(returnDateStr);
-  if (!pParts || !rParts) return null;
-
-  const pTime = pickupTimeStr || "08:00";
-  const isSundayReturn = rParts.dateObj.getDay() === 0;
-  const standardReturnTime = "08:00";
-  const rTime = returnTimeStr || standardReturnTime;
-
-  const p = new Date(pParts.year, pParts.month - 1, pParts.day);
-  const r = new Date(rParts.year, rParts.month - 1, rParts.day);
-  const msPerDay = 24 * 60 * 60 * 1000;
-  const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
-  const pDayOfWeek = p.getDay();
-  const rDayOfWeek = r.getDay();
-
-  let days = 1;
-  if (isSameDay) {
-    days = pDayOfWeek === 6 ? 2 : 1;
-  } else if (pDayOfWeek === 5 && (rDayOfWeek === 6 || rDayOfWeek === 0)) {
-    days = 3; // Fri+Sat or Fri+Sat+Sun = 3 days
-  } else if (pDayOfWeek === 6 && rDayOfWeek === 0) {
-    days = 2; // Sat+Sun = 2 days
-  } else {
-    const diffMs = Math.max(0, r.getTime() - p.getTime());
-    const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-    const isLateDrop = rTime > "08:00";
-    const sundayExtra = isSundayReturn ? 1 : 0;
-    const lateDropExtra = isLateDrop ? 1 : 0;
-    days = baseDays + sundayExtra + lateDropExtra;
-  }
-
-  let baseAmount = 0;
-  let weekendDaysCount = 0;
-  const dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }> = [];
-
-  for (let i = 0; i < days; i++) {
-    const day = new Date(p.getFullYear(), p.getMonth(), p.getDate() + i);
-    const dayOfWeek = day.getDay();
-    const isWknd = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
-    if (isWknd) weekendDaysCount++;
-    const rate = isWknd ? Number(vehicle.weekend_rate_24h ?? (vehicle.rate_24h + 50)) : Number(vehicle.rate_24h);
-    const y = day.getFullYear();
-    const m = String(day.getMonth() + 1).padStart(2, "0");
-    const d = String(day.getDate()).padStart(2, "0");
-    dayBreakdown.push({ date: `${y}-${m}-${d}`, isWeekend: isWknd, rate });
-    baseAmount += rate;
-  }
-
-  const isEarlyPickup = pTime < "08:00";
-  const timingFee = isEarlyPickup ? 250 : 0;
-
-  const depositAmount = Number(vehicle.deposit ?? 1000);
-  const gstPct = 6;
-  const taxableAmount = baseAmount + timingFee;
-  const gstAmount = Math.round(taxableAmount * 0.06);
-  const totalAmount = taxableAmount + depositAmount + gstAmount;
-
-  return {
-    days,
-    dayBreakdown,
-    weekendDaysCount,
-    baseAmount,
-    offSchedulePickupFee: timingFee,
-    gstAmount,
-    gstPct,
-    gatewayFeeAmount: 0,
-    gatewayFeePct: 0,
-    depositAmount,
-    includedKm: (vehicle.included_km ?? 100) * days,
-    extraKmRate: (vehicle.category_kind === "bike" || vehicle.category_kind === "scooter") ? 4 : (vehicle.extra_km_rate ?? 8),
-    afterHours: isEarlyPickup,
-    offSchedulePickup: timingFee > 0,
-    weekendMinDays: 1,
-    belowWeekendMinimum: false,
-    appliedRuleName: null,
-    totalAmount,
-    payableNow: totalAmount,
-  };
+  if (!vehicle) return null;
+  return calculateRentalQuoteFromStrings(vehicle, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr);
 }
 
 function formatDisplayDate(dateStr: string | null | undefined): string {
@@ -221,6 +151,7 @@ function formatDisplayDate(dateStr: string | null | undefined): string {
     day: "numeric",
     month: "short",
     year: "numeric",
+    timeZone: "Asia/Kolkata",
   });
 }
 
@@ -290,26 +221,14 @@ export function BookingForm({
   const pickupAt = combineIso(pickupDate, pickupTime);
   const returnAt = combineIso(returnDate, returnTime);
 
+  // 08:00 → 08:00 IST day counting, shared with the CRM. A drop after 08:00 adds one
+  // whole charged day; nothing else does.
   const days = useMemo(() => {
-    const pParts = parseDateParts(pickupDate);
-    const rParts = parseDateParts(returnDate);
-    if (!pParts || !rParts) return 1;
-    const isSameDay = pParts.year === rParts.year && pParts.month === rParts.month && pParts.day === rParts.day;
-    const p = new Date(pParts.year, pParts.month - 1, pParts.day);
-    const r = new Date(rParts.year, rParts.month - 1, rParts.day);
-    const pDayOfWeek = p.getDay();
-    const rDayOfWeek = r.getDay();
-
-    if (isSameDay) return pDayOfWeek === 6 ? 2 : 1;
-    if (pDayOfWeek === 5 && (rDayOfWeek === 6 || rDayOfWeek === 0)) return 3; // Fri+Sat or Fri+Sat+Sun = 3 days
-    if (pDayOfWeek === 6 && rDayOfWeek === 0) return 2; // Sat+Sun = 2 days
-
-    const rawDiff = Math.max(0, r.getTime() - p.getTime());
-    const baseDays = Math.max(1, Math.round(rawDiff / (24 * 60 * 60 * 1000)));
-    const isSunday = rParts.dateObj.getDay() === 0;
-    const isLateDrop = returnTime > "08:00";
-    return baseDays + (isSunday ? 1 : 0) + (isLateDrop ? 1 : 0);
-  }, [pickupDate, returnDate, returnTime]);
+    const p = istInstantFrom(pickupDate, pickupTime);
+    const r = istInstantFrom(returnDate, returnTime);
+    if (!p || !r) return 1;
+    return computeRentalDays({ pickupAt: p, returnAt: r, pickupTimeHM: pickupTime, returnTimeHM: returnTime }).days;
+  }, [pickupDate, pickupTime, returnDate, returnTime]);
 
   const [vehicleId, setVehicleId] = useState<number | null>(search.get("vehicle") ? Number(search.get("vehicle")) : null);
   const [availableVehicles, setAvailableVehicles] = useState<Vehicle[]>(initialVehicles);
@@ -319,6 +238,7 @@ export function BookingForm({
   const [contact, setContact] = useState({ name: "", phone: "", email: "", address: "", dob: "", emergencyContact: "" });
   const [documents, setDocuments] = useState<Record<string, { url: string; number?: string; expiry?: string }>>({});
   const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
   const [termsAccepted, setTermsAccepted] = useState(false);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -489,6 +409,10 @@ export function BookingForm({
 
   const activeQuote = clientQuote ?? quote;
 
+  // The ONLY figure that may be charged online. The security deposit is cash at pickup.
+  const payNowAmount = activeQuote?.payableNow ?? 0;
+  const depositAtPickup = activeQuote?.depositPayableAtPickup ?? activeQuote?.depositAmount ?? 0;
+
   const kycComplete = Boolean(
     (documents.licence?.url || documents.driver_licence?.url) &&
     (documents.govt_id?.url || documents.driver_govt_id?.url) &&
@@ -539,12 +463,28 @@ export function BookingForm({
 
   async function upload(kind: string, file: File) {
     setUploading(kind);
-    const compressed = await compressImageFile(file, 1600, 0.8);
-    const fd = new FormData();
-    fd.append("file", compressed);
-    const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json()).catch(() => null);
-    setUploading(null);
-    if (res?.path) setDocuments((d) => ({ ...d, [kind]: { ...d[kind], url: res.path } }));
+    setUploadErrors((e) => ({ ...e, [kind]: "" }));
+    try {
+      const compressed = await compressImageFile(file, 1600, 0.8);
+      const fd = new FormData();
+      fd.append("file", compressed);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(`Upload server returned an unexpected response (${res.status}). Please try again.`);
+      }
+      const data = await res.json();
+      if (!res.ok || !data?.path) {
+        throw new Error(data?.error || "Upload failed. Please try again or use a smaller image.");
+      }
+      setDocuments((d) => ({ ...d, [kind]: { ...d[kind], url: data.path } }));
+    } catch (err) {
+      // A silent failure here previously left the customer staring at an "Upload"
+      // button with no explanation and no document on file — this is the fix.
+      setUploadErrors((e) => ({ ...e, [kind]: err instanceof Error ? err.message : "Upload failed. Please try again." }));
+    } finally {
+      setUploading(null);
+    }
   }
 
   async function submit() {
@@ -571,12 +511,15 @@ export function BookingForm({
       <div className="mx-auto max-w-xl">
         {!paid ? (
           <div className="card p-6 sm:p-8">
-            <h1 className="font-display text-2xl font-semibold text-ink-900">Booking received — {result.bookingNo}</h1>
+            <h2 className="font-display text-2xl font-semibold text-ink-900">Booking received — {result.bookingNo}</h2>
             <p className="mt-2 text-sm text-ink-600">Complete your online payment now to confirm your vehicle reservation instantly.</p>
+            <p className="mt-1 text-sm text-ink-600">
+              Pay now online: <strong>{formatINR(payNowAmount)}</strong> · Security deposit (cash at pickup, refundable): <strong>{formatINR(depositAtPickup)}</strong>
+            </p>
             <div className="mt-6">
               <RazorpayCheckout
                 bookingId={result.bookingId}
-                amountDue={activeQuote?.totalAmount ?? 0}
+                amountDue={payNowAmount}
                 customerName={contact.name}
                 customerPhone={contact.phone}
                 customerEmail={contact.email}
@@ -590,7 +533,7 @@ export function BookingForm({
           <div>
             <div className="text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl text-emerald-700">✓</div>
-              <h1 className="mt-4 font-display text-2xl font-semibold text-ink-900">You&apos;re all set!</h1>
+              <h2 className="mt-4 font-display text-2xl font-semibold text-ink-900">You&apos;re all set!</h2>
               <p className="mt-1.5 text-xs text-ink-600">Your booking number is <strong>{result.bookingNo}</strong>. Here is your official payment tax invoice.</p>
               <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
                 <Link href={`/track/${result.bookingNo}`} className="btn-primary py-2 px-4 text-xs font-bold bg-brand-500 text-ink-950 shadow-sm">
@@ -609,7 +552,7 @@ export function BookingForm({
               customerPhone={contact.phone}
               customerEmail={contact.email}
               quote={activeQuote}
-              amountPaid={activeQuote?.totalAmount ?? 2219}
+              amountPaid={payNowAmount}
             />
           </div>
         )}
@@ -806,8 +749,8 @@ export function BookingForm({
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`)
                     .filter((t) => {
-                      // Always exclude drop-off time slots from 12 AM (00:00) to 5 AM (05:00)
-                      if (t >= "00:00" && t <= "05:00") {
+                      // Staff won't accept a vehicle return between midnight and 7 AM.
+                      if (t >= "00:00" && t < "07:00") {
                         return false;
                       }
                       const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
@@ -889,7 +832,9 @@ export function BookingForm({
                     const isSelected = Number(vehicleId) === Number(v.id);
                     const vQuote = computeClientQuote(v, pickupDate, pickupTime, returnDate, returnTime);
                     const isOutOfStock = (v.available_units ?? v.total_units ?? 0) <= 0;
-                    const weekendDiff = (v.weekend_rate_24h ?? (v.rate_24h + 50)) - v.rate_24h;
+                    // The vehicle's own weekend rate — many vehicles genuinely charge the
+                    // same on weekends, so this is often 0 and no badge is shown.
+                    const weekendDiff = Number(v.weekend_rate_24h ?? v.rate_24h) - Number(v.rate_24h);
 
                     return (
                       <button
@@ -928,7 +873,10 @@ export function BookingForm({
                                   <span className="text-xs font-normal text-ink-500"> for {vQuote.days} day{vQuote.days > 1 ? "s" : ""}</span>
                                 </p>
                                 <p className="text-[11px] text-ink-500 font-medium">
-                                  Total: {formatINR(vQuote.totalAmount)} (incl. GST &amp; Deposit)
+                                  Pay now online: {formatINR(vQuote.payableNow)} (incl. GST)
+                                </p>
+                                <p className="text-[11px] text-ink-500 font-medium">
+                                  Security deposit (cash at pickup, refundable): {formatINR(vQuote.depositPayableAtPickup)}
                                 </p>
                               </div>
                             ) : (
@@ -961,7 +909,7 @@ export function BookingForm({
               <div className="rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm">
                 <div className="flex items-center justify-between">
                   <p className="font-semibold text-ink-900">
-                    Estimated total for {selectedVehicle.name}: {formatINR(activeQuote.totalAmount)}
+                    {selectedVehicle.name} — pay now online: {formatINR(activeQuote.payableNow)}
                   </p>
                   {activeQuote.weekendDaysCount && activeQuote.weekendDaysCount > 0 ? (
                     <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
@@ -971,11 +919,18 @@ export function BookingForm({
                 </div>
                 <p className="mt-1 text-ink-600">
                   {activeQuote.days} day{activeQuote.days > 1 ? "s" : ""} ({formatINR(activeQuote.baseAmount)})
-                  {activeQuote.offSchedulePickupFee > 0 && <> + timing surcharge {formatINR(activeQuote.offSchedulePickupFee)}</>}
+                  {activeQuote.offSchedulePickupFee > 0 && <> + early pickup surcharge {formatINR(activeQuote.offSchedulePickupFee)}</>}
                   {" "}+ GST {formatINR(activeQuote.gstAmount)}
-                  {activeQuote.gatewayFeeAmount > 0 && <> + gateway fee {formatINR(activeQuote.gatewayFeeAmount)}</>}
-                  {activeQuote.depositAmount > 0 && <> + refundable security deposit {formatINR(activeQuote.depositAmount)}</>}.
+                  {activeQuote.gatewayFeeAmount > 0 && <> + gateway fee {formatINR(activeQuote.gatewayFeeAmount)}</>}.
                 </p>
+                <p className="mt-1 font-medium text-emerald-800">
+                  Security deposit (cash at pickup, refundable): {formatINR(depositAtPickup)} — not charged online.
+                </p>
+                {activeQuote.lateDrop && (
+                  <p className="mt-1 text-amber-800">
+                    Drop is after 8:00 AM, so one extra full rental day is included above.
+                  </p>
+                )}
                 {activeQuote.belowWeekendMinimum && (
                   <p className="mt-2 font-medium text-red-700">Weekend bookings need a minimum of {activeQuote.weekendMinDays} days for this vehicle — please add more days on the previous step.</p>
                 )}
@@ -1033,6 +988,9 @@ export function BookingForm({
               ].map(([kind, label]) => (
                 <label key={kind} className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-5 text-center text-sm text-ink-500 hover:border-brand-500">
                   {documents[kind]?.url ? <span className="font-semibold text-emerald-700">✓ {label.replace(" *", "")} uploaded</span> : <span>{uploading === kind ? "Uploading…" : `Upload ${label}`}</span>}
+                  {uploadErrors[kind] && (
+                    <span className="text-xs font-medium text-red-600">{uploadErrors[kind]} Tap to retry.</span>
+                  )}
                   <input
                     type="file"
                     accept="image/*,application/pdf"
@@ -1158,14 +1116,15 @@ export function BookingForm({
               </div>
               {activeQuote && activeQuote.offSchedulePickupFee > 0 && (
                 <div className="flex justify-between text-amber-800">
-                  <span>Off-schedule timing surcharge (Early pickup / Late return)</span>
+                  <span>Early pickup surcharge (before 8:00 AM, one-off)</span>
                   <span className="font-semibold">{formatINR(activeQuote.offSchedulePickupFee)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-ink-700">
-                <span>Security deposit (Fully refundable upon vehicle return)</span>
-                <span className="font-semibold text-ink-900">{formatINR(activeQuote?.depositAmount ?? (selectedVehicle?.deposit ?? 0))}</span>
-              </div>
+              {activeQuote?.lateDrop && (
+                <p className="text-[11px] font-medium text-amber-800">
+                  Drop after 8:00 AM — one extra full rental day is included in the {activeQuote.days} days above.
+                </p>
+              )}
               {activeQuote && activeQuote.gstAmount > 0 && (
                 <div className="flex justify-between text-ink-700">
                   <span>GST ({activeQuote.gstPct}%)</span>
@@ -1179,9 +1138,17 @@ export function BookingForm({
                 </div>
               )}
               <div className="flex justify-between border-t border-brand-200 pt-2.5 text-base font-bold text-ink-900">
-                <span>Total payable amount</span>
-                <span className="text-lg text-brand-700">{formatINR(activeQuote?.totalAmount ?? 0)}</span>
+                <span>Pay now online</span>
+                <span className="text-lg text-brand-700">{formatINR(payNowAmount)}</span>
               </div>
+              <div className="flex justify-between text-sm font-semibold text-emerald-800">
+                <span>Security deposit (cash at pickup, refundable)</span>
+                <span>{formatINR(depositAtPickup)}</span>
+              </div>
+              <p className="text-[11px] text-ink-500">
+                The security deposit is <strong>not</strong> collected online. You pay it in cash when you collect the
+                vehicle, and it is returned in full after the return inspection.
+              </p>
             </div>
 
             {/* Terms & Conditions */}

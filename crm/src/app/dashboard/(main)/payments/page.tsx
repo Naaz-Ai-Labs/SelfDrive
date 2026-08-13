@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
-import { syncLatestFromSupabase } from "@/lib/hydrate-db";
+import { sbSelect, sbUpdate, num } from "@/lib/supabase-rest";
 import { fetchRazorpayPayment } from "@/lib/razorpay";
 import { PaymentsTableWithDrawer } from "@/components/dashboard/PaymentsTableWithDrawer";
 import type { PaymentTransactionData } from "@/components/dashboard/PaymentDetailModal";
@@ -14,28 +13,29 @@ export default async function PaymentsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
 
-  const db = getDb();
-  try {
-    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
-  } catch {}
+  const paymentsRes = await sbSelect<Record<string, unknown>>(
+    "payments",
+    "select=*,bookings(booking_no,pickup_at,return_at,vehicles(name,registration_no)),customers(name,phone,email)&order=created_at.desc,due_date.asc.nullslast"
+  );
+  if (!paymentsRes.ok) throw new Error(`Could not load payments: ${paymentsRes.error}`);
 
-  let rawRows: Array<Record<string, unknown>> = [];
-  try {
-    rawRows = db
-      .prepare(
-        `SELECT p.*, b.booking_no, b.pickup_at, b.return_at,
-                c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
-                v.name AS vehicle_name, v.registration_no
-         FROM payments p
-         LEFT JOIN bookings b ON b.id = p.booking_id
-         LEFT JOIN customers c ON c.id = p.customer_id
-         LEFT JOIN vehicles v ON v.id = b.vehicle_id
-         ORDER BY p.created_at DESC, p.due_date IS NULL, p.due_date`
-      )
-      .all() as Array<Record<string, unknown>>;
-  } catch (err) {
-    console.error("Payments query error:", err);
-  }
+  const rawRows = paymentsRes.data.map((p) => {
+    const booking = p.bookings as
+      | { booking_no?: string; pickup_at?: string; return_at?: string; vehicles?: { name?: string; registration_no?: string } | null }
+      | null;
+    const customer = p.customers as { name?: string; phone?: string; email?: string } | null;
+    return {
+      ...p,
+      booking_no: booking?.booking_no ?? null,
+      pickup_at: booking?.pickup_at ?? null,
+      return_at: booking?.return_at ?? null,
+      vehicle_name: booking?.vehicles?.name ?? null,
+      registration_no: booking?.vehicles?.registration_no ?? null,
+      customer_name: customer?.name ?? null,
+      customer_phone: customer?.phone ?? null,
+      customer_email: customer?.email ?? null,
+    } as Record<string, unknown>;
+  });
 
   for (const p of rawRows) {
     const rzpId = p.razorpay_payment_id as string | undefined;
@@ -48,9 +48,11 @@ export default async function PaymentsPage() {
           const liveMethod = rzp.method ? (rzp.method.toLowerCase() === "upi" ? "UPI" : rzp.method.toUpperCase()) : null;
           const liveRrn = rzp.acquirer_data?.rrn || rzp.acquirer_data?.upi_transaction_id || rzp.acquirer_data?.bank_transaction_id || null;
 
-          db.prepare(
-            "UPDATE payments SET upi_id = ?, vpa = ?, bank_ref_no = COALESCE(?, bank_ref_no), method = COALESCE(?, method) WHERE id = ?"
-          ).run(liveVpa, liveVpa, liveRrn, liveMethod, p.id);
+          const patch: Record<string, unknown> = { upi_id: liveVpa, vpa: liveVpa };
+          // COALESCE in SQL; here, simply omit the key so the stored value stands.
+          if (liveRrn) patch.bank_ref_no = liveRrn;
+          if (liveMethod) patch.method = liveMethod;
+          await sbUpdate("payments", `id=eq.${Number(p.id)}`, patch);
 
           p.upi_id = liveVpa;
           p.vpa = liveVpa;
@@ -78,8 +80,8 @@ export default async function PaymentsPage() {
       registration_no: (p.registration_no as string) ?? null,
       pickup_at: (p.pickup_at as string) ?? null,
       return_at: (p.return_at as string) ?? null,
-      amount: Number(p.amount ?? 0),
-      amount_paise: Number(p.amount_paise ?? 0),
+      amount: num(p.amount),
+      amount_paise: num(p.amount_paise),
       currency: String(p.currency ?? "INR"),
       kind: String(p.kind ?? "advance"),
       method: method ?? (p.razorpay_payment_id ? "Online Gateway" : "Cash / Direct"),

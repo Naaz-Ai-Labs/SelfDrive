@@ -121,7 +121,7 @@ const EMPTY_CONTENT: Content = {
 };
 
 async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey =
     process.env.SUPABASE_SECRET_KEY ||
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -281,47 +281,38 @@ export async function getVehicleCategory(slug: string): Promise<VehicleCategory 
   return (await getContent()).categories.find((c) => c.slug === slug) ?? null;
 }
 
-import { getDynamicRate24h } from "./pricing";
+import { num } from "./pricing";
 
 export type VehicleFilters = { categorySlug?: string; kind?: string };
+
+/**
+ * Normalises the two rate columns. The weekend rate is the vehicle's OWN
+ * `weekend_rate_24h`; when it is null the weekday rate stands. The old
+ * `Math.max(baseRate + 50, …)` invented a ₹50 weekend surcharge and also silently
+ * overrode genuine equal-price vehicles (Ronin, CB200X, Shine), which is why the site
+ * quoted more than the CRM charged.
+ */
+function withRates<T extends { rate_24h?: number | string | null; weekend_rate_24h?: number | string | null }>(v: T): T {
+  const baseRate = num(v.rate_24h);
+  const weekend = num(v.weekend_rate_24h, 0);
+  return { ...v, rate_24h: baseRate, weekend_rate_24h: weekend > 0 ? weekend : baseRate };
+}
 
 export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle[]> {
   const { vehicles } = await getContent();
   return vehicles
     .filter((v) => (!filters.kind || v.category_kind === filters.kind) && (!filters.categorySlug || v.category_slug === filters.categorySlug))
-    .map((v) => {
-      const baseRate = Number(v.rate_24h ?? 0);
-      const weekendRate = Math.max(baseRate + 50, Number(v.weekend_rate_24h ?? (baseRate + 50)));
-      return {
-        ...v,
-        rate_24h: baseRate,
-        weekend_rate_24h: weekendRate,
-      };
-    });
+    .map(withRates);
 }
 
 export async function getVehicle(slug: string): Promise<Vehicle | null> {
   const v = (await getContent()).vehicles.find((v) => v.slug === slug) ?? null;
-  if (!v) return null;
-  const baseRate = Number(v.rate_24h ?? 0);
-  const weekendRate = Math.max(baseRate + 50, Number(v.weekend_rate_24h ?? (baseRate + 50)));
-  return {
-    ...v,
-    rate_24h: baseRate,
-    weekend_rate_24h: weekendRate,
-  };
+  return v ? withRates(v) : null;
 }
 
 export async function getVehicleById(id: number): Promise<Vehicle | null> {
   const v = (await getContent()).vehicles.find((v) => v.id === id) ?? null;
-  if (!v) return null;
-  const baseRate = Number(v.rate_24h ?? 0);
-  const weekendRate = Math.max(baseRate + 50, Number(v.weekend_rate_24h ?? (baseRate + 50)));
-  return {
-    ...v,
-    rate_24h: baseRate,
-    weekend_rate_24h: weekendRate,
-  };
+  return v ? withRates(v) : null;
 }
 
 export async function getTestimonials() {

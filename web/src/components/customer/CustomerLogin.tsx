@@ -3,6 +3,18 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+/** Reads a JSON body only when the response really is JSON — an HTML error page would
+ * otherwise blow up in `res.json()` with "Unexpected token '<'". */
+async function readJsonResponse(res: Response): Promise<{ ok: boolean; data: any }> {
+  if (!res.headers.get("content-type")?.includes("application/json")) {
+    const body = await res.text().catch(() => "");
+    console.warn(`OTP endpoint non-JSON response (${res.status}):`, body.slice(0, 200));
+    return { ok: false, data: { error: `Server returned an unexpected response (${res.status}).` } };
+  }
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, data };
+}
+
 export function CustomerLogin() {
   const router = useRouter();
   const [target, setTarget] = useState("");
@@ -22,8 +34,8 @@ export function CustomerLogin() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ op: "request", target }),
       });
-      const data = await res.json();
-      if (!res.ok) {
+      const { ok, data } = await readJsonResponse(res);
+      if (!ok) {
         setError(data.error ?? "Could not send OTP.");
         setPhase("idle");
         return;
@@ -56,8 +68,8 @@ export function CustomerLogin() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ op: "verify", target, code }),
       });
-      const data = await res.json();
-      if (!res.ok) {
+      const { ok, data } = await readJsonResponse(res);
+      if (!ok) {
         setError(data.error ?? "Verification failed.");
         return;
       }

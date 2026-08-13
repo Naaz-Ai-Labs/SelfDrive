@@ -1,17 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getBaseUrl, getGatewayKey } from "@/lib/gateway";
 
-function getBaseUrl(): string {
-  const envUrl = process.env.CRM_API_URL || process.env.NEXT_PUBLIC_CRM_API_URL;
-  if (envUrl && !envUrl.includes("localhost")) {
-    return envUrl.replace(/\/$/, "");
-  }
-  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
-    return "https://crm.selfdrive.bike";
-  }
-  return envUrl ? envUrl.replace(/\/$/, "") : "http://localhost:3001";
-}
-
-const KEY = process.env.GATEWAY_API_KEY ?? "adb661bf6bbe85efd79f26fa2901e580809755dc7bfb37e69f444cb7f2be305c";
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const MAX_BYTES = 8 * 1024 * 1024;
 
@@ -35,7 +24,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Direct Supabase Storage Upload with Structured Path
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey =
       process.env.SUPABASE_SECRET_KEY ||
       process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -95,7 +84,7 @@ export async function POST(req: NextRequest) {
 
     const res = await fetch(`${crmUrl}/api/gateway/v1/upload`, {
       method: "POST",
-      headers: { "x-gateway-key": KEY },
+      headers: { "x-gateway-key": getGatewayKey() },
       body: proxied,
     });
     const data = await res.json().catch(() => ({ error: "Upload failed." }));

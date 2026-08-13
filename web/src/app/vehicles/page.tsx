@@ -12,6 +12,13 @@ import { getCachedVehicleSearchPrice, parseDateParts } from "@/lib/search-pricin
 export const metadata: Metadata = {
   title: "Browse Vehicles",
   description: "Browse our full fleet of self-drive bikes, scooters and cars with fixed, transparent pricing.",
+  alternates: { canonical: "/vehicles" },
+  openGraph: {
+    title: "Browse Vehicles | Darshh Holiday",
+    description: "Browse our full fleet of self-drive bikes, scooters and cars with fixed, transparent pricing.",
+    type: "website",
+    images: [{ url: "/logo.jpeg", width: 792, height: 685, alt: "Darshh Holiday vehicle fleet" }],
+  },
 };
 export const revalidate = 60;
 
@@ -74,7 +81,7 @@ export default async function VehiclesPage(
           <span className="inline-flex items-center gap-2 rounded-full border border-brand-400/30 bg-brand-500/10 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.28em] text-brand-300">
             {vehicles.length} vehicles available
           </span>
-          <h1 className="mt-5 max-w-xl font-display text-4xl font-black leading-[1.02] sm:text-5xl">Browse our fleet</h1>
+          <h1 className="mt-5 max-w-xl font-display text-4xl font-black leading-[1.02] sm:text-5xl">Self-drive bike, scooter &amp; car rental fleet</h1>
           <p className="mt-4 max-w-lg text-base leading-relaxed text-white/70">
             Fixed pricing, no bargaining. Every vehicle shows its full price breakdown, deposit and kilometre allowance.
           </p>
@@ -101,7 +108,7 @@ export default async function VehiclesPage(
               </div>
               <p className="mt-1 text-xs text-ink-700">
                 Calculated for {formatDate(pickupDate)} ({pickupTime}) → {formatDate(returnDate)} ({returnTime}).
-                {searchQuotes[0].weekendDaysCount > 0 && ` Includes weekend dynamic rates (+₹50).`}
+                {searchQuotes[0].weekendDaysCount > 0 && ` Includes each vehicle's own weekend rate for Sat/Sun.`}
               </p>
             </div>
             <Link
@@ -162,7 +169,7 @@ export default async function VehiclesPage(
                     className={`group card block overflow-hidden transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lift ${isOutOfStock ? "opacity-85" : ""}`}
                   >
                     <div className="relative h-44 overflow-hidden bg-ink-100">
-                      {v.primary_photo && <Image src={v.primary_photo} alt={v.name} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-110" sizes="(max-width:768px) 100vw, 33vw" />}
+                      {v.primary_photo && <Image src={v.primary_photo} alt={`${v.name} self-drive rental in Hassan & Sakleshpura`} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-110" sizes="(max-width:768px) 100vw, 33vw" />}
                       <div className="absolute inset-0 bg-gradient-to-t from-ink-950/50 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" aria-hidden />
                       <span className="absolute left-3 top-3 badge bg-white/95 text-ink-800 shadow-sm">{v.category_name}</span>
                       <span className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${isOutOfStock ? "bg-rose-600 text-white" : (v.available_units ?? v.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>

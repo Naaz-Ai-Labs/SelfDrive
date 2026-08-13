@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   createManualEnquiry, changeEnquiryStage, assignEnquiry, addEnquiryNote,
@@ -188,6 +188,27 @@ export function InspectionForm({ bookingId, kind }: { bookingId: number; kind: "
   const [fuelLevel, setFuelLevel] = useState("Full");
   const [notes, setNotes] = useState("");
   const [capturedPhotos, setCapturedPhotos] = useState<Record<string, CapturedPhoto>>({});
+  const [geo, setGeo] = useState<{ lat: number; lng: number; accuracyM: number } | null>(null);
+  const [geoStatus, setGeoStatus] = useState<"idle" | "locating" | "ok" | "denied" | "unavailable">("idle");
+
+  // Best-effort location stamp for the inspection. Never blocks the form: a denied
+  // or unavailable reading just leaves geo null and the inspection proceeds exactly
+  // as it did before this feature existed.
+  useEffect(() => {
+    if (!("geolocation" in navigator)) {
+      setGeoStatus("unavailable");
+      return;
+    }
+    setGeoStatus("locating");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGeo({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy });
+        setGeoStatus("ok");
+      },
+      () => setGeoStatus("denied"),
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 }
+    );
+  }, []);
 
   const handlePhotoCaptured = (photo: CapturedPhoto) => {
     setCapturedPhotos((prev) => ({ ...prev, [photo.side]: photo }));
@@ -226,6 +247,7 @@ export function InspectionForm({ bookingId, kind }: { bookingId: number; kind: "
         fuelLevel,
         notes: notes || undefined,
         photos: photoPayload,
+        geo,
       });
       return res;
     });
@@ -233,6 +255,12 @@ export function InspectionForm({ bookingId, kind }: { bookingId: number; kind: "
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      <p className="text-xs text-ink-400">
+        {geoStatus === "locating" && "Locating…"}
+        {geoStatus === "ok" && geo && `Location captured (±${Math.round(geo.accuracyM)}m)`}
+        {geoStatus === "denied" && "Location permission denied — inspection will proceed without it."}
+        {geoStatus === "unavailable" && "Location not available on this device — inspection will proceed without it."}
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="label">Odometer reading (km)</label>

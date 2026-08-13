@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { gatewayGet, gatewayPost } from "./gateway";
 import { supabaseRestInsert, supabaseRestSelect, supabaseRestUpsert } from "./supabase-rest";
 import type { Vehicle } from "./data";
+import { normalizeDocKind } from "./doc-kind";
 
 export type DraftPayload = {
   categoryId: number | null;
@@ -36,29 +37,23 @@ export type Quote = {
   weekendMinDays: number;
   belowWeekendMinimum: boolean;
   appliedRuleName: string | null;
+  /** Pickup before 08:00 IST — the one-off ₹250 surcharge applies. */
+  earlyPickup: boolean;
+  /** Drop after 08:00 IST — one extra full day is already counted in `days`. */
+  lateDrop: boolean;
+  /**
+   * ALL-IN figure, deposit INCLUDED. For disclosure and the invoice only.
+   * NEVER send this to Razorpay — see `payableNow`.
+   */
   totalAmount: number;
+  /**
+   * What the customer actually pays online: rental + surcharge + GST + gateway fee.
+   * The deposit is EXCLUDED — it is collected in cash at pickup.
+   */
   payableNow: number;
+  /** Cash deposit collected at pickup (₹1000 two-wheelers, ₹2000 cars). Not charged online. */
+  depositPayableAtPickup: number;
 };
-
-export function normalizeDocKind(kind: string): "licence" | "govt_id" | "address_proof" | "photo" | "other" {
-  switch (kind) {
-    case "licence":
-    case "driver_licence":
-      return "licence";
-    case "driver_govt_id":
-    case "pillion_id":
-    case "govt_id":
-      return "govt_id";
-    case "driver_photo":
-    case "pillion_photo":
-    case "photo":
-      return "photo";
-    case "address_proof":
-      return "address_proof";
-    default:
-      return "other";
-  }
-}
 
 export async function saveBookingDraft(input: DraftPayload & { token?: string | null }): Promise<{ token: string; savedAt: string }> {
   return gatewayPost("/api/gateway/v1/booking/draft", input);
@@ -110,7 +105,9 @@ export async function submitBooking(input: {
     const bookingNo = `BK-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-01`;
     const phone = input.contact.phone ? input.contact.phone.replace(/[^\d+]/g, "") : "";
 
-    let customerId = 25;
+    // Must never default to a real customer id: an unresolved lookup would attach this
+    // booking to somebody else's account, and that person would see it in their portal.
+    let customerId: number | null = null;
     try {
       const existingCustomers = await supabaseRestSelect<{ id: number }>("customers", `phone=eq.${encodeURIComponent(phone)}`);
       if (existingCustomers && existingCustomers.length > 0) {
@@ -128,47 +125,52 @@ export async function submitBooking(input: {
       }
     } catch {}
 
-    // Calculate accurate quote for the booking
-    let baseAmount = 1000;
-    let depositAmount = 1000;
-    let gstAmount = 60;
-    let totalAmount = 2060;
+    if (!customerId) {
+      console.error("submitBooking fallback: could not resolve or create a customer record");
+      return {
+        ok: false,
+        error: "We could not confirm your booking right now. No payment has been taken. Please try again shortly.",
+      };
+    }
+
+    // Quote figures start unset. Booking at an invented price is worse than not
+    // booking at all — the customer would be charged an amount nobody agreed to.
+    let baseAmount: number | null = null;
+    let depositAmount: number | null = null;
+    let gstAmount: number | null = null;
+    let totalAmount: number | null = null;
 
     try {
       const { getVehicles } = await import("./data");
+      const { calculateRentalQuoteFromStrings } = await import("./pricing");
       const allVehicles = await getVehicles();
       const v = allVehicles.find((item) => Number(item.id) === Number(input.vehicleId));
       if (v) {
-        const p = new Date(input.pickupAt);
-        const r = new Date(input.returnAt);
-        const isSundayReturn = r.getDay() === 0;
-        const msPerDay = 24 * 60 * 60 * 1000;
-        const diffMs = Math.max(0, r.getTime() - p.getTime());
-        const baseDays = Math.max(1, Math.round(diffMs / msPerDay));
-        const pickupTimeStr = input.pickupAt.includes("T") ? input.pickupAt.split("T")[1] : "08:00";
-        const returnTimeStr = input.returnAt.includes("T") ? input.returnAt.split("T")[1] : "08:00";
-        const isLateDrop = returnTimeStr > "08:00";
-        // If drop-off time is after standard 08:00 AM, charge for 1 more day
-        const days = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
-
-        baseAmount = 0;
-        for (let i = 0; i < days; i++) {
-          const day = new Date(p.getTime() + i * msPerDay);
-          const dayOfWeek = day.getDay();
-          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday=0, Saturday=6
-          const rate = isWeekend ? Number(v.weekend_rate_24h ?? (v.rate_24h + 50)) : Number(v.rate_24h);
-          baseAmount += rate;
+        // Same shared calculation the site quoted from, so the row written here carries
+        // the price the customer was actually shown.
+        const [pickupDateStr, pickupTimeStr = "08:00"] = input.pickupAt.split("T");
+        const [returnDateStr, returnTimeStr = "08:00"] = input.returnAt.split("T");
+        const quote = calculateRentalQuoteFromStrings(v, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr);
+        if (quote) {
+          baseAmount = quote.baseAmount + quote.offSchedulePickupFee;
+          depositAmount = quote.depositPayableAtPickup;
+          gstAmount = quote.gstAmount;
+          // `total_amount` is the CRM's all-in column (deposit included); the deposit is
+          // still cash at pickup and is never part of what Razorpay charges.
+          totalAmount = quote.totalAmount;
         }
-
-        const isEarlyPickup = pickupTimeStr < "08:00";
-        const timingFee = isEarlyPickup ? 250 : 0;
-
-        depositAmount = Number(v.deposit ?? 1000);
-        const taxableAmount = baseAmount + timingFee;
-        gstAmount = Math.round(taxableAmount * 0.06);
-        totalAmount = taxableAmount + depositAmount + gstAmount;
       }
-    } catch {}
+    } catch (quoteErr) {
+      console.error("submitBooking fallback: quote calculation failed", quoteErr);
+    }
+
+    if (totalAmount === null || baseAmount === null || depositAmount === null || gstAmount === null) {
+      console.error(`submitBooking fallback: could not price vehicle ${input.vehicleId}`);
+      return {
+        ok: false,
+        error: "We could not price this booking right now. No payment has been taken. Please try again shortly.",
+      };
+    }
 
     const insertRes = await supabaseRestInsert<{ id: number }>("bookings", {
       booking_no: bookingNo,
@@ -180,11 +182,24 @@ export async function submitBooking(input: {
       deposit_amount: depositAmount,
       gst_amount: gstAmount,
       total_amount: totalAmount,
-      status: "Pending",
+      // Must match the status the CRM itself creates (crm/src/lib/bookings.ts).
+      // "Pending" is a value the CRM never produces, so bookings written by this
+      // fallback did not appear in the dashboard's status-filtered views.
+      status: "Pending verification",
       created_at: new Date().toISOString(),
     });
 
-    const bookingId = insertRes.ok && insertRes.data?.id ? Number(insertRes.data.id) : Math.floor(Date.now() / 1000);
+    // A failed insert previously still produced a booking id from the clock, so the
+    // customer received a confirmation for a row that was never written.
+    if (!insertRes.ok || !insertRes.data?.id) {
+      console.error("submitBooking fallback: Supabase booking insert failed", insertRes);
+      return {
+        ok: false,
+        error: "We could not confirm your booking right now. No payment has been taken. Please try again shortly.",
+      };
+    }
+
+    const bookingId = Number(insertRes.data.id);
 
     // Save all uploaded customer ID documents in Supabase
     if (input.documents && Array.isArray(input.documents)) {
@@ -211,10 +226,15 @@ export async function submitBooking(input: {
   }
 }
 
-  // 3. Instant Fail-Safe Confirmation Guarantee
-  const fallbackBookingNo = `BK-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-01`;
-  const fallbackBookingId = Math.floor(Date.now() / 1000);
-  return { ok: true, bookingNo: fallbackBookingNo, bookingId: fallbackBookingId, customerId: 1 };
+  // 3. Both the CRM gateway and the direct Supabase write failed.
+  // Never fabricate a booking number here: doing so hands the customer a
+  // confirmation for a booking that exists in no system of record.
+  console.error("submitBooking failed: gateway and Supabase fallback both unavailable");
+  return {
+    ok: false,
+    error:
+      "We could not confirm your booking right now. No payment has been taken. Please try again in a moment, or call us and we will complete it for you.",
+  };
 }
 
 export async function getAvailableVehicles(kind: string | null, pickupAt: string | null, returnAt: string | null): Promise<Vehicle[]> {
@@ -233,7 +253,7 @@ export async function getAvailableVehicles(kind: string | null, pickupAt: string
   }
 
   // 2. Direct Supabase PostgreSQL Query Fallback
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey =
     process.env.SUPABASE_SECRET_KEY ||
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -299,26 +319,33 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
       );
 
       if (searchQuote) {
+        // The search quote is already the shared calculation from ./pricing, so it is
+        // passed through field-for-field. Re-deriving anything here is what let the
+        // weekend minimum, the km allowance and the payable amount drift from the CRM.
         return {
           days: searchQuote.days,
           weekendDaysCount: searchQuote.weekendDaysCount,
           dayBreakdown: searchQuote.dayBreakdown.map((d) => ({ date: d.date, isWeekend: d.isWeekend, rate: d.rate })),
           baseAmount: searchQuote.baseAmount,
-          offSchedulePickupFee: searchQuote.earlyPickupFee,
+          offSchedulePickupFee: searchQuote.offSchedulePickupFee,
           gstAmount: searchQuote.gstAmount,
-          gstPct: 6,
-          gatewayFeeAmount: 0,
-          gatewayFeePct: 0,
+          gstPct: searchQuote.gstPct,
+          gatewayFeeAmount: searchQuote.gatewayFeeAmount,
+          gatewayFeePct: searchQuote.gatewayFeePct,
           depositAmount: searchQuote.depositAmount,
-          includedKm: (v.included_km ?? 100) * searchQuote.days,
-          extraKmRate: v.extra_km_rate ?? 5,
-          afterHours: searchQuote.earlyPickupFee > 0,
-          offSchedulePickup: searchQuote.earlyPickupFee > 0,
-          weekendMinDays: 1,
-          belowWeekendMinimum: false,
-          appliedRuleName: null,
+          includedKm: searchQuote.includedKm,
+          extraKmRate: searchQuote.extraKmRate,
+          afterHours: searchQuote.afterHours,
+          offSchedulePickup: searchQuote.offSchedulePickup,
+          weekendMinDays: searchQuote.weekendMinDays,
+          belowWeekendMinimum: searchQuote.belowWeekendMinimum,
+          appliedRuleName: searchQuote.appliedRuleName,
+          earlyPickup: searchQuote.earlyPickup,
+          lateDrop: searchQuote.lateDrop,
           totalAmount: searchQuote.totalAmount,
-          payableNow: searchQuote.totalAmount,
+          // Deposit EXCLUDED: it is collected in cash at pickup, never via Razorpay.
+          payableNow: searchQuote.payableNow,
+          depositPayableAtPickup: searchQuote.depositPayableAtPickup,
         };
       }
     }
@@ -345,7 +372,7 @@ export async function getVehicleById(id: number): Promise<Vehicle | null> {
   } catch {}
 
   // 2. Direct Supabase Lookup
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
   if (supabaseUrl && supabaseKey) {
     try {

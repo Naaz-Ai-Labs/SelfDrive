@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import Image from "next/image";
-import { getDb } from "@/lib/db";
+import { sbSelect } from "@/lib/supabase-rest";
 import { getCurrentUser } from "@/lib/auth";
 import { businessInfo } from "@/lib/settings";
+import { generateInvoiceForBooking } from "@/lib/invoices";
 import { formatINR, formatDateTime } from "@/lib/utils";
 
 import { InvoicePrintButton } from "@/components/customer/InvoicePrintButton";
-import { generateInvoiceForBooking } from "@/lib/invoices";
 
 export const metadata: Metadata = { title: "Invoice", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -17,25 +17,63 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
   if (!staff) redirect(`/dashboard/login`);
 
   const { bookingNo } = await params;
-  const db = getDb();
-  const booking = db
-    .prepare(
-      `SELECT b.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email, c.address AS customer_address,
-              v.name AS vehicle_name, v.registration_no, v.brand, v.model
-       FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       WHERE b.booking_no = ? OR b.id = ?`
-    )
-    .get(bookingNo, Number(bookingNo) || 0) as Record<string, unknown> | undefined;
-  if (!booking) notFound();
 
-  let invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
+  const numId = Number(bookingNo);
+  const predicates = [`booking_no.eq.${bookingNo}`];
+  if (Number.isInteger(numId) && numId > 0) predicates.push(`id.eq.${numId}`);
+
+  const bookingRes = await sbSelect<Record<string, unknown>>(
+    "bookings",
+    `select=*,customers(name,phone,email,address),vehicles(name,registration_no,brand,model)&or=${encodeURIComponent(`(${predicates.join(",")})`)}&limit=1`
+  );
+  if (!bookingRes.ok) throw new Error(`Could not load the booking: ${bookingRes.error}`);
+
+  const rawBooking = bookingRes.data[0];
+  if (!rawBooking) notFound();
+
+  const customer = rawBooking.customers as { name?: string; phone?: string; email?: string; address?: string } | null;
+  const vehicle = rawBooking.vehicles as { name?: string; registration_no?: string; brand?: string; model?: string } | null;
+  const booking: Record<string, unknown> = {
+    ...rawBooking,
+    customer_name: customer?.name ?? null,
+    customer_phone: customer?.phone ?? null,
+    customer_email: customer?.email ?? null,
+    customer_address: customer?.address ?? null,
+    vehicle_name: vehicle?.name ?? null,
+    registration_no: vehicle?.registration_no ?? null,
+    brand: vehicle?.brand ?? null,
+    model: vehicle?.model ?? null,
+  };
+
+  const [invoiceRes, photoRes, info] = await Promise.all([
+    sbSelect<Record<string, unknown>>("invoices", `select=*&booking_id=eq.${Number(booking.id)}&limit=1`),
+    sbSelect<{ url: string }>(
+      "vehicle_photos",
+      `select=url&vehicle_id=eq.${Number(booking.vehicle_id)}&order=is_primary.desc,sort.asc&limit=1`
+    ),
+    businessInfo(),
+  ]);
+  if (!invoiceRes.ok) throw new Error(`Could not load the invoice: ${invoiceRes.error}`);
+  if (!photoRes.ok) throw new Error(`Could not load the vehicle photo: ${photoRes.error}`);
+
+  // lib/invoices.ts writes to Supabase now, so viewing an invoice can persist it
+  // again. Generation is idempotent (it returns any existing row), and a failure
+  // here must not take the page down — it falls back to the derived rendering.
+  let invoice = invoiceRes.data[0];
   if (!invoice) {
-    generateInvoiceForBooking(Number(booking.id));
-    invoice = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(booking.id as number) as Record<string, unknown> | undefined;
+    const generated = await generateInvoiceForBooking(Number(booking.id)).catch((err) => {
+      console.error("[invoice] generation failed", err);
+      return null;
+    });
+    if (generated) {
+      const reread = await sbSelect<Record<string, unknown>>(
+        "invoices",
+        `select=*&id=eq.${generated.id}&limit=1`
+      );
+      if (reread.ok) invoice = reread.data[0];
+    }
   }
-
-  const photo = db.prepare("SELECT url FROM vehicle_photos WHERE vehicle_id = ? ORDER BY is_primary DESC, sort LIMIT 1").get(booking.vehicle_id as number) as { url: string } | undefined;
-  const info = businessInfo();
+  const photo = photoRes.data[0];
 
   const lines = [
     ["Base rental", Number(booking.base_amount)],

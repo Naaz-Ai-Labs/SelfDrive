@@ -32,6 +32,7 @@ export function RazorpayCheckout({
   onPayLater,
 }: {
   bookingId: number;
+  /** Deposit-EXCLUDED figure. This is what Razorpay charges — never the all-in total. */
   amountDue: number;
   customerName: string;
   customerPhone: string;
@@ -45,6 +46,8 @@ export function RazorpayCheckout({
     depositAmount: number;
     gatewayFeeAmount: number;
     totalAmount: number;
+    payableNow?: number;
+    depositPayableAtPickup?: number;
   } | null;
   onPaid: () => void;
   onPayLater: () => void;
@@ -74,13 +77,13 @@ export function RazorpayCheckout({
       amount: order.amountPaise,
       currency: "INR",
       name: order.businessName,
-      description: `Rental + GST + Deposit — ${order.paymentNo}`,
+      description: `Rental + GST — ${order.paymentNo}`,
       order_id: order.orderId,
       notes: (order as { notes?: Record<string, string> }).notes ?? {
         "Base Rental": quote ? `₹${quote.baseAmount.toLocaleString("en-IN")}` : `₹${amountDue.toLocaleString("en-IN")}`,
         "GST (6%)": quote ? `₹${quote.gstAmount.toLocaleString("en-IN")}` : "Included",
-        "Refundable Deposit": quote ? `₹${quote.depositAmount.toLocaleString("en-IN")}` : "Included",
-        "Total Amount Paid": `₹${amountDue.toLocaleString("en-IN")}`,
+        "Deposit (cash at pickup, NOT in this payment)": quote ? `₹${(quote.depositPayableAtPickup ?? quote.depositAmount).toLocaleString("en-IN")}` : "Collected at pickup",
+        "Paid Online Now": `₹${amountDue.toLocaleString("en-IN")}`,
       },
       prefill: { name: customerName, contact: customerPhone, email: customerEmail || undefined },
       theme: { color: "#f2b705" },
@@ -117,11 +120,11 @@ export function RazorpayCheckout({
       {/* Collapsible Price Breakdown Card */}
       <div className="rounded-xl border border-brand-300 bg-brand-50/80 p-4 text-sm text-ink-800 shadow-sm transition">
         <div className="flex items-center justify-between">
-          <p className="font-bold text-ink-950 text-base">Total payable now: {formatINR(amountDue)}</p>
+          <p className="font-bold text-ink-950 text-base">Pay now online: {formatINR(amountDue)}</p>
           <button
             type="button"
             onClick={() => setShowBreakdown((prev) => !prev)}
-            className="inline-flex items-center gap-1 rounded-lg bg-brand-200/80 px-2.5 py-1 text-xs font-semibold text-ink-900 transition hover:bg-brand-300"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg bg-brand-200/80 px-3 py-2 text-xs font-semibold text-ink-900 transition hover:bg-brand-300"
           >
             <span>{showBreakdown ? "Hide Breakdown ▲" : "View Price Breakdown ▼"}</span>
           </button>
@@ -151,20 +154,28 @@ export function RazorpayCheckout({
                     <span className="font-semibold text-ink-900">{formatINR(quote.gatewayFeeAmount)}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-emerald-800">
-                  <span>Refundable Security Deposit</span>
-                  <span className="font-semibold">{formatINR(quote.depositAmount)}</span>
-                </div>
                 <div className="flex justify-between border-t border-brand-300 pt-2 text-sm font-bold text-ink-950">
-                  <span>Grand Total</span>
-                  <span>{formatINR(quote.totalAmount)}</span>
+                  <span>Pay now online</span>
+                  <span>{formatINR(quote.payableNow ?? amountDue)}</span>
                 </div>
+                <div className="flex justify-between text-emerald-800">
+                  <span>Security deposit (cash at pickup, refundable)</span>
+                  <span className="font-semibold">{formatINR(quote.depositPayableAtPickup ?? quote.depositAmount)}</span>
+                </div>
+                <p className="text-[11px] text-ink-500">
+                  The deposit is not part of this online payment — you pay it in cash when you collect the vehicle.
+                </p>
               </>
             ) : (
-              <div className="flex justify-between font-medium">
-                <span>Rental + GST + Refundable Security Deposit</span>
-                <span className="font-bold text-ink-900">{formatINR(amountDue)}</span>
-              </div>
+              <>
+                <div className="flex justify-between font-medium">
+                  <span>Rental + GST (paid online now)</span>
+                  <span className="font-bold text-ink-900">{formatINR(amountDue)}</span>
+                </div>
+                <p className="text-[11px] text-ink-500">
+                  The refundable security deposit is collected separately in cash at pickup.
+                </p>
+              </>
             )}
           </div>
         )}

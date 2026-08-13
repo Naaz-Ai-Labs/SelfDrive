@@ -1,16 +1,21 @@
-/* Unit & Integration Tests for Production Razorpay Payment Integration.
-   Run with: npx tsx scripts/test-razorpay.ts (from crm directory) */
+/* Unit tests for the Razorpay integration.
+   Run with: npx tsx scripts/test-razorpay.ts (from the crm directory)
+
+   SCOPE NOTE: this suite previously also asserted webhook idempotency and booking
+   fulfilment by writing directly to the local SQLite mirror. That mirror has been
+   removed — Supabase is now the single source of truth — so those assertions were
+   testing a database that no longer exists and have been deleted rather than left
+   to pass vacuously.
+
+   Still to be rewritten against Supabase (tracked, not covered here):
+     - payment_events idempotency (duplicate event_id must be skipped once processed)
+     - paid_amount is not double-counted when a webhook is replayed
+   Both now depend on real database state, so they belong in an integration test
+   against a disposable Supabase schema, not in this unit suite. */
 
 import crypto from "node:crypto";
-import { getDb } from "../src/lib/db";
-import {
-  verifyRazorpaySignature,
-  verifyRazorpayWebhookSignature,
-  createRazorpayOrder,
-  issueRazorpayRefund,
-} from "../src/lib/razorpay";
-import { createBookingPaymentOrder, verifyBookingPayment } from "../src/lib/payment-actions";
-import { toPaise, toRupees, recordPaymentEvent } from "../src/lib/supabase-sync";
+import { verifyRazorpaySignature, verifyRazorpayWebhookSignature } from "../src/lib/razorpay";
+import { toPaise, toRupees } from "../src/lib/utils";
 
 let failures = 0;
 
@@ -20,26 +25,24 @@ function check(label: string, ok: boolean, extra = "") {
 }
 
 async function runTests() {
-  console.log("=== RAZORPAY & SUPABASE LEDGER SUITE ===\n");
+  console.log("=== RAZORPAY SIGNATURE & MINOR-UNIT SUITE ===\n");
 
-  // Minor Unit Precision Helpers Test
   check("toPaise converts ₹1,500 to 150,000 paise integer minor units", toPaise(1500) === 150000);
   check("toRupees converts 150,000 paise back to ₹1,500 float", toRupees(150000) === 1500);
 
-  const testKeyId = process.env.RAZORPAY_KEY_ID ?? "rzp_test_TNGC5KHCkEBPbQ";
-  const testKeySecret = process.env.RAZORPAY_KEY_SECRET ?? "yQmb3HXRIWxnmKmVP93hufsY";
-  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET ?? "whsec_test_secret_123456";
+  // Test-only values. Never fall back to real credentials in a test harness — an
+  // earlier revision hardcoded live-adjacent keys here.
+  const testKeySecret = "test_secret_for_signature_math_only";
+  const webhookSecret = "test_webhook_secret_for_signature_math_only";
 
-  process.env.RAZORPAY_KEY_ID = testKeyId;
   process.env.RAZORPAY_KEY_SECRET = testKeySecret;
   process.env.RAZORPAY_WEBHOOK_SECRET = webhookSecret;
 
-  // 1. Signature Verification Tests
+  // 1. Payment signature verification
   const orderId = "order_N123456789";
   const paymentId = "pay_P987654321";
-  
   const validSig = crypto.createHmac("sha256", testKeySecret).update(`${orderId}|${paymentId}`).digest("hex");
-  
+
   check(
     "verifyRazorpaySignature passes with valid HMAC signature",
     verifyRazorpaySignature(orderId, paymentId, validSig) === true
@@ -50,8 +53,11 @@ async function runTests() {
     verifyRazorpaySignature(orderId, paymentId, "invalid_signature_hex") === false
   );
 
-  // 2. Webhook Signature & Event Idempotency Tests
-  const rawPayload = JSON.stringify({ event: "payment.captured", payload: { payment: { entity: { id: paymentId, order_id: orderId } } } });
+  // 2. Webhook signature verification
+  const rawPayload = JSON.stringify({
+    event: "payment.captured",
+    payload: { payment: { entity: { id: paymentId, order_id: orderId } } },
+  });
   const validWebhookSig = crypto.createHmac("sha256", webhookSecret).update(rawPayload).digest("hex");
 
   check(
@@ -64,87 +70,10 @@ async function runTests() {
     verifyRazorpayWebhookSignature(rawPayload + "tampered", validWebhookSig) === false
   );
 
-  // Webhook Event Audit Trail Idempotency
-  const testEventId = `evt_test_${Date.now()}`;
-  const ev1 = await recordPaymentEvent({ eventId: testEventId, eventType: "payment.captured", payload: rawPayload, signatureVerified: true });
-  check("recordPaymentEvent records initial webhook event", ev1.duplicate === false);
-  const ev2 = await recordPaymentEvent({ eventId: testEventId, eventType: "payment.captured", payload: rawPayload, signatureVerified: true });
-  check("recordPaymentEvent rejects duplicate event_id with duplicate=true", ev2.duplicate === true);
-
-
-  // 3. Database Idempotency & Booking Fulfillment Tests
-  const db = getDb();
-  
-  // Cleanup test fixtures
-  db.prepare("DELETE FROM payments WHERE notes LIKE '%Test Suite%'").run();
-  db.prepare("DELETE FROM availability_blocks WHERE notes = 'test_booking_rzp'").run();
-  db.prepare("DELETE FROM booking_history WHERE detail LIKE '%Test Suite%'").run();
-  db.prepare("DELETE FROM bookings WHERE notes = 'test_booking_rzp'").run();
-  db.prepare("DELETE FROM customers WHERE email = 'rzp.test@example.com'").run();
-
-  // Seed customer & booking
-  const customerRes = db.prepare(
-    "INSERT INTO customers (name, phone, email, source) VALUES ('Razorpay Test User', '+919999900000', 'rzp.test@example.com', 'Test Suite')"
-  ).run();
-  const customerId = Number(customerRes.lastInsertRowid);
-
-  const vehicle = db.prepare("SELECT id FROM vehicles WHERE active = 1 LIMIT 1").get() as { id: number };
-  const bookingNo = `BK-TST-${Date.now().toString(36)}`;
-  
-  const bookingRes = db.prepare(
-    `INSERT INTO bookings (
-      booking_no, customer_id, vehicle_id, pickup_at, return_at, status, base_amount, total_amount, paid_amount, notes
-    ) VALUES (?, ?, ?, datetime('now', '+1 day'), datetime('now', '+2 days'), 'Pending verification', 1500, 1500, 0, 'test_booking_rzp')`
-  ).run(bookingNo, customerId, vehicle.id);
-  const bookingId = Number(bookingRes.lastInsertRowid);
-
-  // Test createBookingPaymentOrder (authoritative amount calculated from DB)
-  const orderRes = await createBookingPaymentOrder(bookingId);
   check(
-    "createBookingPaymentOrder returns orderId and correct amountPaise",
-    orderRes.ok === true && orderRes.amountPaise === 150000,
-    orderRes.ok ? `orderId=${orderRes.orderId}` : `error=${orderRes.error}`
+    "verifyRazorpayWebhookSignature rejects an empty signature",
+    verifyRazorpayWebhookSignature(rawPayload, "") === false
   );
-
-  if (orderRes.ok) {
-    const payment = db.prepare("SELECT * FROM payments WHERE id = ?").get(orderRes.paymentId) as { status: string; amount: number; gateway_ref: string };
-    check("Payment record created in Pending status with gateway_ref", payment && payment.status === "Pending" && payment.gateway_ref === orderRes.orderId);
-
-    // Test verifyBookingPayment (Fulfill Payment)
-    const verifyRes = await verifyBookingPayment({
-      paymentId: orderRes.paymentId,
-      razorpayOrderId: orderRes.orderId,
-      razorpayPaymentId: paymentId,
-      razorpaySignature: validSig,
-      skipSignatureCheck: true,
-    });
-
-    check("verifyBookingPayment succeeds", verifyRes.ok === true && verifyRes.bookingNo === bookingNo);
-
-    const updatedBooking = db.prepare("SELECT status, paid_amount FROM bookings WHERE id = ?").get(bookingId) as { status: string; paid_amount: number };
-    check("Booking status auto-confirms and paid_amount updates", updatedBooking.status === "Confirmed" && updatedBooking.paid_amount === 1500);
-
-    const updatedPayment = db.prepare("SELECT status, receipt_no FROM payments WHERE id = ?").get(orderRes.paymentId) as { status: string; receipt_no: string };
-    check("Payment status updates to Paid and receipt_no generated", updatedPayment.status === "Paid" && updatedPayment.receipt_no.startsWith("RC"));
-
-    // 4. Idempotency Test (Re-verifying same payment must be safe and return success without double charging)
-    const reVerifyRes = await verifyBookingPayment({
-      paymentId: orderRes.paymentId,
-      razorpayOrderId: orderRes.orderId,
-      razorpayPaymentId: paymentId,
-      razorpaySignature: validSig,
-      skipSignatureCheck: true,
-    });
-    check("Idempotent re-verification succeeds without error", reVerifyRes.ok === true && reVerifyRes.bookingNo === bookingNo);
-    
-    const doubleBookingCheck = db.prepare("SELECT paid_amount FROM bookings WHERE id = ?").get(bookingId) as { paid_amount: number };
-    check("Booking paid_amount is NOT double-counted on re-verification", doubleBookingCheck.paid_amount === 1500);
-  }
-
-  // Cleanup test fixtures
-  db.prepare("DELETE FROM payments WHERE booking_id = ?").run(bookingId);
-  db.prepare("DELETE FROM bookings WHERE id = ?").run(bookingId);
-  db.prepare("DELETE FROM customers WHERE id = ?").run(customerId);
 
   console.log(`\n=== RESULTS: ${failures === 0 ? "ALL CHECKS PASSED" : `${failures} FAILURE(S)`} ===`);
   process.exit(failures === 0 ? 0 : 1);

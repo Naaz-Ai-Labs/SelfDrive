@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { sbSelect, sbUpsert } from "./supabase-rest";
 import { parseJSON } from "./utils";
 
 const DEFAULT_SETTINGS: Record<string, unknown> = {
@@ -75,36 +75,60 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
 
 export type Settings = Record<string, unknown>;
 
-export function getSetting<T>(key: string, fallback: T): T {
-  const row = getDb().prepare("SELECT value FROM settings WHERE key = ?").get(key) as
-    | { value: string }
-    | undefined;
+type SettingRow = { key: string; value: string };
+
+/**
+ * Reads every setting in one round trip.
+ *
+ * A page that needs six settings used to issue six queries; against PostgREST that
+ * would be six HTTP requests. The table holds a couple of dozen rows, so fetching it
+ * whole is cheaper than any of the alternatives.
+ */
+export async function getAllSettings(): Promise<Record<string, unknown>> {
+  const res = await sbSelect<SettingRow>("settings", "select=key,value");
+  if (!res.ok) throw new Error(`Could not load settings: ${res.error}`);
+
+  const out: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+  for (const row of res.data) {
+    out[row.key] = parseJSON<unknown>(row.value, DEFAULT_SETTINGS[row.key]);
+  }
+  return out;
+}
+
+export async function getSetting<T>(key: string, fallback: T): Promise<T> {
+  const res = await sbSelect<SettingRow>("settings", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`);
+  // A read failure is not "no such setting". Surfacing it stops a pricing rule or a
+  // status list from silently reverting to a hardcoded default mid-transaction.
+  if (!res.ok) throw new Error(`Could not load setting "${key}": ${res.error}`);
+
+  const row = res.data[0];
   if (!row) return fallback;
   return parseJSON<T>(row.value, fallback);
 }
 
-export function setSetting(key: string, value: unknown) {
-  getDb()
-    .prepare(
-      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
-    )
-    .run(key, JSON.stringify(value));
+export async function setSetting(key: string, value: unknown): Promise<void> {
+  const res = await sbUpsert("settings", { key, value: JSON.stringify(value), updated_at: new Date().toISOString() }, "key");
+  if (!res.ok) throw new Error(`Could not save setting "${key}": ${res.error}`);
 }
 
-export function ensureDefaultSettings() {
-  const db = getDb();
-  const count = db.prepare("SELECT COUNT(*) AS c FROM settings").get() as { c: number };
-  if (count.c > 0) return;
-  for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
-    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(key, JSON.stringify(value));
-  }
+export async function ensureDefaultSettings(): Promise<void> {
+  const res = await sbSelect<{ key: string }>("settings", "select=key");
+  if (!res.ok) throw new Error(`Could not read settings: ${res.error}`);
+
+  const present = new Set(res.data.map((r) => r.key));
+  const missing = Object.entries(DEFAULT_SETTINGS)
+    .filter(([key]) => !present.has(key))
+    .map(([key, value]) => ({ key, value: JSON.stringify(value) }));
+
+  if (missing.length === 0) return;
+  const write = await sbUpsert("settings", missing, "key");
+  if (!write.ok) throw new Error(`Could not seed default settings: ${write.error}`);
 }
 
-export function businessInfo() {
+export async function businessInfo(): Promise<Record<string, unknown>> {
   return getSetting<Record<string, unknown>>("business", DEFAULT_SETTINGS.business as Record<string, unknown>);
 }
 
-export function rentalRules() {
+export async function rentalRules(): Promise<Record<string, unknown>> {
   return getSetting<Record<string, unknown>>("rental_rules", DEFAULT_SETTINGS.rental_rules as Record<string, unknown>);
 }

@@ -1,12 +1,50 @@
 "use server";
 
-import { getDb } from "./db";
 import { nextNumber } from "./utils";
 import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { createRazorpayOrder, verifyRazorpaySignature, fetchRazorpayPayment, razorpayConfigured, razorpayKeyId } from "./razorpay";
 import { generateInvoiceForBooking } from "./invoices";
-import { toPaise, syncPaymentToSupabase, syncEntityToSupabase } from "./supabase-sync";
+import { toPaise } from "./utils";
+import { sbSelectOne, sbSelect, sbInsert, sbUpdate, sbCount, sbRpc, num } from "./supabase-rest";
+
+/**
+ * The money path talks to Supabase directly.
+ *
+ * It used to write to a per-lambda SQLite file and then fire the Supabase copy
+ * as an unawaited promise. Vercel freezes the lambda the moment the response is
+ * returned, so those copies frequently never ran: the customer saw "payment
+ * successful" while nothing reached the durable store. Every write below is
+ * awaited, and a failed write is reported as a failure.
+ */
+
+type PaymentRow = {
+  id: number;
+  payment_no: string;
+  booking_id: number | null;
+  customer_id: number | null;
+  amount: number | string;
+  amount_paise: number | string | null;
+  status: string;
+  gateway_ref: string | null;
+  razorpay_order_id: string | null;
+};
+
+type BookingRow = {
+  id: number;
+  booking_no: string | null;
+  customer_id: number | null;
+  vehicle_id: number | null;
+  pickup_at: string | null;
+  total_amount: number | string | null;
+  deposit_amount: number | string | null;
+  base_amount: number | string | null;
+  gst_amount: number | string | null;
+  paid_amount: number | string | null;
+  status: string | null;
+};
+
+const nowISO = () => new Date().toISOString();
 
 /**
  * Creates (or reuses) a Pending payment record for the full outstanding amount on a
@@ -19,71 +57,69 @@ export async function createBookingPaymentOrder(bookingId: number, overrideAmoun
   if (!razorpayConfigured()) {
     return { ok: false, error: "Online payment isn't set up yet. Our team will contact you on WhatsApp to arrange payment." };
   }
-  const db = getDb();
-  let booking = db
-    .prepare("SELECT b.*, c.name AS customer_name, c.phone AS customer_phone FROM bookings b LEFT JOIN customers c ON c.id = b.customer_id WHERE b.id = ?")
-    .get(bookingId) as Record<string, unknown> | undefined;
 
-  if (!booking) {
-    // Check Supabase
-    try {
-      const { supabaseAdmin, supabase } = await import("./supabase");
-      const client = supabaseAdmin || supabase;
-      if (client) {
-        const { data: sbBooking } = await client.from("bookings").select("*").eq("id", bookingId).single();
-        if (sbBooking) {
-          booking = {
-            id: sbBooking.id,
-            booking_no: sbBooking.booking_no || `BK-${sbBooking.id}`,
-            customer_id: sbBooking.customer_id,
-            total_amount: Number(sbBooking.total_amount || 1000),
-            deposit_amount: Number(sbBooking.deposit_amount || 1000),
-            paid_amount: Number(sbBooking.paid_amount || 0),
-            status: sbBooking.status || "Pending",
-          };
-        }
-      }
-    } catch {}
-  }
-
+  const bookingRes = await sbSelectOne<BookingRow>("bookings", `select=*&id=eq.${bookingId}`);
+  if (!bookingRes.ok) return { ok: false, error: bookingRes.error };
+  const booking = bookingRes.data;
   if (!booking) return { ok: false, error: "Booking not found." };
 
-  const due = (overrideAmount && overrideAmount > 0)
-    ? overrideAmount
-    : Math.max(1, Number(booking.total_amount) - Number(booking.paid_amount || 0));
+  // PostgREST returns NUMERIC as strings — coerce before any arithmetic.
+  const totalAmount = num(booking.total_amount);
+  const paidAmount = num(booking.paid_amount);
+  const depositAmount = num(booking.deposit_amount);
 
+  // The security deposit is collected in CASH at pickup and must never be charged
+  // through Razorpay. `total_amount` is the all-in figure (deposit included) so the
+  // invoice can still show the full picture; the amount taken online is that minus
+  // the deposit, minus anything already paid.
+  const onlinePayable = Math.max(0, totalAmount - depositAmount);
+  const due = overrideAmount && overrideAmount > 0 ? overrideAmount : Math.max(1, onlinePayable - paidAmount);
   if (due <= 0) return { ok: false, error: "This booking is already fully paid." };
 
   const duePaise = Math.max(100, toPaise(due));
 
-  let payment = db
-    .prepare("SELECT * FROM payments WHERE booking_id = ? AND status = 'Pending' AND kind = 'full' ORDER BY id DESC LIMIT 1")
-    .get(bookingId) as { id: number; payment_no: string; amount: number; amount_paise: number } | undefined;
-
   const breakdownJson = JSON.stringify({
-    baseAmount: Number(booking.base_amount || (due - Number(booking.deposit_amount || 0))),
-    depositAmount: Number(booking.deposit_amount || 0),
-    gstAmount: Number(booking.gst_amount || 0),
+    baseAmount: booking.base_amount != null ? num(booking.base_amount) : due - depositAmount,
+    depositAmount,
+    gstAmount: num(booking.gst_amount),
     totalAmount: due,
   });
 
-  if (!payment) {
-    const paymentNo = nextNumber("PY", null);
-    const result = db
-      .prepare("INSERT INTO payments (payment_no, booking_id, customer_id, amount, amount_paise, kind, status, notes, breakdown_json) VALUES (?, ?, ?, ?, ?, 'full', 'Pending', 'Rental total + deposit', ?)")
-      .run(paymentNo, bookingId, booking.customer_id as number | null, due, duePaise, breakdownJson);
-    payment = { id: Number(result.lastInsertRowid), payment_no: paymentNo, amount: due, amount_paise: duePaise };
+  const existingRes = await sbSelectOne<PaymentRow>(
+    "payments",
+    `select=*&booking_id=eq.${bookingId}&status=eq.Pending&kind=eq.full&order=id.desc`
+  );
+  if (!existingRes.ok) return { ok: false, error: existingRes.error };
+
+  let payment: { id: number; payment_no: string; amount: number };
+
+  if (existingRes.data) {
+    const upd = await sbUpdate("payments", `id=eq.${existingRes.data.id}`, { breakdown_json: breakdownJson });
+    if (!upd.ok) return { ok: false, error: upd.error };
+    payment = { id: existingRes.data.id, payment_no: existingRes.data.payment_no, amount: num(existingRes.data.amount) };
   } else {
-    db.prepare("UPDATE payments SET breakdown_json = ? WHERE id = ?").run(breakdownJson, payment.id);
+    const paymentNo = nextNumber("PY", null);
+    const ins = await sbInsert<PaymentRow>("payments", {
+      payment_no: paymentNo,
+      booking_id: bookingId,
+      customer_id: booking.customer_id ?? null,
+      amount: due,
+      amount_paise: duePaise,
+      currency: "INR",
+      kind: "full",
+      status: "Pending",
+      notes: "Rental total + deposit",
+      breakdown_json: breakdownJson,
+      created_at: nowISO(),
+    });
+    if (!ins.ok) return { ok: false, error: ins.error };
+    payment = { id: ins.data.id, payment_no: ins.data.payment_no, amount: num(ins.data.amount) };
   }
 
-  const baseAmount = Number(booking.total_amount);
-  const depositAmount = Number(booking.deposit_amount);
-  const gstAmount = Math.round(baseAmount * 0.06);
-
+  const gstAmount = Math.round(totalAmount * 0.06);
   const rzpNotes: Record<string, string> = {
-    "Booking No": String(booking.booking_no),
-    "Rental Base": `₹${baseAmount.toLocaleString("en-IN")}`,
+    "Booking No": String(booking.booking_no ?? `BK-${bookingId}`),
+    "Rental Base": `₹${totalAmount.toLocaleString("en-IN")}`,
     "Pickup Fee": `₹250`,
     "GST (6%)": `₹${gstAmount.toLocaleString("en-IN")}`,
     "Refundable Deposit": `₹${depositAmount.toLocaleString("en-IN")}`,
@@ -92,10 +128,14 @@ export async function createBookingPaymentOrder(bookingId: number, overrideAmoun
   const order = await createRazorpayOrder({ amountInRupees: payment.amount, receipt: payment.payment_no, notes: rzpNotes });
   if (!order.ok) return { ok: false, error: order.error };
 
-  db.prepare("UPDATE payments SET gateway_ref = ?, razorpay_order_id = ?, amount_paise = ? WHERE id = ?").run(order.orderId, order.orderId, duePaise, payment.id);
-
-  // Sync transaction to Supabase
-  syncPaymentToSupabase(payment.id).catch(() => {});
+  // The order id must be durably attached to the payment row before the customer
+  // pays, otherwise the webhook cannot find the record it belongs to.
+  const link = await sbUpdate("payments", `id=eq.${payment.id}`, {
+    gateway_ref: order.orderId,
+    razorpay_order_id: order.orderId,
+    amount_paise: duePaise,
+  });
+  if (!link.ok) return { ok: false, error: link.error };
 
   return {
     ok: true,
@@ -116,34 +156,42 @@ export async function verifyBookingPayment(input: {
   razorpaySignature: string;
   skipSignatureCheck?: boolean;
 }): Promise<{ ok: true; bookingNo: string; alreadyProcessed?: boolean } | { ok: false; error: string }> {
-  const db = getDb();
-
-  // 1. Idempotency Check: if this payment ID was already processed, return success immediately
-  const existingPaid = db
-    .prepare("SELECT p.*, b.booking_no FROM payments p LEFT JOIN bookings b ON b.id = p.booking_id WHERE (p.razorpay_payment_id = ? OR (p.id = ? AND p.status = 'Paid')) LIMIT 1")
-    .get(input.razorpayPaymentId, input.paymentId) as { booking_no: string; status: string } | undefined;
-
-  if (existingPaid && existingPaid.status === "Paid") {
-    return { ok: true, bookingNo: existingPaid.booking_no || `BK-${input.paymentId}`, alreadyProcessed: true };
+  // 1. Idempotency: a Razorpay payment id is unique, so if one is already recorded
+  //    as Paid this is a replay (webhook retry, or the browser callback racing the
+  //    webhook) and must not be applied to the booking a second time.
+  const priorRes = await sbSelectOne<{ id: number; status: string; booking_id: number | null }>(
+    "payments",
+    `select=id,status,booking_id&razorpay_payment_id=eq.${encodeURIComponent(input.razorpayPaymentId)}`
+  );
+  if (!priorRes.ok) return { ok: false, error: priorRes.error };
+  if (priorRes.data && priorRes.data.status === "Paid") {
+    const bookingNo = await lookupBookingNo(priorRes.data.booking_id);
+    return { ok: true, bookingNo: bookingNo ?? `BK-${input.paymentId}`, alreadyProcessed: true };
   }
 
   if (!input.skipSignatureCheck) {
     const valid = verifyRazorpaySignature(input.razorpayOrderId, input.razorpayPaymentId, input.razorpaySignature);
     if (!valid) {
-      logActivity(null, "payment_signature_invalid", "payment", input.paymentId, { orderId: input.razorpayOrderId });
+      await logActivity(null, "payment_signature_invalid", "payment", input.paymentId, { orderId: input.razorpayOrderId });
       return { ok: false, error: "We could not verify this payment. If money was deducted, contact us with your booking number and we'll sort it out." };
     }
   }
 
-  const payment = db.prepare("SELECT * FROM payments WHERE id = ? AND (gateway_ref = ? OR razorpay_order_id = ?)").get(input.paymentId, input.razorpayOrderId, input.razorpayOrderId) as
-    | { id: number; booking_id: number; customer_id: number | null; amount: number; payment_no: string; status: string }
-    | undefined;
+  const orderId = encodeURIComponent(input.razorpayOrderId);
+  const paymentRes = await sbSelectOne<PaymentRow>(
+    "payments",
+    `select=*&id=eq.${input.paymentId}&or=(gateway_ref.eq.${orderId},razorpay_order_id.eq.${orderId})`
+  );
+  if (!paymentRes.ok) return { ok: false, error: paymentRes.error };
+  const payment = paymentRes.data;
   if (!payment) return { ok: false, error: "Payment record not found." };
+
   if (payment.status === "Paid") {
-    const booking = db.prepare("SELECT booking_no FROM bookings WHERE id = ?").get(payment.booking_id) as { booking_no: string };
-    return { ok: true, bookingNo: booking.booking_no, alreadyProcessed: true };
+    const bookingNo = await lookupBookingNo(payment.booking_id);
+    return { ok: true, bookingNo: bookingNo ?? "", alreadyProcessed: true };
   }
 
+  const paidAmount = num(payment.amount);
   const receiptNo = nextNumber("RC", null);
 
   // Fetch verified payment details directly from Razorpay API
@@ -161,73 +209,110 @@ export async function verifyBookingPayment(input: {
     }
   } catch {}
 
-  db.prepare(
-    `UPDATE payments SET
-       status = 'Paid',
-       paid_at = datetime('now'),
-       method = COALESCE(?, method, 'Online'),
-       upi_id = COALESCE(?, upi_id),
-       vpa = COALESCE(?, vpa),
-       bank_ref_no = COALESCE(?, bank_ref_no),
-       notes = ?,
-       receipt_no = ?,
-       razorpay_order_id = ?,
-       razorpay_payment_id = ?,
-       razorpay_signature = ?
-     WHERE id = ?`
-  ).run(
-    realMethod,
-    realVpa,
-    realVpa,
-    realBankRef,
-    `Razorpay payment ID: ${input.razorpayPaymentId}`,
-    receiptNo,
-    input.razorpayOrderId,
-    input.razorpayPaymentId,
-    input.razorpaySignature,
-    payment.id
-  );
+  // COALESCE semantics: only overwrite when Razorpay actually told us something.
+  const patch: Record<string, unknown> = {
+    status: "Paid",
+    paid_at: nowISO(),
+    notes: `Razorpay payment ID: ${input.razorpayPaymentId}`,
+    receipt_no: receiptNo,
+    razorpay_order_id: input.razorpayOrderId,
+    razorpay_payment_id: input.razorpayPaymentId,
+    razorpay_signature: input.razorpaySignature,
+  };
+  if (realMethod) patch.method = realMethod;
+  if (realVpa) {
+    patch.upi_id = realVpa;
+    patch.vpa = realVpa;
+  }
+  if (realBankRef) patch.bank_ref_no = realBankRef;
 
-  // Sync to Supabase ledger
-  syncPaymentToSupabase(payment.id).catch(() => {});
+  // Guard on status so two concurrent verifications cannot both mark it Paid.
+  const paidUpdate = await sbUpdate<PaymentRow>("payments", `id=eq.${payment.id}&status=neq.Paid`, patch);
+  if (!paidUpdate.ok) return { ok: false, error: `Could not record the payment: ${paidUpdate.error}` };
+  if (paidUpdate.data.length === 0) {
+    const bookingNo = await lookupBookingNo(payment.booking_id);
+    return { ok: true, bookingNo: bookingNo ?? "", alreadyProcessed: true };
+  }
 
-  // Check if documents are already verified
-  const unverifiedDocsCount = (db.prepare("SELECT COUNT(*) AS c FROM customer_documents WHERE booking_id = ? AND verified = 0").get(payment.booking_id) as { c: number })?.c ?? 0;
-  const newBookingStatus = unverifiedDocsCount === 0 ? "Confirmed" : "Payment received";
+  const bookingId = payment.booking_id;
+  if (!bookingId) return { ok: false, error: "Payment is not linked to a booking." };
 
-  db.prepare("UPDATE bookings SET paid_amount = paid_amount + ?, status = ?, updated_at = datetime('now') WHERE id = ?").run(
-    payment.amount, newBookingStatus, payment.booking_id
-  );
-  syncEntityToSupabase("bookings", payment.booking_id).catch(() => {});
+  const unverifiedDocs = await sbCount("customer_documents", `booking_id=eq.${bookingId}&verified=eq.0`);
+  const newBookingStatus = unverifiedDocs.ok && unverifiedDocs.data === 0 ? "Confirmed" : "Payment received";
 
-  const histRes = db.prepare("INSERT INTO booking_history (booking_id, action, detail) VALUES (?, 'payment_verified', ?)").run(
-    payment.booking_id, JSON.stringify({ payment_no: payment.payment_no, amount: payment.amount, razorpay_payment_id: input.razorpayPaymentId, status: newBookingStatus })
-  );
-  syncEntityToSupabase("booking_history", Number(histRes.lastInsertRowid)).catch(() => {});
-  logActivity(null, "payment_verified", "payment", payment.id, { amount: payment.amount, razorpay_payment_id: input.razorpayPaymentId });
-  const invoice = generateInvoiceForBooking(payment.booking_id);
+  // Atomic accumulate in Postgres. Read-modify-write in application code loses
+  // one of two concurrent payments.
+  const incr = await sbRpc<number>("increment_booking_paid", { p_booking_id: bookingId, p_amount: paidAmount });
+  if (!incr.ok) return { ok: false, error: `Payment recorded but the booking balance could not be updated: ${incr.error}` };
 
-  const booking = db
-    .prepare(`SELECT b.booking_no, b.pickup_at, c.name, c.phone, v.name AS vehicle_name FROM bookings b
-      LEFT JOIN customers c ON c.id = b.customer_id LEFT JOIN vehicles v ON v.id = b.vehicle_id WHERE b.id = ?`)
-    .get(payment.booking_id) as { booking_no: string; pickup_at: string; name: string | null; phone: string | null; vehicle_name: string | null };
+  const statusUpdate = await sbUpdate("bookings", `id=eq.${bookingId}`, { status: newBookingStatus, updated_at: nowISO() });
+  if (!statusUpdate.ok) return { ok: false, error: `Payment recorded but the booking status could not be updated: ${statusUpdate.error}` };
 
-  if (booking && booking.phone) {
+  await sbInsert("booking_history", {
+    booking_id: bookingId,
+    action: "payment_verified",
+    detail: JSON.stringify({
+      payment_no: payment.payment_no,
+      amount: paidAmount,
+      razorpay_payment_id: input.razorpayPaymentId,
+      status: newBookingStatus,
+    }),
+    created_at: nowISO(),
+  });
+
+  await logActivity(null, "payment_verified", "payment", payment.id, { amount: paidAmount, razorpay_payment_id: input.razorpayPaymentId });
+
+  // Invoicing must never block a verified payment from being recorded.
+  const invoice = await generateInvoiceForBooking(bookingId).catch((err) => {
+    console.error("[payments] invoice generation failed", err);
+    return null;
+  });
+
+  const bookingRes = await sbSelectOne<BookingRow>("bookings", `select=booking_no,pickup_at,customer_id,vehicle_id&id=eq.${bookingId}`);
+  const booking = bookingRes.ok ? bookingRes.data : null;
+
+  let customerName: string | null = null;
+  let customerPhone: string | null = null;
+  let vehicleName: string | null = null;
+
+  if (booking?.customer_id) {
+    const c = await sbSelectOne<{ name: string | null; phone: string | null }>("customers", `select=name,phone&id=eq.${booking.customer_id}`);
+    if (c.ok && c.data) {
+      customerName = c.data.name;
+      customerPhone = c.data.phone;
+    }
+  }
+  if (booking?.vehicle_id) {
+    const v = await sbSelectOne<{ name: string | null }>("vehicles", `select=name&id=eq.${booking.vehicle_id}`);
+    if (v.ok && v.data) vehicleName = v.data.name;
+  }
+
+  const bookingNo = booking?.booking_no ?? "";
+
+  if (customerPhone) {
     try {
-      sendTemplate("payment_receipt", booking.phone, { name: booking.name ?? "", amount: `₹${payment.amount.toLocaleString("en-IN")}`, reference: input.razorpayPaymentId, receipt_no: receiptNo, booking_no: booking.booking_no }, null, payment.booking_id);
-      sendTemplate("booking_confirmation", booking.phone, { name: booking.name ?? "", booking_no: booking.booking_no, vehicle: booking.vehicle_name ?? "", pickup_at: booking.pickup_at, location: "" }, null, payment.booking_id);
-      sendTemplate("invoice_generated", booking.phone, { name: booking.name ?? "", invoice_no: invoice.invoiceNo, booking_no: booking.booking_no, total: `₹${payment.amount.toLocaleString("en-IN")}` }, null, payment.booking_id);
+      await sendTemplate("payment_receipt", customerPhone, { name: customerName ?? "", amount: `₹${paidAmount.toLocaleString("en-IN")}`, reference: input.razorpayPaymentId, receipt_no: receiptNo, booking_no: bookingNo }, null, bookingId);
+      await sendTemplate("booking_confirmation", customerPhone, { name: customerName ?? "", booking_no: bookingNo, vehicle: vehicleName ?? "", pickup_at: booking?.pickup_at ?? "", location: "" }, null, bookingId);
+      if (invoice) {
+        await sendTemplate("invoice_generated", customerPhone, { name: customerName ?? "", invoice_no: invoice.invoiceNo, booking_no: bookingNo, total: `₹${paidAmount.toLocaleString("en-IN")}` }, null, bookingId);
+      }
     } catch {
       // best-effort — messaging must never block a verified payment from being recorded
     }
   }
 
-  if (booking) {
-    const staff = db.prepare("SELECT id FROM users WHERE role IN ('admin','manager') AND is_active = 1").all() as { id: number }[];
-    for (const s of staff) {
-      pushNotification(s.id, `Payment received — ${booking.booking_no}`, `${booking.name ?? "Customer"} · ${booking.vehicle_name ?? ""}`, null, payment.booking_id);
+  const staff = await sbSelect<{ id: number }>("users", "select=id&role=in.(admin,manager)&is_active=eq.1");
+  if (staff.ok) {
+    for (const s of staff.data) {
+      await pushNotification(s.id, `Payment received — ${bookingNo}`, `${customerName ?? "Customer"} · ${vehicleName ?? ""}`, null, bookingId);
     }
   }
 
-  return { ok: true, bookingNo: booking?.booking_no || "" };
+  return { ok: true, bookingNo };
+}
+
+async function lookupBookingNo(bookingId: number | null | undefined): Promise<string | null> {
+  if (!bookingId) return null;
+  const res = await sbSelectOne<{ booking_no: string | null }>("bookings", `select=booking_no&id=eq.${bookingId}`);
+  return res.ok ? res.data?.booking_no ?? null : null;
 }

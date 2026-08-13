@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
-import { syncLatestFromSupabase } from "@/lib/hydrate-db";
+import { sbSelect, num } from "@/lib/supabase-rest";
 import { formatDate, formatINR } from "@/lib/utils";
 import { Avatar, StatusBadge } from "@/components/ui";
 
@@ -13,32 +12,71 @@ export const revalidate = 0;
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
-  const db = getDb();
-  try {
-    await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
-  } catch {}
   const sp = await searchParams;
   const q = sp.q ?? "";
 
-  let sql = `SELECT c.*,
-             (SELECT COUNT(*) FROM enquiries e WHERE e.customer_id = c.id) AS lead_count,
-             (SELECT COUNT(*) FROM bookings b WHERE b.customer_id = c.id) AS booking_count,
-             (SELECT COALESCE(SUM(p.amount),0) FROM payments p WHERE p.customer_id = c.id AND p.status = 'Paid') AS paid_total
-             FROM customers c WHERE 1=1`;
-  const params: Array<string> = [];
+  let filter = "";
   if (q) {
-    sql += " AND (c.id = ? OR c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.city LIKE ?)";
-    const like = `%${q}%`;
-    params.push(q, like, like, like, like);
+    const like = `*${q}*`;
+    const predicates = [`name.ilike.${like}`, `phone.ilike.${like}`, `email.ilike.${like}`, `city.ilike.${like}`];
+    const asId = Number(q);
+    if (Number.isInteger(asId) && asId > 0) predicates.unshift(`id.eq.${asId}`);
+    filter = `&or=${encodeURIComponent(`(${predicates.join(",")})`)}`;
   }
-  sql += " ORDER BY c.created_at DESC LIMIT 100";
 
-  let customers: Array<Record<string, unknown>> = [];
-  try {
-    customers = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
-  } catch (err) {
-    console.error("Customers query error:", err);
+  const customersRes = await sbSelect<Record<string, unknown>>(
+    "customers",
+    `select=*${filter}&order=created_at.desc&limit=100`
+  );
+  if (!customersRes.ok) throw new Error(`Could not load customers: ${customersRes.error}`);
+
+  const customerIds = customersRes.data.map((c) => Number(c.id)).filter(Boolean);
+
+  // The three per-customer aggregates were correlated subqueries in SQL. PostgREST
+  // has no equivalent, so the related rows are fetched once for the visible page and
+  // counted here — one round trip each instead of three per customer.
+  let enquiryOwners: Array<{ customer_id: number }> = [];
+  let bookingOwners: Array<{ customer_id: number }> = [];
+  let paidPayments: Array<{ customer_id: number; amount: unknown }> = [];
+
+  if (customerIds.length > 0) {
+    const idList = `in.(${customerIds.join(",")})`;
+    const [enquiriesRes, bookingsRes, paymentsRes] = await Promise.all([
+      sbSelect<{ customer_id: number }>("enquiries", `select=customer_id&customer_id=${idList}`),
+      sbSelect<{ customer_id: number }>("bookings", `select=customer_id&customer_id=${idList}`),
+      sbSelect<{ customer_id: number; amount: unknown }>(
+        "payments",
+        `select=customer_id,amount&customer_id=${idList}&status=eq.Paid`
+      ),
+    ]);
+    if (!enquiriesRes.ok) throw new Error(`Could not load enquiry counts: ${enquiriesRes.error}`);
+    if (!bookingsRes.ok) throw new Error(`Could not load booking counts: ${bookingsRes.error}`);
+    if (!paymentsRes.ok) throw new Error(`Could not load payment totals: ${paymentsRes.error}`);
+    enquiryOwners = enquiriesRes.data;
+    bookingOwners = bookingsRes.data;
+    paidPayments = paymentsRes.data;
   }
+
+  const tally = (rows: Array<{ customer_id: number }>) => {
+    const out = new Map<number, number>();
+    for (const row of rows) out.set(Number(row.customer_id), (out.get(Number(row.customer_id)) ?? 0) + 1);
+    return out;
+  };
+  const leadCounts = tally(enquiryOwners);
+  const bookingCounts = tally(bookingOwners);
+  const paidTotals = new Map<number, number>();
+  for (const p of paidPayments) {
+    const key = Number(p.customer_id);
+    // num() matters here: without it these amounts concatenate into "500700900".
+    paidTotals.set(key, (paidTotals.get(key) ?? 0) + num(p.amount));
+  }
+
+  const customers = customersRes.data.map((c): Record<string, unknown> => ({
+    ...c,
+    lead_count: leadCounts.get(Number(c.id)) ?? 0,
+    booking_count: bookingCounts.get(Number(c.id)) ?? 0,
+    paid_total: paidTotals.get(Number(c.id)) ?? 0,
+  }));
 
   return (
     <div className="space-y-6">

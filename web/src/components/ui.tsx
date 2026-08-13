@@ -18,18 +18,20 @@ export function SectionHeading({
   title,
   subtitle,
   center,
+  as: Tag = "h2",
 }: {
   eyebrow?: string;
   title: string;
   subtitle?: string;
   center?: boolean;
+  as?: "h1" | "h2";
 }) {
   return (
     <div className={cn("max-w-2xl", center && "mx-auto text-center")}>
       {eyebrow && (
         <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand-600">{eyebrow}</p>
       )}
-      <h2 className="mt-3 font-display text-3xl font-semibold text-ink-900 sm:text-4xl">{title}</h2>
+      <Tag className="mt-3 font-display text-3xl font-semibold text-ink-900 sm:text-4xl">{title}</Tag>
       {subtitle && <p className="mt-4 text-base leading-relaxed text-ink-600">{subtitle}</p>}
     </div>
   );

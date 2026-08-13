@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { sbSelectOne } from "./supabase-rest";
 import { logMessage } from "./activity";
 import { businessInfo } from "./settings";
 
@@ -18,16 +18,15 @@ export type DispatchResult = { ok: boolean; detail: string };
  * Production providers (WhatsApp Business API / SMS / Email) are pluggable here.
  * NEEDS CLIENT CONFIRMATION: provider credentials.
  */
-export function dispatchMessage(opts: {
+export async function dispatchMessage(opts: {
   channel: string;
   to: string;
   subject?: string | null;
   body: string;
   enquiryId?: number | null;
   bookingId?: number | null;
-}): DispatchResult {
-  const info = businessInfo();
-  logMessage(opts.channel, opts.to, opts.subject ?? null, opts.body, opts.enquiryId ?? null, opts.bookingId ?? null);
+}): Promise<DispatchResult> {
+  await logMessage(opts.channel, opts.to, opts.subject ?? null, opts.body, opts.enquiryId ?? null, opts.bookingId ?? null);
   if (opts.channel === "whatsapp") {
     const phone = opts.to.replace(/\D/g, "");
     const wa = phone.startsWith("91") ? phone : `91${phone}`;
@@ -36,16 +35,24 @@ export function dispatchMessage(opts: {
   return { ok: true, detail: "Recorded. Email/SMS gateway needs configuration." };
 }
 
-export function templateByKey(key: string): { name: string; channel: string; body: string; subject: string | null } | null {
-  const row = getDb()
-    .prepare("SELECT name, channel, body, subject FROM message_templates WHERE key = ? AND active = 1")
-    .get(key) as { name: string; channel: string; body: string; subject: string | null } | undefined;
-  return row ?? null;
+type MessageTemplate = { name: string; channel: string; body: string; subject: string | null };
+
+export async function templateByKey(key: string): Promise<MessageTemplate | null> {
+  const res = await sbSelectOne<MessageTemplate>(
+    "message_templates",
+    `select=name,channel,body,subject&key=eq.${encodeURIComponent(key)}&active=eq.1`
+  );
+  if (!res.ok) {
+    console.error(`[messaging] could not load template "${key}":`, res.error);
+    return null;
+  }
+  return res.data;
 }
 
-export function sendTemplate(key: string, to: string, vars: Record<string, string | number | null | undefined>, enquiryId?: number | null, bookingId?: number | null): DispatchResult | null {
-  const tpl = templateByKey(key);
+export async function sendTemplate(key: string, to: string, vars: Record<string, string | number | null | undefined>, enquiryId?: number | null, bookingId?: number | null): Promise<DispatchResult | null> {
+  const tpl = await templateByKey(key);
   if (!tpl) return null;
-  const body = renderTemplate(tpl.body, { business: (businessInfo().name as string) ?? "Darshh Holiday", ...vars });
+  const business = await businessInfo();
+  const body = renderTemplate(tpl.body, { business: (business.name as string) ?? "Darshh Holiday", ...vars });
   return dispatchMessage({ channel: tpl.channel, to, subject: tpl.subject, body, enquiryId, bookingId });
 }

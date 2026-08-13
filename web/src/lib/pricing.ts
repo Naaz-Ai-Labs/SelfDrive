@@ -1,67 +1,243 @@
 /**
- * Live Clock Weekend Pricing & Strict Late Fee Utility for Web Application
+ * Rental pricing for the public website.
+ *
+ * This mirrors `crm/src/lib/pricing.ts` — the CRM is what actually invoices the customer,
+ * so anything quoted here must match it exactly. Day counting is delegated to
+ * ./rental-clock (the byte-equivalent copy of the CRM module), and the owner's rules are:
+ *
+ *   - a rental day runs 08:00 → 08:00 IST;
+ *   - pickup before 08:00 costs a ONE-OFF ₹250 surcharge, never per day;
+ *   - a drop after 08:00 buys ONE MORE FULL DAY at that day's own rate — it is not a fee;
+ *   - weekend = Sat/Sun, priced from the vehicle's own `weekend_rate_24h` (no "+50" rule);
+ *   - weekend bookings have a 2-day minimum;
+ *   - the security deposit is NOT charged online. It is cash at pickup, so it belongs to
+ *     `totalAmount` (disclosure) but never to `payableNow` (what Razorpay charges).
+ *
+ * The site has no access to the CRM `settings` table, so the CRM's configurable defaults
+ * are hard-coded here as constants. If an operator changes them in the CRM, change them
+ * here too.
  */
 
+import { computeRentalDays, isWeekendIst, istDate, istDateKey } from "./rental-clock";
+
+/** CRM default `tax_pct`. */
+export const GST_PCT = 6;
+/** CRM default `rental_rules.early_pickup_fee`. One-off, never multiplied by days. */
+export const EARLY_PICKUP_FEE = 250;
+/** CRM default `rental_rules.weekend_min_days` — owner-confirmed real policy. */
+export const WEEKEND_MIN_DAYS = 2;
+/** CRM default: `gateway_fee_pass_through` is off, so the customer pays no gateway fee. */
+export const GATEWAY_FEE_PCT = 0;
+/** Poster rule, used when the vehicle row carries no deposit. */
+export const DEPOSIT_TWO_WHEELER = 1000;
+export const DEPOSIT_FOUR_WHEELER = 2000;
+
+/** PostgREST returns numerics as strings; every money field has to go through this. */
+export function num(value: unknown, fallback = 0): number {
+  if (value === null || value === undefined || value === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Saturday and Sunday. Evaluated in IST, not the browser's or server's local zone. */
 export function isWeekend(date: Date = new Date()): boolean {
-  const day = date.getDay(); // 0 = Sunday, 6 = Saturday
-  return day === 0 || day === 6;
+  return isWeekendIst(date);
 }
 
 /**
- * Calculates 24h rate hiked by +₹50 on Saturdays & Sundays.
+ * The applicable 24h rate for a given day.
+ *
+ * Weekends use the vehicle's own `weekend_rate_24h` when it is set. When it is not, the
+ * WEEKDAY rate stands — several vehicles on the price list genuinely charge the same on
+ * weekends (Ronin 1800/1800, CB200X 1800/1800, Shine 1000/1000), so the old blanket
+ * `baseRate + 50` invented a surcharge the owner never quoted. There is deliberately no
+ * `Math.max` floor either: a weekend rate lower than the weekday rate is the owner's to
+ * set, not ours to override.
  */
-export function getDynamicRate24h(baseRate: number, date: Date = new Date()): number {
+export function getDynamicRate24h(baseRate: number, date: Date = new Date(), weekendRate?: number | string | null): number {
   if (!baseRate || isNaN(baseRate)) return 0;
-  return isWeekend(date) ? baseRate + 50 : baseRate;
+  if (!isWeekend(date)) return baseRate;
+  const weekend = weekendRate === null || weekendRate === undefined ? NaN : num(weekendRate, NaN);
+  return Number.isFinite(weekend) && weekend > 0 ? weekend : baseRate;
+}
+
+/** The vehicle fields a quote needs. Money may arrive from PostgREST as strings. */
+export type QuoteVehicle = {
+  rate_24h: number | string;
+  weekend_rate_24h?: number | string | null;
+  deposit?: number | string | null;
+  included_km?: number | string | null;
+  extra_km_rate?: number | string | null;
+  category_kind?: string | null;
+};
+
+export type RentalQuote = {
+  days: number;
+  weekendDaysCount: number;
+  dayBreakdown: Array<{ date: string; isWeekend: boolean; rate: number }>;
+  baseAmount: number;
+  offSchedulePickupFee: number;
+  gstAmount: number;
+  gstPct: number;
+  gatewayFeeAmount: number;
+  gatewayFeePct: number;
+  depositAmount: number;
+  includedKm: number;
+  extraKmRate: number;
+  afterHours: boolean;
+  offSchedulePickup: boolean;
+  weekendMinDays: number;
+  belowWeekendMinimum: boolean;
+  appliedRuleName: string | null;
+  /** Pickup before 08:00 — the one-off early-pickup surcharge applies. */
+  earlyPickup: boolean;
+  /** Drop after 08:00 — one extra full day is already included in `days`. */
+  lateDrop: boolean;
+  /** ALL-IN disclosure figure, deposit INCLUDED. NEVER charge this at checkout. */
+  totalAmount: number;
+  /** What Razorpay charges: rental + surcharge + GST + gateway fee. Deposit EXCLUDED. */
+  payableNow: number;
+  /** Cash deposit collected at pickup. Not charged online. */
+  depositPayableAtPickup: number;
+};
+
+/** True for bikes and scooters, which take the ₹1000 deposit and the ₹4/km extra rate. */
+export function isTwoWheeler(vehicle: Pick<QuoteVehicle, "category_kind">): boolean {
+  return vehicle.category_kind === "bike" || vehicle.category_kind === "scooter";
+}
+
+/** The deposit collected in CASH at pickup — never part of the online payment. */
+export function depositForVehicle(vehicle: Pick<QuoteVehicle, "deposit" | "category_kind">): number {
+  const configured = num(vehicle.deposit);
+  if (configured > 0) return configured;
+  return isTwoWheeler(vehicle) ? DEPOSIT_TWO_WHEELER : DEPOSIT_FOUR_WHEELER;
 }
 
 /**
- * Calculates rental price across a date range accounting for live weekend price hikes.
+ * Parses a date string (`YYYY-MM-DD` or `DD-MM-YYYY`) plus an `HH:MM` time into the
+ * matching instant in IST. Returns null when the date is unusable.
+ *
+ * Building the Date through `new Date(y, m, d)` instead would read the *viewer's* zone,
+ * so a customer browsing from outside India would be quoted a different number of days
+ * than the CRM charges.
  */
-export function calculateRentalPrice(
-  rate24h: number,
-  pickupAt: Date,
-  returnAt: Date
-): { totalAmount: number; daysCount: number; weekendDaysCount: number; rateUsed: number } {
-  const isSameDay = pickupAt.getFullYear() === returnAt.getFullYear() &&
-                    pickupAt.getMonth() === returnAt.getMonth() &&
-                    pickupAt.getDate() === returnAt.getDate();
-  const pDayOfWeek = pickupAt.getDay();
-  const rDayOfWeek = returnAt.getDay();
+export function istInstantFrom(dateStr: string | null | undefined, timeHM?: string | null): Date | null {
+  if (!dateStr) return null;
+  const clean = dateStr.includes("T") ? dateStr.split("T")[0] : dateStr;
+  const parts = clean.split(/[-/.]/).map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
 
-  let daysCount = 1;
-  if (isSameDay) {
-    daysCount = pDayOfWeek === 6 ? 2 : 1;
-  } else if (pDayOfWeek === 5 && (rDayOfWeek === 6 || rDayOfWeek === 0)) {
-    daysCount = 3; // Fri+Sat or Fri+Sat+Sun = 3 days
-  } else if (pDayOfWeek === 6 && rDayOfWeek === 0) {
-    daysCount = 2; // Sat+Sun = 2 days
+  let y: number, m: number, d: number;
+  if (parts[0] > 1000) {
+    [y, m, d] = parts;
+  } else if (parts[2] > 1000) {
+    y = parts[2];
+    m = parts[1];
+    d = parts[0];
   } else {
-    const ms = Math.max(0, returnAt.getTime() - pickupAt.getTime());
-    const hours = Math.ceil(ms / (1000 * 3600));
-    const baseDays = Math.max(1, Math.round(hours / 24));
-    const isSundayReturn = returnAt.getDay() === 0;
-    const isLateDrop = returnAt.getHours() > 8 || (returnAt.getHours() === 8 && returnAt.getMinutes() > 0);
-    daysCount = baseDays + (isSundayReturn ? 1 : 0) + (isLateDrop ? 1 : 0);
+    [y, m, d] = parts;
   }
 
-  let totalAmount = 0;
+  const hm = /^(\d{1,2}):(\d{2})/.exec((timeHM ?? "08:00").trim());
+  const hour = hm ? Number(hm[1]) : 8;
+  const minute = hm ? Number(hm[2]) : 0;
+  return istDate(y, m - 1, d, hour, minute);
+}
+
+/**
+ * The one quote calculation used by every surface of the website — search results,
+ * vehicle pages, the booking form and the server-side booking fallback. It is the
+ * website's mirror of the CRM's `calculateQuote` (minus the seasonal-rule lookup, which
+ * needs the CRM database; see the note on `appliedRuleName`).
+ */
+export function calculateRentalQuote(
+  vehicle: QuoteVehicle,
+  pickupAt: Date,
+  returnAt: Date,
+  pickupTimeHM?: string | null,
+  returnTimeHM?: string | null
+): RentalQuote {
+  const clock = computeRentalDays({ pickupAt, returnAt, pickupTimeHM, returnTimeHM });
+  const days = clock.days;
+  const weekdayRate = num(vehicle.rate_24h);
+
+  let baseAmount = 0;
   let weekendDaysCount = 0;
+  const dayBreakdown: RentalQuote["dayBreakdown"] = [];
 
-  const current = new Date(pickupAt);
-  for (let i = 0; i < daysCount; i++) {
-    const day = current.getDay();
-    if (day === 0 || day === 6) {
-      totalAmount += rate24h + 50;
-      weekendDaysCount++;
-    } else {
-      totalAmount += rate24h;
-    }
-    current.setDate(current.getDate() + 1);
+  for (const day of clock.dayDates) {
+    const weekend = isWeekend(day);
+    if (weekend) weekendDaysCount++;
+    const rate = weekend ? getDynamicRate24h(weekdayRate, day, vehicle.weekend_rate_24h) : weekdayRate;
+    dayBreakdown.push({ date: istDateKey(day), isWeekend: weekend, rate });
+    baseAmount += rate;
   }
 
-  const rateUsed = isWeekend() ? rate24h + 50 : rate24h;
-  return { totalAmount, daysCount, weekendDaysCount, rateUsed };
+  // One-off, never multiplied by the number of days. A late drop is NOT charged here —
+  // rental-clock already added a whole extra day above, priced at that day's own rate.
+  const timingFeeAmount = clock.earlyPickup ? EARLY_PICKUP_FEE : 0;
+
+  const rawKm = num(vehicle.included_km, 100);
+  const includedKm = rawKm >= 999 ? 999999 : rawKm * days;
+  const twoWheeler = isTwoWheeler(vehicle);
+  const extraKmRate = num(vehicle.extra_km_rate, twoWheeler ? 4 : 8);
+  const deposit = depositForVehicle(vehicle);
+
+  const taxableAmount = baseAmount + timingFeeAmount;
+  const gstAmount = Math.round(taxableAmount * (GST_PCT / 100));
+  const gatewayFeeAmount = Math.round((taxableAmount + gstAmount) * (GATEWAY_FEE_PCT / 100));
+
+  // Two DIFFERENT numbers, deliberately:
+  //   payableNow  — charged online. Deposit EXCLUDED (it is cash at pickup).
+  //   totalAmount — all-in disclosure for the invoice. Deposit INCLUDED.
+  // Do not "simplify" one into the other; that is exactly how the deposit ended up
+  // being collected twice.
+  const payableNow = taxableAmount + gstAmount + gatewayFeeAmount;
+  const totalAmount = payableNow + deposit;
+
+  return {
+    days,
+    weekendDaysCount,
+    dayBreakdown,
+    baseAmount,
+    offSchedulePickupFee: timingFeeAmount,
+    gstAmount,
+    gstPct: GST_PCT,
+    gatewayFeeAmount,
+    gatewayFeePct: GATEWAY_FEE_PCT,
+    depositAmount: deposit,
+    includedKm,
+    extraKmRate,
+    afterHours: clock.earlyPickup,
+    offSchedulePickup: timingFeeAmount > 0,
+    weekendMinDays: WEEKEND_MIN_DAYS,
+    belowWeekendMinimum: isWeekend(pickupAt) && days < WEEKEND_MIN_DAYS,
+    // Seasonal/festival overrides live in the CRM's `pricing_rules` table, which the
+    // public site cannot read. The CRM re-prices on confirmation, so a festival booking
+    // quoted here shows the standard rate until then.
+    appliedRuleName: null,
+    earlyPickup: clock.earlyPickup,
+    lateDrop: clock.lateDrop,
+    totalAmount,
+    payableNow,
+    depositPayableAtPickup: deposit,
+  };
+}
+
+/** Convenience wrapper for callers that hold separate date and time strings. */
+export function calculateRentalQuoteFromStrings(
+  vehicle: QuoteVehicle,
+  pickupDateStr: string | null | undefined,
+  pickupTimeStr: string | null | undefined,
+  returnDateStr: string | null | undefined,
+  returnTimeStr: string | null | undefined
+): RentalQuote | null {
+  const pickupTime = pickupTimeStr || "08:00";
+  const returnTime = returnTimeStr || "08:00";
+  const pickupAt = istInstantFrom(pickupDateStr, pickupTime);
+  const returnAt = istInstantFrom(returnDateStr, returnTime);
+  if (!pickupAt || !returnAt) return null;
+  return calculateRentalQuote(vehicle, pickupAt, returnAt, pickupTime, returnTime);
 }
 
 /**
@@ -71,7 +247,8 @@ export function calculateRentalPrice(
 export function calculateLateFee(
   scheduledReturn: Date,
   actualReturn: Date,
-  rate24h: number = 900
+  rate24h: number = 900,
+  weekendRate?: number | string | null
 ): { minutesLate: number; fee: number; breakdown: string } {
   const msLate = actualReturn.getTime() - scheduledReturn.getTime();
   const minutesLate = Math.max(0, Math.ceil(msLate / 60000));
@@ -81,7 +258,7 @@ export function calculateLateFee(
   }
 
   const extraDays = Math.ceil(minutesLate / (24 * 60));
-  const effectiveDailyRate = getDynamicRate24h(rate24h, actualReturn);
+  const effectiveDailyRate = getDynamicRate24h(rate24h, actualReturn, weekendRate);
   const fee = extraDays * effectiveDailyRate;
 
   return {

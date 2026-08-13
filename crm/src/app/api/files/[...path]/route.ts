@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getCurrentUser } from "@/lib/auth";
 import { getPortalSession } from "@/lib/portal-actions";
-import { getWritableUploadsDir } from "@/lib/db";
+import { getWritableUploadsDir } from "@/lib/uploads-dir";
 
 const MIME: Record<string, string> = {
   jpeg: "image/jpeg",

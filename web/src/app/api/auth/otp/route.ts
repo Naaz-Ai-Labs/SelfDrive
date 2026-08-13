@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. High-Availability Direct Supabase PostgreSQL Fallback
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
@@ -79,11 +79,33 @@ export async function POST(req: NextRequest) {
         await cacheSet(`otp:${target}`, code, 600);
       } catch {}
 
+      // Best-effort real delivery via a configured provider. Never blocks or fails the
+      // request — until the owner supplies WhatsApp/MSG91 credentials this always
+      // resolves to NullOtpProvider's expected failure, and the demo-mode/on-screen
+      // fallback above (ALLOW_DEMO_OTP) keeps working exactly as before.
+      if (!target.includes("@")) {
+        try {
+          const { getOtpProvider } = await import("@/lib/otp-provider");
+          const provider = getOtpProvider();
+          const result = await provider.send(target, code, "whatsapp");
+          if (!result.ok) console.warn(`[otp] provider "${provider.name}" did not send: ${result.error}`);
+        } catch (err) {
+          console.warn("[otp] provider send threw:", err);
+        }
+      }
+
+      // Returning the OTP to the caller defeats the entire purpose of an OTP: anyone
+      // could request a code for any phone number and read it out of this response.
+      // It stays available only behind an explicit opt-in flag for local demos.
+      const demoMode = process.env.ALLOW_DEMO_OTP === "true";
+
       return NextResponse.json({
         ok: true,
         sent: true,
-        demoCode: code,
-        message: "OTP sent successfully. Demo OTP displayed for instant access.",
+        ...(demoMode ? { demoCode: code } : {}),
+        message: demoMode
+          ? "Demo mode: OTP shown on screen. Do not enable this in production."
+          : "OTP generated. Our team will send it to you shortly.",
       });
     } catch (err: any) {
       console.error("Supabase OTP request insert error:", err?.message || err);
@@ -126,7 +148,10 @@ export async function POST(req: NextRequest) {
         } catch {}
       }
 
-      if (!isValid && inputCode !== "123456") {
+      // There was a universal backdoor code here ("123456") that authenticated as ANY
+      // customer. Removed unconditionally — it is not needed even for demos, since
+      // ALLOW_DEMO_OTP already surfaces the real generated code.
+      if (!isValid) {
         return NextResponse.json({ error: "Incorrect OTP code. Please try again." }, { status: 401 });
       }
 

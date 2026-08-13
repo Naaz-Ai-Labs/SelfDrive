@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
-import { verifyPassword, hashPassword, createSession, SESSION_COOKIE } from "@/lib/auth";
+import { verifyPassword, hashPassword, createSession, persistSession, SESSION_COOKIE } from "@/lib/auth";
 import { logActivity } from "@/lib/activity";
 import { supabaseAdmin, supabase } from "@/lib/supabase";
+import { sbSelectOne, sbUpdate, sbUpsert } from "@/lib/supabase-rest";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -12,6 +11,15 @@ const loginSchema = z.object({
 });
 
 const attempts = new Map<string, { count: number; blockedUntil: number }>();
+
+type UserRecord = {
+  id: number;
+  name: string;
+  email: string;
+  password_hash: string;
+  role: string;
+  branch: string | null;
+};
 
 function ipOf(req: NextRequest): string {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
@@ -37,37 +45,37 @@ export async function POST(req: NextRequest) {
   const emailClean = parsed.data.email.toLowerCase().trim();
   const password = parsed.data.password;
 
-  const db = getDb();
-  let user = db
-    .prepare("SELECT * FROM users WHERE email = ? AND is_active = 1")
-    .get(emailClean) as
-    | { id: number; name: string; email: string; password_hash: string; role: string; branch: string | null }
-    | undefined;
+  // Supabase is the single source of truth. `is_active` is INTEGER (1/0) per supabase/schema.sql.
+  const lookup = await sbSelectOne<UserRecord>(
+    "users",
+    `select=id,name,email,password_hash,role,branch&email=eq.${encodeURIComponent(emailClean)}&is_active=eq.1`
+  );
 
-  let isValid = false;
-
-  if (user && verifyPassword(password, user.password_hash)) {
-    isValid = true;
-  } else if (user) {
-    const commonPasses = ["Admin@123", "admin123", "admin", "AdminPassword123!", "Staff@123", "staff123", "staff", "Manager@123", "Finance@123"];
-    for (const p of commonPasses) {
-      if (p === password || p.toLowerCase() === password.toLowerCase()) {
-        isValid = true;
-        const newHash = hashPassword(password);
-        try {
-          db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(newHash, user.id);
-          user.password_hash = newHash;
-        } catch {}
-        break;
-      }
-    }
+  if (!lookup.ok) {
+    // Never fail open: an unreachable database must not become "anyone may log in".
+    console.error("[auth] login lookup failed:", lookup.error);
+    return NextResponse.json({ error: "Sign-in is temporarily unavailable. Please try again." }, { status: 503 });
   }
 
-  // If local SQLite check fails or user is missing in SQLite, verify with Supabase Auth or Supabase DB
+  let user: UserRecord | null = lookup.data;
+  let isValid = false;
+
+  // The bcrypt hash is the ONLY accepted proof of identity.
+  //
+  // Removed here: a fallback that accepted any of a hardcoded list of common
+  // passwords ("admin", "admin123", "Admin@123", "staff", …) for ANY existing
+  // user, and then overwrote that user's real password hash with the guessed
+  // value. Anyone who knew a staff email could sign in as them — including the
+  // administrator — and would silently take ownership of the account.
+  if (user && verifyPassword(password, user.password_hash)) {
+    isValid = true;
+  }
+
+  // Supabase Auth (the identity provider) as a second credential source, for accounts
+  // created through Auth rather than through the CRM's own users table.
   const sbClient = supabaseAdmin || supabase;
   if (!isValid && sbClient) {
     try {
-      // 1. Attempt Supabase Auth login with provided credentials
       const { data: authData, error: authError } = await sbClient.auth.signInWithPassword({
         email: emailClean,
         password,
@@ -76,42 +84,38 @@ export async function POST(req: NextRequest) {
       if (!authError && authData?.user) {
         isValid = true;
         const meta = authData.user.user_metadata || {};
+        const appMeta = (authData.user.app_metadata || {}) as { role?: string; branch?: string | null };
         const userName = meta.name || meta.full_name || emailClean.split("@")[0];
-        const userRole = meta.role || "staff";
-        const userBranch = meta.branch || null;
+        // Role must NOT come from user_metadata: that field is writable by the user
+        // themselves through the Supabase client, so anyone with an Auth account could
+        // set role:"admin" and escalate on first login. app_metadata is server-only.
+        // Anything not explicitly granted there starts as "staff"; an admin promotes
+        // from the staff screen.
+        const userRole = appMeta.role || "staff";
+        const userBranch = appMeta.branch ?? null;
         const passwordHash = hashPassword(password);
 
         if (user) {
-          db.prepare("UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?").run(passwordHash, user.id);
+          await sbUpdate("users", `id=eq.${user.id}`, { password_hash: passwordHash, is_active: 1 });
           user.password_hash = passwordHash;
         } else {
-          const res = db
-            .prepare("INSERT INTO users (name, email, password_hash, role, branch, is_active) VALUES (?, ?, ?, ?, ?, 1)")
-            .run(userName, emailClean, passwordHash, userRole, userBranch);
-          const newId = Number(res.lastInsertRowid);
-          user = { id: newId, name: userName, email: emailClean, password_hash: passwordHash, role: userRole, branch: userBranch };
-        }
-      } else if (supabaseAdmin) {
-        // 2. Also check if user exists in Supabase DB 'users' table with matching password hash
-        const { data: sbDbUser } = await supabaseAdmin
-          .from("users")
-          .select("*")
-          .eq("email", emailClean)
-          .eq("is_active", 1)
-          .maybeSingle();
-
-        if (sbDbUser && sbDbUser.password_hash && verifyPassword(password, sbDbUser.password_hash)) {
-          isValid = true;
-          const passwordHash = sbDbUser.password_hash;
-          if (user) {
-            db.prepare("UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?").run(passwordHash, user.id);
-            user.password_hash = passwordHash;
+          const created = await sbUpsert<UserRecord>(
+            "users",
+            {
+              name: userName,
+              email: emailClean,
+              password_hash: passwordHash,
+              role: userRole,
+              branch: userBranch,
+              is_active: 1,
+            },
+            "email"
+          );
+          if (created.ok && created.data) {
+            user = created.data;
           } else {
-            const res = db
-              .prepare("INSERT INTO users (name, email, password_hash, role, branch, is_active) VALUES (?, ?, ?, ?, ?, 1)")
-              .run(sbDbUser.name || emailClean.split("@")[0], emailClean, passwordHash, sbDbUser.role || "staff", sbDbUser.branch || null);
-            const newId = Number(res.lastInsertRowid);
-            user = { id: newId, name: sbDbUser.name, email: emailClean, password_hash: passwordHash, role: sbDbUser.role, branch: sbDbUser.branch };
+            console.error("[auth] could not provision Auth user in users table:", created.ok ? "no row" : created.error);
+            isValid = false;
           }
         }
       }
@@ -120,43 +124,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 3. Auto-provision user account if email is valid and password length >= 3
-  if ((!isValid || !user) && emailClean && password && password.length >= 3) {
-    try {
-      const role = emailClean.includes("admin") ? "admin" : emailClean.includes("manager") ? "manager" : "staff";
-      const rawName = emailClean.split("@")[0].replace(/[._-]/g, " ");
-      const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-      const passwordHash = hashPassword(password);
-
-      if (user) {
-        db.prepare("UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?").run(passwordHash, user.id);
-        user.password_hash = passwordHash;
-        isValid = true;
-      } else {
-        const res = db
-          .prepare("INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, 1)")
-          .run(name, emailClean, passwordHash, role);
-        const newId = Number(res.lastInsertRowid);
-        user = { id: newId, name, email: emailClean, password_hash: passwordHash, role, branch: null };
-        isValid = true;
-      }
-
-      // Also upsert into Supabase DB if available
-      if (supabaseAdmin) {
-        try {
-          await supabaseAdmin.from("users").upsert({
-            name,
-            email: emailClean,
-            password_hash: passwordHash,
-            role,
-            is_active: 1,
-          }, { onConflict: "email" });
-        } catch {}
-      }
-    } catch (err: any) {
-      console.warn("Auto-provision user failed:", err?.message || err);
-    }
-  }
+  // Removed here: auto-provisioning. Any unknown email with a 3+ character password
+  // created a working staff account, and an address merely CONTAINING "admin"
+  // (e.g. "notadmin@anywhere.com") was granted the admin role. Combined with the
+  // common-password fallback above, the CRM could be taken over by anyone who
+  // could reach the login page.
+  //
+  // Staff accounts are now created deliberately, by an existing admin, through the
+  // staff management screen.
 
   if (!isValid || !user) {
     const current = attempts.get(key) ?? { count: 0, blockedUntil: 0 };
@@ -167,16 +142,14 @@ export async function POST(req: NextRequest) {
   }
 
   attempts.delete(key);
-  console.log("[AUTH_DEBUG] Login credentials verified for user:", user.id, user.email, "Creating session...");
   const token = createSession(user.id, ip, { role: user.role, email: user.email, name: user.name });
-  console.log("[AUTH_DEBUG] Generated token:", token);
+  await persistSession(token, user.id, ip);
 
+  const touched = await sbUpdate("users", `id=eq.${user.id}`, { last_login: new Date().toISOString() });
+  if (!touched.ok) console.error("[auth] could not record last_login:", touched.error);
   try {
-    db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
-    logActivity(user.id, "login", "user", user.id);
-  } catch (err: any) {
-    console.error("[AUTH_DEBUG] DB update error on login:", err?.message);
-  }
+    await logActivity(user.id, "login", "user", user.id);
+  } catch {}
 
   const isProd = process.env.NODE_ENV === "production" || !!process.env.VERCEL;
   const cookieOptions = {

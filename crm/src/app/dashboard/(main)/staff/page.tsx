@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
+import { sbSelect } from "@/lib/supabase-rest";
 import { StaffEditor } from "@/components/dashboard/settings/StaffEditor";
 
 export const metadata: Metadata = { title: "Staff Accounts Management", robots: { index: false, follow: false } };
@@ -12,9 +12,22 @@ export default async function StaffManagementPage() {
   if (!user) redirect("/dashboard/login");
   if (user.role !== "admin") redirect("/dashboard");
 
-  const db = getDb();
-  const users = (db.prepare("SELECT * FROM users ORDER BY created_at DESC").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  const history = (db.prepare("SELECT h.*, u.name AS staff_name, u.email AS staff_email, a.name AS admin_name FROM staff_history h LEFT JOIN users u ON u.id = h.staff_id LEFT JOIN users a ON a.id = h.performed_by ORDER BY h.created_at DESC LIMIT 50").all() as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+  const [usersRes, historyRes] = await Promise.all([
+    sbSelect<Record<string, unknown>>("users", "select=*&order=created_at.desc"),
+    sbSelect<Record<string, unknown>>("staff_history", "select=*&order=created_at.desc&limit=50"),
+  ]);
+  if (!usersRes.ok) throw new Error(`Could not load staff accounts: ${usersRes.error}`);
+  if (!historyRes.ok) throw new Error(`Could not load staff history: ${historyRes.error}`);
+
+  const users = usersRes.data;
+  // staff_history references users twice (staff_id, performed_by), which PostgREST
+  // cannot disambiguate — both names come from the roster above.
+  const usersById = new Map(users.map((u) => [Number(u.id), u]));
+  const history = historyRes.data.map((h): Record<string, unknown> => {
+    const staffUser = usersById.get(Number(h.staff_id));
+    const admin = usersById.get(Number(h.performed_by));
+    return { ...h, staff_name: staffUser?.name ?? null, staff_email: staffUser?.email ?? null, admin_name: admin?.name ?? null };
+  });
 
   return (
     <div className="space-y-6">

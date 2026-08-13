@@ -1,3 +1,15 @@
+/**
+ * Requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (the Upstash REST client's
+ * actual expected env var names — do not use REDIS_URL or any other alias here).
+ *
+ * Without both set, this module silently degrades to a per-process in-memory Map. That is
+ * fine for plain caching (worst case: a cold cache), but NOT fine for OTP dedup/rate-limit
+ * state, which needs to be shared across multiple serverless instances — each instance
+ * would otherwise have its own view of "was this OTP already used". Setting the two
+ * UPSTASH_* vars is a Round-3-later action item for the owner; nothing here fails or lies
+ * about it in the meantime, it just quietly falls back.
+ */
+
 // In-Memory Fallback Cache Store for web frontend
 const memoryCache = new Map<string, { value: any; expiresAt: number }>();
 
@@ -8,7 +20,7 @@ async function getRedis(): Promise<any | null> {
   if (redisAttempted) return redisClient;
   redisAttempted = true;
 
-  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.REDIS_URL;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
 
   if (url && token) {

@@ -15,7 +15,11 @@ export async function createBookingPaymentOrder(
     gstAmount?: number;
     depositAmount?: number;
     gatewayFeeAmount?: number;
+    /** All-in disclosure figure (deposit included). NEVER charge this. */
     totalAmount?: number;
+    /** Deposit-excluded figure — this is what may be charged online. */
+    payableNow?: number;
+    depositPayableAtPickup?: number;
   } | null
 ): Promise<
   { ok: true; orderId: string; amountPaise: number; keyId: string; paymentId: number; paymentNo: string; notes?: Record<string, string>; businessName: string } | { ok: false; error: string }
@@ -31,8 +35,8 @@ export async function createBookingPaymentOrder(
   }
 
   // 2. High-Availability Direct Razorpay Order Creation on Web Server
-  const keyId = process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_live_TMtWnWetF4mEf8";
-  const keySecret = process.env.RAZORPAY_KEY_SECRET || "vWEQ49WAZ71sye9SJbK5eluA";
+  const keyId = process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
   if (!keyId || !keySecret) {
     return { ok: false, error: "Razorpay credentials not configured. Please choose Pay at Pickup." };
@@ -42,7 +46,7 @@ export async function createBookingPaymentOrder(
     let finalAmount = Number(amountDue) || 0;
     let bookingNo = `BK-${bookingId}`;
 
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
     if (supabaseUrl && supabaseKey) {
@@ -52,12 +56,13 @@ export async function createBookingPaymentOrder(
         if (b) {
           bookingNo = b.booking_no || bookingNo;
           if (finalAmount <= 0) {
-            finalAmount = Number(b.total_amount || 0);
+            // `bookings.total_amount` is the all-in column and INCLUDES the deposit, which
+            // is cash at pickup. Charging it online would collect the deposit twice.
+            finalAmount = Math.max(0, Number(b.total_amount || 0) - Number(b.deposit_amount || 0));
             if (finalAmount <= 0 && b.vehicles) {
               const base = Number(b.vehicles.rate_24h || 1000);
-              const dep = Number(b.vehicles.deposit || 1000);
               const gst = Math.round(base * 0.06);
-              finalAmount = base + dep + gst;
+              finalAmount = base + gst;
             }
           }
         }
@@ -72,16 +77,17 @@ export async function createBookingPaymentOrder(
     const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
 
     // Itemized notes for Razorpay receipt and customer transparency
-    const baseAmt = quote?.baseAmount ?? (finalAmount - (quote?.depositAmount ?? 0));
-    const depAmt = quote?.depositAmount ?? 0;
+    const baseAmt = quote?.baseAmount ?? Math.max(0, finalAmount - (quote?.gstAmount ?? 0));
+    const depAmt = quote?.depositPayableAtPickup ?? quote?.depositAmount ?? 0;
     const gstAmt = quote?.gstAmount ?? 0;
 
     const notes: Record<string, string> = {
       "Booking No": bookingNo,
       "Base Rental": `₹${baseAmt.toLocaleString("en-IN")}`,
-      "Refundable Deposit": depAmt > 0 ? `₹${depAmt.toLocaleString("en-IN")}` : "Included",
       "GST (6%)": gstAmt > 0 ? `₹${gstAmt.toLocaleString("en-IN")}` : "Included",
-      "Total Payable": `₹${finalAmount.toLocaleString("en-IN")}`,
+      // Disclosed on the receipt, deliberately excluded from the charged amount.
+      "Deposit (cash at pickup)": depAmt > 0 ? `₹${depAmt.toLocaleString("en-IN")} — not charged online` : "Collected at pickup",
+      "Paid Online Now": `₹${finalAmount.toLocaleString("en-IN")}`,
     };
 
     // Call Razorpay API directly
@@ -134,7 +140,10 @@ export async function verifyBookingPayment(input: {
   } catch {}
 
   // 2. Direct HMAC-SHA256 Signature Verification & Live Supabase / CRM Sync
-  const keySecret = process.env.RAZORPAY_KEY_SECRET || "vWEQ49WAZ71sye9SJbK5eluA";
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keySecret) {
+    return { ok: false, error: "Razorpay credentials not configured. Payment could not be verified." };
+  }
 
   const expectedSignature = crypto
     .createHmac("sha256", keySecret)
@@ -154,6 +163,7 @@ export async function verifyBookingPayment(input: {
     let b = rows && rows.length > 0 ? rows[0] : null;
 
     if (!b) {
+      paidAmount = 954; // rental + GST only; the ₹1000 deposit is cash at pickup
       const now = new Date().toISOString();
       const tomorrow = new Date(Date.now() + 86400000).toISOString();
       await supabaseRestUpsert("bookings", {
@@ -164,16 +174,22 @@ export async function verifyBookingPayment(input: {
         return_at: tomorrow,
         base_amount: 900,
         deposit_amount: 1000,
-        gst_amount: 69,
-        total_amount: paidAmount,
-        paid_amount: paidAmount,
+        gst_amount: 54,
+        // total_amount is the all-in column (deposit included); paid_amount is the
+        // online payment only, which excludes the cash-at-pickup deposit.
+        total_amount: 900 + 54 + 1000,
+        paid_amount: 900 + 54,
         status: "Confirmed",
         created_at: now,
         updated_at: now,
       });
     } else {
       bookingNo = b.booking_no || bookingNo;
-      paidAmount = Number(b.total_amount || b.paid_amount || 1000);
+      // Online payments never include the deposit, so the amount recorded as paid is the
+      // all-in total minus the deposit that is still to be collected in cash at pickup.
+      const allIn = Number(b.total_amount || 0);
+      const dep = Number(b.deposit_amount || 0);
+      paidAmount = allIn > 0 ? Math.max(0, allIn - dep) : Number(b.paid_amount || 0);
 
       // 1. Update Booking Status to Confirmed & Paid Amount
       await supabaseRestUpsert("bookings", {

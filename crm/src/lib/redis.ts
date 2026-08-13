@@ -1,3 +1,15 @@
+/**
+ * Requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (the Upstash REST client's
+ * actual expected env var names — do not use REDIS_URL or any other alias here).
+ *
+ * Without both set, this module silently degrades to a per-process in-memory Map. That is
+ * fine for plain caching (worst case: a cold cache), but NOT fine for OTP dedup/rate-limit
+ * state, which needs to be shared across multiple serverless instances — each instance
+ * would otherwise have its own view of "was this OTP already used". Setting the two
+ * UPSTASH_* vars is a Round-3-later action item for the owner; nothing here fails or lies
+ * about it in the meantime, it just quietly falls back.
+ */
+
 // In-Memory Fallback Cache Store (for environments without Upstash Redis credentials or package)
 const memoryCache = new Map<string, { value: any; expiresAt: number }>();
 
@@ -8,7 +20,7 @@ async function getRedis(): Promise<any | null> {
   if (redisAttempted) return redisClient;
   redisAttempted = true;
 
-  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.REDIS_URL;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
 
   if (url && token) {
@@ -88,4 +100,27 @@ export async function cacheInvalidate(key: string): Promise<void> {
   }
 
   memoryCache.delete(key);
+}
+
+/**
+ * Invalidates every cache entry whose key starts with `prefix`.
+ *
+ * Vehicle and pricing cache keys embed their filter arguments
+ * (e.g. `vehicles:{"kind":"bike"}:true`), so there is no single key to delete after
+ * an edit. Without this, a price change stayed invisible for the full TTL — 10
+ * minutes for vehicles, an hour for categories.
+ */
+export async function cacheInvalidatePrefix(prefix: string): Promise<void> {
+  const redis = await getRedis();
+
+  if (redis) {
+    try {
+      const keys = await redis.keys(`${prefix}*`);
+      if (Array.isArray(keys) && keys.length) await redis.del(...keys);
+    } catch {}
+  }
+
+  for (const key of Array.from(memoryCache.keys())) {
+    if (key.startsWith(prefix)) memoryCache.delete(key);
+  }
 }

@@ -195,3 +195,96 @@ h2, h3 {
   .dropdown-pop { animation: none; }
 }
 .depth-64 { box-shadow: 0 16px 32px rgba(15, 15, 19, 0.16); }
+
+/* ---------- Print ----------
+   Only invoices/receipts get printed out of the CRM. Drop the sidebar, topbar,
+   the fixed radial gradient mesh and every frosted-glass surface so the sheet
+   is a plain black-on-white document. */
+@page {
+  margin: 12mm;
+}
+
+@media print {
+  .no-print,
+  aside,
+  nav,
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  html,
+  body {
+    overflow: visible !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    background: none !important;
+    background-image: none !important;
+    background-color: #fff !important;
+    background-attachment: initial !important;
+    color: #000 !important;
+    font-size: 10.5pt;
+  }
+
+  /* The dashboard shell locks scrolling into a fixed-height flex column —
+     unwind it so long invoices paginate instead of clipping to one screen. */
+  body * {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  main {
+    height: auto !important;
+    padding: 0 !important;
+  }
+
+  .card,
+  .btn-secondary,
+  .input {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    border: 0 !important;
+  }
+
+  .elevation-1,
+  .elevation-2,
+  .elevation-3,
+  .elevation-4,
+  .depth-4,
+  .depth-8,
+  .depth-16,
+  .depth-64 {
+    box-shadow: none !important;
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  table,
+  th,
+  td {
+    border-color: #999 !important;
+    border-width: 1px !important;
+  }
+
+  a {
+    color: #000 !important;
+    text-decoration: none !important;
+  }
+
+  /* Status badges encode state in their fill — keep those colours exact. */
+  .badge {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  img,
+  tr,
+  .avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

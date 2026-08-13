@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getDb } from "@/lib/db";
+import { sbSelect } from "@/lib/supabase-rest";
 import { getStaff, getVehicles } from "@/lib/data";
 import { formatDateTime } from "@/lib/utils";
 import { StatusBadge, EmptyState } from "@/components/ui";
@@ -12,25 +12,38 @@ export const revalidate = 0;
 const FILTERS = ["Active", "Open", "In progress", "Resolved", "Cancelled", "All"] as const;
 
 export default async function ProblemTicketsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
-  const db = getDb();
   const sp = await searchParams;
   const active = FILTERS.includes(sp?.status as (typeof FILTERS)[number]) ? (sp?.status as (typeof FILTERS)[number]) : "Active";
 
-  const where = active === "All" ? "" : active === "Active" ? "WHERE t.status IN ('Open','In progress')" : "WHERE t.status = ?";
-  let tickets: Array<Record<string, unknown>> = [];
-  try {
-    tickets = db
-      .prepare(
-        `SELECT t.*, b.booking_no, v.name AS vehicle_name, c.name AS customer_name FROM problem_tickets t
-         LEFT JOIN bookings b ON b.id = t.booking_id LEFT JOIN vehicles v ON v.id = t.vehicle_id LEFT JOIN customers c ON c.id = t.customer_id
-         ${where} ORDER BY t.created_at DESC`
-      )
-      .all(...(active !== "All" && active !== "Active" ? [active] : [])) as Array<Record<string, unknown>>;
-  } catch (err) {
-    console.error("Problem tickets query error:", err);
-  }
-  const staff = getStaff();
-  const vehicles = getVehicles({}, false).map((v) => ({ id: v.id, name: v.name }));
+  const statusFilter =
+    active === "All"
+      ? ""
+      : active === "Active"
+        ? `&status=${encodeURIComponent('in.("Open","In progress")')}`
+        : `&status=eq.${encodeURIComponent(active)}`;
+
+  // problem_tickets has two foreign keys into vehicles (vehicle_id and
+  // replacement_vehicle_id), which PostgREST cannot disambiguate on its own — the
+  // vehicle name is resolved from the fleet list below instead.
+  const [ticketsRes, staff, allVehicles] = await Promise.all([
+    sbSelect<Record<string, unknown>>(
+      "problem_tickets",
+      `select=*,bookings(booking_no),customers(name)${statusFilter}&order=created_at.desc`
+    ),
+    getStaff(),
+    getVehicles({}, false),
+  ]);
+  if (!ticketsRes.ok) throw new Error(`Could not load problem tickets: ${ticketsRes.error}`);
+
+  const vehicles = allVehicles.map((v) => ({ id: v.id, name: v.name }));
+  const vehicleNameById = new Map(vehicles.map((v) => [v.id, v.name]));
+
+  const tickets = ticketsRes.data.map((t): Record<string, unknown> => ({
+    ...t,
+    booking_no: (t.bookings as { booking_no?: string } | null)?.booking_no ?? null,
+    customer_name: (t.customers as { name?: string } | null)?.name ?? null,
+    vehicle_name: vehicleNameById.get(Number(t.vehicle_id)) ?? null,
+  }));
 
   return (
     <div className="space-y-6">

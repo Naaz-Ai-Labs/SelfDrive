@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getDb } from "@/lib/db";
+import { sbSelect, num } from "@/lib/supabase-rest";
 import { formatDateTime, formatINR } from "@/lib/utils";
 import { StatusBadge, EmptyState } from "@/components/ui";
 import { RefundDecisionForm, CompleteRefundForm } from "@/components/dashboard/forms";
@@ -16,19 +16,19 @@ export default async function RefundsPage() {
   if (!user) redirect("/dashboard/login");
   if (user.role !== "admin") redirect("/dashboard");
 
-  const db = getDb();
-  let refunds: Array<Record<string, unknown>> = [];
-  try {
-    refunds = db
-      .prepare(
-        `SELECT r.*, b.booking_no, c.name AS customer_name FROM refunds r
-         LEFT JOIN bookings b ON b.id = r.booking_id LEFT JOIN customers c ON c.id = r.customer_id
-         ORDER BY r.requested_at DESC`
-      )
-      .all() as Array<Record<string, unknown>>;
-  } catch (err) {
-    console.error("Refunds query error:", err);
-  }
+  const refundsRes = await sbSelect<Record<string, unknown>>(
+    "refunds",
+    "select=*,bookings(booking_no),customers(name)&order=requested_at.desc"
+  );
+  if (!refundsRes.ok) throw new Error(`Could not load refunds: ${refundsRes.error}`);
+
+  const refunds = refundsRes.data.map((r): Record<string, unknown> => ({
+    ...r,
+    booking_no: (r.bookings as { booking_no?: string } | null)?.booking_no ?? null,
+    customer_name: (r.customers as { name?: string } | null)?.name ?? null,
+    requested_amount: num(r.requested_amount),
+    approved_amount: r.approved_amount === null || r.approved_amount === undefined ? null : num(r.approved_amount),
+  }));
 
   return (
     <div className="space-y-6">

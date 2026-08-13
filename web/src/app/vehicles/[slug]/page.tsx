@@ -14,11 +14,17 @@ export async function generateMetadata(props: { params: Promise<{ slug: string }
   const params = await props.params;
   const vehicle = await getVehicle(params.slug);
   if (!vehicle) return { title: "Vehicle not found" };
+  const description = `Rent the ${vehicle.name} — ${formatINR(vehicle.rate_24h)}/24h, ${vehicle.included_km} km included, ₹${vehicle.deposit} deposit. Fixed pricing, no bargaining.`;
   return {
     title: vehicle.name,
-    description: `Rent the ${vehicle.name} — ${formatINR(vehicle.rate_24h)}/24h, ${vehicle.included_km} km included, ₹${vehicle.deposit} deposit. Fixed pricing, no bargaining.`,
+    description,
     alternates: { canonical: `/vehicles/${vehicle.slug}` },
-    openGraph: vehicle.primary_photo ? { images: [{ url: vehicle.primary_photo }] } : undefined,
+    openGraph: {
+      title: vehicle.name,
+      description,
+      type: "website",
+      images: vehicle.primary_photo ? [{ url: vehicle.primary_photo }] : undefined,
+    },
   };
 }
 
@@ -86,7 +92,7 @@ export default async function VehicleDetailPage(props: {
     ["Security deposit", formatINR(vehicle.deposit), SPEC_ICONS.deposit],
   ];
 
-  const siteUrl = "https://darshhrentals.in";
+  const siteUrl = "https://www.selfdrive.bike";
   const productJsonLd = {
     "@context": "https://schema.org",
     "@type": "Product",
@@ -130,7 +136,7 @@ export default async function VehicleDetailPage(props: {
         <div className="grid gap-10 lg:grid-cols-[1.3fr_1fr]">
           <div>
             <div className="relative aspect-[4/3] overflow-hidden rounded-3xl bg-ink-100 shadow-soft">
-              {vehicle.primary_photo && <Image src={vehicle.primary_photo} alt={vehicle.name} fill priority className="object-contain p-6" sizes="(max-width:1024px) 100vw, 60vw" />}
+              {vehicle.primary_photo && <Image src={vehicle.primary_photo} alt={`${vehicle.name} self-drive rental in ${String(info.city ?? "Hassan")}`} fill priority className="object-contain p-6" sizes="(max-width:1024px) 100vw, 60vw" />}
               <span className="absolute left-4 top-4 badge bg-white/95 text-ink-800 shadow-sm">{vehicle.category_name}</span>
               <span className={`absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black shadow-md ${isOutOfStock ? "bg-rose-600 text-white" : (vehicle.available_units ?? vehicle.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-md"}`}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
@@ -139,9 +145,9 @@ export default async function VehicleDetailPage(props: {
             </div>
             {vehicle.photos.length > 1 && (
               <div className="mt-3 grid grid-cols-4 gap-3">
-                {vehicle.photos.slice(1, 5).map((p) => (
+                {vehicle.photos.slice(1, 5).map((p, i) => (
                   <div key={p} className="relative aspect-square overflow-hidden rounded-xl bg-ink-100">
-                    <Image src={p} alt="" fill className="object-cover" sizes="120px" />
+                    <Image src={p} alt={`${vehicle.name} rental in ${String(info.city ?? "Hassan")} — photo ${i + 2}`} fill className="object-cover" sizes="120px" />
                   </div>
                 ))}
               </div>
@@ -186,11 +192,11 @@ export default async function VehicleDetailPage(props: {
                 <p className="text-xs font-bold uppercase tracking-wider text-ink-400">Pricing</p>
                 {searchQuote && searchQuote.weekendDaysCount > 0 ? (
                   <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
-                    +₹50 Weekend Rate ({searchQuote.weekendDaysCount}d)
+                    Weekend Rate ({searchQuote.weekendDaysCount}d)
                   </span>
                 ) : weekendActive && !searchQuote ? (
                   <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
-                    +₹50 Weekend Rate
+                    Weekend Rate Today
                   </span>
                 ) : null}
               </div>
@@ -217,22 +223,25 @@ export default async function VehicleDetailPage(props: {
                     </div>
                     {searchQuote.totalTimingFees > 0 && (
                       <div className="flex justify-between text-amber-800">
-                        <span>Off-schedule timing surcharge</span>
+                        <span>Early pickup surcharge (before 8:00 AM)</span>
                         <span className="font-semibold">+{formatINR(searchQuote.totalTimingFees)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between">
-                      <span>Refundable Deposit</span>
-                      <span className="font-semibold text-ink-900">{formatINR(searchQuote.depositAmount)}</span>
-                    </div>
                     <div className="flex justify-between">
                       <span>GST (6%)</span>
                       <span className="font-semibold text-ink-900">{formatINR(searchQuote.gstAmount)}</span>
                     </div>
                     <div className="flex justify-between border-t border-brand-200 pt-1 text-sm font-bold text-ink-900">
-                      <span>Total Payable</span>
-                      <span className="text-brand-700">{formatINR(searchQuote.totalAmount)}</span>
+                      <span>Pay now online</span>
+                      <span className="text-brand-700">{formatINR(searchQuote.payableNow)}</span>
                     </div>
+                    <div className="flex justify-between text-emerald-800">
+                      <span>Security deposit (cash at pickup, refundable)</span>
+                      <span className="font-semibold">{formatINR(searchQuote.depositPayableAtPickup)}</span>
+                    </div>
+                    {searchQuote.lateDrop && (
+                      <p className="text-[11px] text-amber-800">Drop after 8:00 AM — one extra full rental day is included above.</p>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -251,9 +260,9 @@ export default async function VehicleDetailPage(props: {
                 </li>
                 <li className="flex justify-between"><span>Included km</span><span className="font-medium text-ink-800">{vehicle.included_km >= 999 ? "Unlimited KM" : `${vehicle.included_km} km/day`}</span></li>
                 <li className="flex justify-between"><span>Extra km rate</span><span className="font-medium text-ink-800">{formatINR((vehicle.category_kind === "bike" || vehicle.category_kind === "scooter") ? 4 : vehicle.extra_km_rate ?? 8)}/km</span></li>
-                <li className="flex justify-between"><span>Security deposit</span><span className="font-medium text-ink-800">{formatINR(vehicle.deposit)}</span></li>
+                <li className="flex justify-between"><span>Security deposit (cash at pickup)</span><span className="font-medium text-ink-800">{formatINR(vehicle.deposit)}</span></li>
               </ul>
-              <p className="mt-4 text-xs text-ink-500">Fixed rental — no bargaining. Vehicle rented without fuel; return with the same fuel level. GST (6%) added at checkout.</p>
+              <p className="mt-4 text-xs text-ink-500">Fixed rental — no bargaining. Vehicle rented without fuel; return with the same fuel level. GST (6%) added at checkout. The refundable security deposit is <strong>not</strong> charged online — you pay it in cash at pickup.</p>
 
               {isOutOfStock ? (
                 <div className="mt-5 w-full rounded-full bg-rose-100 py-3.5 text-center text-xs font-bold uppercase tracking-wide text-rose-700">
@@ -261,7 +270,7 @@ export default async function VehicleDetailPage(props: {
                 </div>
               ) : (
                 <Link href={bookingHref} className="btn-shine mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
-                  {searchQuote ? `Book for ${formatINR(searchQuote.totalAmount)}` : "Book this vehicle"}
+                  {searchQuote ? `Book — pay ${formatINR(searchQuote.payableNow)} now` : "Book this vehicle"}
                 </Link>
               )}
               <a href={waLink(String(info.whatsapp ?? ""), `Hi, I'd like to enquire about the ${vehicle.name}`)} target="_blank" rel="noopener noreferrer" className="btn-secondary mt-2 w-full">
@@ -280,7 +289,7 @@ export default async function VehicleDetailPage(props: {
                   <Link key={v.id} href={`/vehicles/${v.slug}`} className="card overflow-hidden transition hover:-translate-y-1 hover:shadow-lift">
                     {v.primary_photo && (
                       <div className="relative h-32 overflow-hidden bg-ink-100">
-                        <Image src={v.primary_photo} alt={v.name} fill className="object-contain p-3" sizes="240px" />
+                        <Image src={v.primary_photo} alt={`${v.name} self-drive rental in ${String(info.city ?? "Hassan")}`} fill className="object-contain p-3" sizes="240px" />
                       </div>
                     )}
                     <div className="p-5">

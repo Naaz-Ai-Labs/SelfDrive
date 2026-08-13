@@ -58,11 +58,21 @@ export function slugify(text: string): string {
     .replace(/^-|-$/g, "");
 }
 
-let counter = 0;
+/**
+ * Generates a human-facing reference number (ENQ/PY/RC/RF/PT/INV-...).
+ *
+ * Every one of these columns is UNIQUE NOT NULL. The previous version combined a
+ * module-level counter — reset to 0 on every serverless cold start — with
+ * `Date.now() % 100000`, so two lambdas starting around the same moment could and
+ * did mint the same number, and the insert failed. This has no shared state:
+ * millisecond timestamp + random, both base36, give enough entropy that two
+ * concurrent callers essentially never collide, with no coordination required.
+ */
 export function nextNumber(prefix: string, id: number | null | undefined): string {
-  counter += 1;
-  const stamp = id ?? Date.now() % 100000;
-  return `${prefix}-${new Date().getFullYear()}-${String(stamp).padStart(4, "0")}-${String(counter).padStart(2, "0")}`;
+  if (id) return `${prefix}-${new Date().getFullYear()}-${String(id).padStart(5, "0")}`;
+  const stamp = Date.now().toString(36).toUpperCase().slice(-6);
+  const rand = Math.floor(Math.random() * 46656).toString(36).toUpperCase().padStart(3, "0");
+  return `${prefix}-${new Date().getFullYear()}-${stamp}${rand}`;
 }
 
 export function todayISO(): string {
@@ -124,4 +134,14 @@ export function initials(name: string): string {
 
 export function cn(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
+}
+
+/** Convert Rupees float to integer minor units (Paise). e.g. ₹1500.00 -> 150000 */
+export function toPaise(rupees: number): number {
+  return Math.round(rupees * 100);
+}
+
+/** Convert integer minor units (Paise) to Rupees float. e.g. 150000 -> 1500 */
+export function toRupees(paise: number): number {
+  return paise / 100;
 }

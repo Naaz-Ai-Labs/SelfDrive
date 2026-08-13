@@ -5,6 +5,13 @@ import { ContactForm } from "@/components/ContactForm";
 export const metadata: Metadata = {
   title: "Contact Us",
   description: "Reach Darshan Tour and Travels — phone, WhatsApp, email or the contact form. We reply within one business day.",
+  alternates: { canonical: "/contact" },
+  openGraph: {
+    title: "Contact Us | Darshh Holiday",
+    description: "Reach Darshan Tour and Travels — phone, WhatsApp, email or the contact form. We reply within one business day.",
+    type: "website",
+    images: [{ url: "/logo.jpeg", width: 792, height: 685, alt: "Darshh Holiday contact" }],
+  },
 };
 
 const HERO_VIDEO =

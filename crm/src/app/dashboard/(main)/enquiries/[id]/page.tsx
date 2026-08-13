@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getDb } from "@/lib/db";
+import { sbSelect } from "@/lib/supabase-rest";
 import { getSetting } from "@/lib/settings";
 import { getStaff } from "@/lib/data";
 import { formatDateTime, waLink, parseJSON } from "@/lib/utils";
@@ -13,39 +13,39 @@ export const revalidate = 0;
 
 export default async function EnquiryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: paramId } = await params;
-  const db = getDb();
   const numId = Number(paramId);
 
-  const enquiry = db
-    .prepare(
-      `SELECT e.*, c.name AS category_name, v.name AS vehicle_name FROM enquiries e
-       LEFT JOIN vehicle_categories c ON c.id = e.category_id LEFT JOIN vehicles v ON v.id = e.vehicle_id
-       WHERE e.id = ? OR e.enquiry_no = ?`
-    )
-    .get(numId || 0, paramId) as Record<string, unknown> | undefined;
+  const predicates = [`enquiry_no.eq.${paramId}`];
+  if (Number.isInteger(numId) && numId > 0) predicates.unshift(`id.eq.${numId}`);
 
-  if (!enquiry) notFound();
+  const enquiryRes = await sbSelect<Record<string, unknown>>(
+    "enquiries",
+    `select=*,vehicle_categories(name),vehicles(name)&or=${encodeURIComponent(`(${predicates.join(",")})`)}&limit=1`
+  );
+  if (!enquiryRes.ok) throw new Error(`Could not load the enquiry: ${enquiryRes.error}`);
+
+  const row = enquiryRes.data[0];
+  if (!row) notFound();
+
+  const enquiry: Record<string, unknown> = {
+    ...row,
+    category_name: (row.vehicle_categories as { name?: string } | null)?.name ?? null,
+    vehicle_name: (row.vehicles as { name?: string } | null)?.name ?? null,
+  };
   const id = Number(enquiry.id);
 
-  let stages: string[] = [];
-  try {
-    stages = getSetting<string[]>("enquiry_stages", []) || [];
-  } catch {}
-  if (!stages || stages.length === 0) {
-    stages = ["New", "Contacted", "Quoted", "Converted", "Closed", "Lost"];
-  }
+  const [stagesSetting, staff, historyRes] = await Promise.all([
+    getSetting<string[]>("enquiry_stages", []),
+    getStaff(),
+    sbSelect<Record<string, unknown>>(
+      "enquiry_history",
+      `select=*,users(name)&enquiry_id=eq.${id}&order=created_at.desc`
+    ),
+  ]);
+  if (!historyRes.ok) throw new Error(`Could not load enquiry history: ${historyRes.error}`);
 
-  let staff: any[] = [];
-  try {
-    staff = getStaff();
-  } catch {}
-
-  let history: Array<Record<string, unknown>> = [];
-  try {
-    history = db
-      .prepare("SELECT h.*, u.name AS user_name FROM enquiry_history h LEFT JOIN users u ON u.id = h.user_id WHERE h.enquiry_id = ? ORDER BY h.created_at DESC")
-      .all(id) as Array<Record<string, unknown>>;
-  } catch {}
+  const stages = stagesSetting?.length ? stagesSetting : ["New", "Contacted", "Quoted", "Converted", "Closed", "Lost"];
+  const history = historyRes.data.map((h): Record<string, unknown> => ({ ...h, user_name: (h.users as { name?: string } | null)?.name ?? null }));
   const data = parseJSON<Record<string, unknown>>(String(enquiry.data ?? "{}"), {});
 
   return (

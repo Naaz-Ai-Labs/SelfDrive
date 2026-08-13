@@ -1,3 +1,5 @@
+import { istParts, istDateKey } from "./rental-clock";
+
 export function formatINR(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return new Intl.NumberFormat("en-IN", {
@@ -153,24 +155,25 @@ export function getLiveClockMinPickup(pickupDateStr?: string | null): {
   isTimeDisabled: (timeStr: string, dateStr?: string | null) => boolean;
   getValidPickupTime: (currentTimeStr: string, dateStr?: string | null) => string;
 } {
+  // Fixed IST wall-clock, not the runtime's local timezone. This component runs on
+  // both the server (Vercel = UTC) and the browser (whatever the visitor's OS
+  // reports). `new Date().getHours()` gave a different answer on each — a 5.5-hour
+  // gap between the server-rendered HTML and the client hydration pass, which is a
+  // hydration mismatch that made time slots look right on load and then jump/reset
+  // once React took over. Every customer is booking in India, so the clock used
+  // here must always be IST regardless of where the code executes.
   const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  const todayISO = `${y}-${m}-${d}`;
+  const nowIst = istParts(now);
+  const todayISO = istDateKey(now);
 
   // Vehicle availability starts at least 1 hour from the current live clock
-  const currentHour = now.getHours();
-  const minHourToday = currentHour + 1;
+  const minHourToday = nowIst.hour + 1;
 
   let minPickupDate = todayISO;
   // If all hours for today have passed (minHourToday >= 24), minimum pickup date is tomorrow
   if (minHourToday >= 24) {
-    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    const ty = tomorrow.getFullYear();
-    const tm = String(tomorrow.getMonth() + 1).padStart(2, "0");
-    const td = String(tomorrow.getDate()).padStart(2, "0");
-    minPickupDate = `${ty}-${tm}-${td}`;
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    minPickupDate = istDateKey(tomorrow);
   }
 
   const isTimeDisabled = (timeStr: string, targetDateStr?: string | null): boolean => {

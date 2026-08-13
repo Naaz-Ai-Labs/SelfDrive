@@ -368,3 +368,98 @@ h1, h2, h3, .font-display {
   height: 0;
   border-style: solid;
 }
+
+/* ---------- Print ----------
+   Invoices/receipts are the only thing anyone prints from this site. Strip the
+   site chrome, the Bauhaus grid background, and the hard offset shadows so the
+   page lands on paper as a plain document. */
+@page {
+  margin: 12mm;
+}
+
+@media print {
+  /* Site chrome and anything explicitly opted out. */
+  .no-print,
+  header,
+  footer,
+  nav,
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  html,
+  body {
+    overflow: visible !important;
+    max-width: none !important;
+    background: none !important;
+    background-image: none !important;
+    background-color: #fff !important;
+    color: #000 !important;
+    font-size: 11pt;
+  }
+
+  /* Flat cards become plain blocks — the 2px rule and 6px offset shadow are
+     screen language, not paper. */
+  .card,
+  .glass,
+  .glass-dark,
+  .acrylic,
+  .fluent-surface,
+  .fluent-surface-dark {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    border: 0 !important;
+  }
+
+  .elevation-1,
+  .elevation-2,
+  .elevation-3,
+  .elevation-4,
+  .depth-4,
+  .depth-8,
+  .depth-16,
+  .depth-64 {
+    box-shadow: none !important;
+  }
+
+  /* Keep only hairline structural rules (tables/dividers); drop heavy borders. */
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  table,
+  th,
+  td {
+    border-color: #999 !important;
+    border-width: 1px !important;
+  }
+
+  a {
+    color: #000 !important;
+    text-decoration: none !important;
+  }
+
+  /* Reveal animations must never leave printed content invisible. */
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  /* Status badges carry meaning through their fill — keep those exact. */
+  .badge {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    border-width: 1px !important;
+    border-color: #000 !important;
+  }
+
+  img,
+  tr,
+  .avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

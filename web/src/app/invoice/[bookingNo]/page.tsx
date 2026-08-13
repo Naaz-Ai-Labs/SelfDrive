@@ -44,7 +44,7 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
 
   // 3. High-Availability Direct Supabase PostgreSQL Fallback
   if (!invoiceData) {
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://puymlkdcoqpptajslucu.supabase.co";
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
     if (supabaseUrl && supabaseKey) {
@@ -75,17 +75,28 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
             registration_no: veh.registration_no || "",
             pickup_at: b.pickup_at,
             return_at: b.return_at,
-            base_amount: b.base_amount || (Number(b.total_amount || 1000) - Number(b.gst_amount || 60)),
-            other_fees_amount: b.surcharge_amount || b.other_fees_amount || 0,
-            extra_km_amount: b.extra_km_amount || 0,
-            late_fee_amount: b.late_fee_amount || 0,
-            damage_amount: b.damage_amount || 0,
-            gst_amount: b.gst_amount || 60,
-            discount_amount: b.discount_amount || 0,
-            total_amount: b.total_amount || 1000,
-            deposit_amount: b.deposit_amount || 1000,
-            paid_amount: b.paid_amount || b.total_amount || 1000,
+            // PostgREST returns NUMERIC columns as STRINGS, so "0.00" is truthy and
+            // `a || b` silently picks the wrong field. Coerce with Number(x ?? 0)
+            // instead. Never default a money field to an invented figure — this is a
+            // tax document, and the previous ||1000 / ||60 defaults could print
+            // amounts the customer was never charged.
+            base_amount: Number(b.base_amount ?? 0),
+            other_fees_amount: Number(b.surcharge_amount ?? b.other_fees_amount ?? 0),
+            extra_km_amount: Number(b.extra_km_amount ?? 0),
+            late_fee_amount: Number(b.late_fee_amount ?? 0),
+            damage_amount: Number(b.damage_amount ?? 0),
+            gst_amount: Number(b.gst_amount ?? 0),
+            discount_amount: Number(b.discount_amount ?? 0),
+            total_amount: Number(b.total_amount ?? 0),
+            deposit_amount: Number(b.deposit_amount ?? 0),
+            paid_amount: Number(b.paid_amount ?? 0),
           };
+
+          // A booking with no total is not renderable as an invoice. Fall through to
+          // the error path rather than presenting fabricated figures as a tax invoice.
+          if (!Number.isFinite(bookingObj.total_amount) || bookingObj.total_amount <= 0) {
+            throw new Error(`Booking ${bookingNo} has no usable total_amount for invoicing`);
+          }
 
           const invoiceObj = {
             invoice_no: `INV-${new Date().getFullYear()}-${String(b.id).padStart(5, "0")}`,
@@ -194,13 +205,22 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
                 <td className="py-2 text-right text-emerald-700">-{formatINR(Number(booking.discount_amount))}</td>
               </tr>
             )}
+            {/* total_amount already INCLUDES the deposit (see crm/src/lib/pricing.ts).
+                Printing it as "Rental total" and then listing the deposit again made the
+                column read as if the deposit were charged twice. */}
             <tr className="border-b border-ink-50">
-              <td className="py-2 font-semibold text-ink-900">Rental total</td>
-              <td className="py-2 text-right font-semibold text-ink-900">{formatINR(Number(booking.total_amount))}</td>
+              <td className="py-2 text-ink-700">Subtotal (excl. deposit)</td>
+              <td className="py-2 text-right text-ink-800">
+                {formatINR(Number(booking.total_amount) - Number(booking.deposit_amount))}
+              </td>
             </tr>
             <tr className="border-b border-ink-50">
               <td className="py-2 text-ink-700">Security deposit (refundable)</td>
               <td className="py-2 text-right text-ink-800">{formatINR(Number(booking.deposit_amount))}</td>
+            </tr>
+            <tr className="border-b border-ink-50">
+              <td className="py-2 font-semibold text-ink-900">Total</td>
+              <td className="py-2 text-right font-semibold text-ink-900">{formatINR(Number(booking.total_amount))}</td>
             </tr>
             <tr>
               <td className="py-3 text-base font-bold text-ink-900">Total paid</td>

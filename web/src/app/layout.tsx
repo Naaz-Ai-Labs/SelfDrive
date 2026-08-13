@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Archivo_Black, Jost } from "next/font/google";
 import "./globals.css";
 import { Header } from "@/components/Header";
@@ -23,18 +23,26 @@ const sans = Jost({
   display: "swap",
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: "#f7f2eb",
+};
+
 export async function generateMetadata(): Promise<Metadata> {
   const info = await businessInfo();
   const name = (info.name as string) ?? "Darshh Holiday";
   const tagline = (info.tagline as string) ?? "Ride More. Explore More.";
   const city = (info.city as string) ?? "Hassan";
   return {
-    metadataBase: new URL("https://darshhrentals.in"),
+    metadataBase: new URL("https://www.selfdrive.bike"),
     title: {
       default: `${name} — ${tagline}`,
       template: `%s | ${name}`,
     },
-    description: `Self-drive bike, scooter and car rentals across Hassan district, Karnataka. Fixed transparent pricing, well-maintained vehicles, refundable deposit, no bargaining. Book online in minutes.`,
+    description: `Self-drive bike, scooter & car rental in Hassan district, Karnataka. Fixed transparent pricing, well-maintained fleet, no bargaining. Book online in minutes.`,
+    alternates: { canonical: "/" },
     keywords: [
       "self drive car rental Hassan",
       "bike rental Hassan",
@@ -59,6 +67,16 @@ export async function generateMetadata(): Promise<Metadata> {
       description: `Self-drive bike, scooter and car rentals in ${city}. Fixed transparent pricing, no bargaining.`,
       images: ["/logo.jpeg"],
     },
+    // Geo meta tags for local search relevance (Sakleshpura, Karnataka HQ).
+    // These are a minor, mostly-legacy signal — real local ranking comes from the
+    // Google Business Profile and the LocalBusiness/AutoRental JSON-LD below, not
+    // from these tags, but they cost nothing to include correctly.
+    other: {
+      "geo.region": "IN-KA",
+      "geo.placename": "Sakleshpura, Karnataka",
+      "geo.position": "12.9585;75.7859",
+      ICBM: "12.9585, 75.7859",
+    },
   };
 }
 
@@ -74,6 +92,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     email: String(info.email ?? ""),
     priceRange: "₹₹",
     areaServed: ["Hassan", "Sakleshpura", "Chikmagalur"],
+    geo: { "@type": "GeoCoordinates", latitude: 12.9585, longitude: 75.7859 },
     sameAs: [info.social && typeof info.social === "object" ? (info.social as Record<string, unknown>).instagram : undefined].filter(Boolean),
     location: branches
       .filter((b) => b.active)

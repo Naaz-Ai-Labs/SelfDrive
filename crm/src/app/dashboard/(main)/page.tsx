@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
-import { syncLatestFromSupabase } from "@/lib/hydrate-db";
+import { sbSelect, num } from "@/lib/supabase-rest";
 import { formatINR, formatDateTime } from "@/lib/utils";
 import { KpiCard, StatusBadge } from "@/components/ui";
 import { AreaTrend } from "@/components/dashboard/charts/AreaTrend";
@@ -32,132 +31,175 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/dashboard/login");
 
-  // Safe defaults for all dashboard KPI stats
-  let totalFleetUnits = 33, availableFleetUnits = 33, bookedUnits = 0, maintUnits = 0;
-  let todaysPickups = { c: 0 }, todaysReturns = { c: 0 }, overdueReturns = { c: 0 }, activeRentals = { c: 0 };
-  let newEnquiries = { c: 0 }, pendingPayments = { t: 0 }, pendingDeposits = { t: 0 }, pendingRefunds = { c: 0 };
-  let revenue = { t: 0 }, openTickets = { c: 0 };
-  let revenueThisMonth = { t: 0 }, revenueLastMonth = { t: 0 };
-  let revenueTrend: { pct: number; positive: boolean } | undefined;
-  let monthlyBookings: Array<{ label: string; value: number }> = [];
-  let enquirySources: Array<{ source: string; c: number }> = [];
-  let recentEnquiries: Array<Record<string, unknown>> = [];
-  let upcomingBookings: Array<Record<string, unknown>> = [];
-  let attentionTickets: Array<{ ticket_no: string; category: string; description: string; created_at: string }> = [];
-  let attentionRefunds: Array<{ refund_no: string; requested_amount: number; status: string; requested_at: string }> = [];
-  let attentionOverdue: Array<{ id: number; booking_no: string; vehicle_name: string | null; return_at: string }> = [];
-  let pendingBookings: any[] = [];
-  let pendingDocs: any[] = [];
-  let pendingAfterHours: any[] = [];
-  let pendingRefundsData: any[] = [];
+  // Every panel on this page is derived from six table reads. Aggregating in memory
+  // is what PostgREST leaves us; the volumes here are small enough that it is also
+  // faster than the eighteen separate queries this replaces.
+  const [vehiclesRes, bookingsRes, enquiriesRes, paymentsRes, refundsRes, ticketsRes, documentsRes] = await Promise.all([
+    sbSelect<Record<string, unknown>>("vehicles", "select=id,name,total_units,status&active=eq.1"),
+    sbSelect<Record<string, unknown>>(
+      "bookings",
+      "select=*,customers(name,phone,email),vehicles(name,registration_no)&order=created_at.desc"
+    ),
+    sbSelect<Record<string, unknown>>("enquiries", "select=*&order=created_at.desc"),
+    sbSelect<Record<string, unknown>>("payments", "select=amount,status,paid_at"),
+    sbSelect<Record<string, unknown>>("refunds", "select=*,customers(name),bookings(booking_no)&order=requested_at.desc"),
+    sbSelect<Record<string, unknown>>("problem_tickets", "select=*&order=created_at.desc"),
+    sbSelect<Record<string, unknown>>(
+      "customer_documents",
+      "select=*,customers(name),bookings(booking_no)&order=created_at.desc"
+    ),
+  ]);
 
-  try {
-    const db = getDb();
-    try {
-      await Promise.race([syncLatestFromSupabase(db), new Promise((r) => setTimeout(r, 2000))]);
-    } catch {}
+  for (const [label, res] of [
+    ["fleet", vehiclesRes],
+    ["bookings", bookingsRes],
+    ["enquiries", enquiriesRes],
+    ["payments", paymentsRes],
+    ["refunds", refundsRes],
+    ["problem tickets", ticketsRes],
+    ["customer documents", documentsRes],
+  ] as const) {
+    if (!res.ok) throw new Error(`Could not load ${label}: ${res.error}`);
+  }
 
-    const g = (sql: string, ...p: any[]) => db.prepare(sql).get(...p) ?? {};
-    const a = (sql: string, ...p: any[]) => db.prepare(sql).all(...p) ?? [];
+  const vehicleRows = vehiclesRes.ok ? vehiclesRes.data : [];
+  const rawBookings = bookingsRes.ok ? bookingsRes.data : [];
+  const enquiryRows = enquiriesRes.ok ? enquiriesRes.data : [];
+  const paymentRows = paymentsRes.ok ? paymentsRes.data : [];
+  const refundRows = refundsRes.ok ? refundsRes.data : [];
+  const ticketRows = ticketsRes.ok ? ticketsRes.data : [];
+  const documentRows = documentsRes.ok ? documentsRes.data : [];
 
-    totalFleetUnits = Number((g("SELECT COALESCE(SUM(total_units), 0) AS c FROM vehicles WHERE active = 1") as any)?.c ?? 33);
-    maintUnits = Number((g("SELECT COALESCE(SUM(total_units), 0) AS c FROM vehicles WHERE active = 1 AND status = 'maintenance'") as any)?.c ?? 0);
-    bookedUnits = Number((g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Confirmed', 'Ready for pickup', 'Vehicle handed over', 'Active rental', 'Return pending') AND datetime(return_at) >= datetime('now')") as any)?.c ?? 0);
-    availableFleetUnits = Math.max(0, totalFleetUnits - bookedUnits - maintUnits);
+  const flatten = (row: Record<string, unknown>): Record<string, unknown> => {
+    const customer = row.customers as { name?: string; phone?: string; email?: string } | null;
+    const vehicle = row.vehicles as { name?: string; registration_no?: string } | null;
+    const booking = row.bookings as { booking_no?: string } | null;
+    return {
+      ...row,
+      customer_name: customer?.name ?? null,
+      customer_phone: customer?.phone ?? null,
+      customer_email: customer?.email ?? null,
+      vehicle_name: vehicle?.name ?? null,
+      registration_no: vehicle?.registration_no ?? null,
+      booking_no: booking?.booking_no ?? row.booking_no ?? null,
+    };
+  };
 
-    todaysPickups = g("SELECT COUNT(*) AS c FROM bookings WHERE date(pickup_at) = date('now') AND status NOT IN ('Cancelled', 'Rejected')") as { c: number };
-    todaysReturns = g("SELECT COUNT(*) AS c FROM bookings WHERE date(return_at) = date('now') AND status IN ('Active rental', 'Vehicle handed over')") as { c: number };
-    overdueReturns = g("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('Vehicle handed over','Active rental') AND return_at < datetime('now')") as { c: number };
-    activeRentals = { c: bookedUnits };
+  const bookings = rawBookings.map(flatten);
+  const nowIso = new Date().toISOString();
+  const today = nowIso.slice(0, 10);
+  const statusOf = (row: Record<string, unknown>) => String(row.status ?? "");
+  // num() throughout: these are NUMERIC columns and PostgREST sends them as strings.
+  const sum = (rows: Array<Record<string, unknown>>, key: string) => rows.reduce((acc, r) => acc + num(r[key]), 0);
 
-    newEnquiries = g("SELECT COUNT(*) AS c FROM enquiries WHERE date(created_at) = date('now')") as { c: number };
-    pendingPayments = g("SELECT COALESCE(SUM(amount),0) AS t FROM payments WHERE status = 'Pending'") as { t: number };
-    pendingDeposits = g("SELECT COALESCE(SUM(deposit_amount),0) AS t FROM bookings WHERE status IN ('Vehicle handed over','Active rental','Return pending')") as { t: number };
-    pendingRefunds = g("SELECT COUNT(*) AS c FROM refunds WHERE status IN ('Requested','Under review')") as { c: number };
-    revenue = g("SELECT COALESCE(SUM(amount),0) AS t FROM payments WHERE status = 'Paid'") as { t: number };
-    openTickets = g("SELECT COUNT(*) AS c FROM problem_tickets WHERE status = 'Open'") as { c: number };
+  const HOLDING = new Set(["Confirmed", "Ready for pickup", "Vehicle handed over", "Active rental", "Return pending"]);
+  const OUT = new Set(["Vehicle handed over", "Active rental"]);
 
-    revenueThisMonth = g("SELECT COALESCE(SUM(amount),0) AS t FROM payments WHERE status = 'Paid' AND date(paid_at) >= date('now','start of month')") as { t: number };
-    revenueLastMonth = g("SELECT COALESCE(SUM(amount),0) AS t FROM payments WHERE status = 'Paid' AND date(paid_at) >= date('now','start of month','-1 month') AND date(paid_at) < date('now','start of month')") as { t: number };
-    revenueTrend =
-      (revenueLastMonth.t ?? 0) > 0
-        ? { pct: Math.round((((revenueThisMonth.t ?? 0) - (revenueLastMonth.t ?? 0)) / (revenueLastMonth.t ?? 1)) * 100), positive: (revenueThisMonth.t ?? 0) >= (revenueLastMonth.t ?? 0) }
-        : (revenueThisMonth.t ?? 0) > 0
-          ? { pct: 100, positive: true }
-          : undefined;
+  const totalFleetUnits = vehicleRows.reduce((acc, v) => acc + num(v.total_units, 1), 0);
+  const maintUnits = vehicleRows.filter((v) => v.status === "maintenance").reduce((acc, v) => acc + num(v.total_units, 1), 0);
+  const bookedUnits = bookings.filter((b) => HOLDING.has(statusOf(b)) && String(b.return_at ?? "") >= nowIso).length;
+  const availableFleetUnits = Math.max(0, totalFleetUnits - bookedUnits - maintUnits);
 
-    const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const label = `${MONTH_NAMES[d.getMonth()]}`;
-      const row = g("SELECT COUNT(*) AS c FROM bookings WHERE strftime('%Y-%m', created_at) = ?", monthStr) as { c: number } | undefined;
-      monthlyBookings.push({ label, value: (row as any)?.c ?? 0 });
-    }
+  const todaysPickups = { c: bookings.filter((b) => String(b.pickup_at ?? "").slice(0, 10) === today && !["Cancelled", "Rejected"].includes(statusOf(b))).length };
+  const todaysReturns = { c: bookings.filter((b) => String(b.return_at ?? "").slice(0, 10) === today && OUT.has(statusOf(b))).length };
+  const overdueBookings = bookings.filter((b) => OUT.has(statusOf(b)) && String(b.return_at ?? "") < nowIso);
+  const overdueReturns = { c: overdueBookings.length };
+  const activeRentals = { c: bookedUnits };
 
-    enquirySources = a("SELECT COALESCE(source, 'Unknown') AS source, COUNT(*) AS c FROM enquiries GROUP BY source ORDER BY c DESC LIMIT 6") as Array<{ source: string; c: number }>;
-    recentEnquiries = a("SELECT * FROM enquiries ORDER BY created_at DESC LIMIT 8") as Array<Record<string, unknown>>;
+  const newEnquiries = { c: enquiryRows.filter((e) => String(e.created_at ?? "").slice(0, 10) === today).length };
+  const pendingPayments = { t: sum(paymentRows.filter((p) => p.status === "Pending"), "amount") };
+  const pendingDeposits = { t: sum(bookings.filter((b) => ["Vehicle handed over", "Active rental", "Return pending"].includes(statusOf(b))), "deposit_amount") };
+  const openRefunds = refundRows.filter((r) => ["Requested", "Under review"].includes(String(r.status)));
+  const pendingRefunds = { c: openRefunds.length };
+  const paidPayments = paymentRows.filter((p) => p.status === "Paid");
+  const revenue = { t: sum(paidPayments, "amount") };
+  const openTicketRows = ticketRows.filter((t) => t.status === "Open");
+  const openTickets = { c: openTicketRows.length };
 
-    upcomingBookings = a(
-      `SELECT b.*, v.name AS vehicle_name, c.name AS customer_name FROM bookings b
-       LEFT JOIN vehicles v ON v.id = b.vehicle_id LEFT JOIN customers c ON c.id = b.customer_id
-       WHERE b.status NOT IN ('Completed','Cancelled', 'Rejected') ORDER BY b.pickup_at LIMIT 6`
-    ) as Array<Record<string, unknown>>;
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const lastMonthDate = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 1));
+  const lastMonthStart = lastMonthDate.toISOString().slice(0, 10);
+  const paidOn = (p: Record<string, unknown>) => String(p.paid_at ?? "").slice(0, 10);
+  const revenueThisMonth = { t: sum(paidPayments.filter((p) => paidOn(p) >= monthStart), "amount") };
+  const revenueLastMonth = { t: sum(paidPayments.filter((p) => paidOn(p) >= lastMonthStart && paidOn(p) < monthStart), "amount") };
+  const revenueTrend: { pct: number; positive: boolean } | undefined =
+    revenueLastMonth.t > 0
+      ? { pct: Math.round(((revenueThisMonth.t - revenueLastMonth.t) / revenueLastMonth.t) * 100), positive: revenueThisMonth.t >= revenueLastMonth.t }
+      : revenueThisMonth.t > 0
+        ? { pct: 100, positive: true }
+        : undefined;
 
-    attentionTickets = a("SELECT ticket_no, category, description, created_at FROM problem_tickets WHERE status = 'Open' ORDER BY created_at DESC LIMIT 5") as typeof attentionTickets;
-    attentionRefunds = a("SELECT refund_no, requested_amount, status, requested_at FROM refunds WHERE status IN ('Requested','Under review') ORDER BY requested_at DESC LIMIT 5") as typeof attentionRefunds;
-    attentionOverdue = a(
-      `SELECT b.id, b.booking_no, v.name AS vehicle_name, b.return_at FROM bookings b LEFT JOIN vehicles v ON v.id = b.vehicle_id
-       WHERE b.status IN ('Vehicle handed over','Active rental') AND b.return_at < datetime('now') ORDER BY b.return_at LIMIT 5`
-    ) as typeof attentionOverdue;
+  const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const now = new Date();
+  const monthlyBookings: Array<{ label: string; value: number }> = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    monthlyBookings.push({
+      label: MONTH_NAMES[d.getMonth()],
+      value: bookings.filter((b) => String(b.created_at ?? "").slice(0, 7) === monthStr).length,
+    });
+  }
 
-    const rawPendingBookings = a(
-      `SELECT b.*, v.name AS vehicle_name, v.registration_no, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email
-       FROM bookings b LEFT JOIN vehicles v ON v.id = b.vehicle_id LEFT JOIN customers c ON c.id = b.customer_id
-       WHERE b.status IN ('Pending', 'Pending verification', 'Payment received', 'Enquiry', 'Draft') ORDER BY b.created_at DESC`
-    ) as Array<Record<string, unknown>>;
+  const sourceCounts = new Map<string, number>();
+  for (const e of enquiryRows) {
+    const key = String(e.source ?? "Unknown") || "Unknown";
+    sourceCounts.set(key, (sourceCounts.get(key) ?? 0) + 1);
+  }
+  const enquirySources = [...sourceCounts.entries()]
+    .map(([source, c]) => ({ source, c }))
+    .sort((a, b) => b.c - a.c)
+    .slice(0, 6);
 
-    const pbIds = rawPendingBookings.map((r) => Number(r.id)).filter(Boolean);
-    let pbDocs: any[] = [];
-    if (pbIds.length > 0) {
-      try {
-        const ph = pbIds.map(() => "?").join(",");
-        pbDocs = a(`SELECT * FROM customer_documents WHERE booking_id IN (${ph})`, ...pbIds);
-      } catch {}
-    }
-    const docsMap = new Map<number, any[]>();
-    for (const d of pbDocs) {
-      const bId = Number(d.booking_id);
-      if (!docsMap.has(bId)) docsMap.set(bId, []);
-      docsMap.get(bId)!.push(d);
-    }
+  const recentEnquiries = enquiryRows.slice(0, 8);
 
-    pendingBookings = rawPendingBookings.map((r) => ({
-      ...r,
-      documents: docsMap.get(Number(r.id)) ?? [],
+  const upcomingBookings = bookings
+    .filter((b) => !["Completed", "Cancelled", "Rejected"].includes(statusOf(b)))
+    .sort((a, b) => String(a.pickup_at ?? "").localeCompare(String(b.pickup_at ?? "")))
+    .slice(0, 6);
+
+  const attentionTickets = openTicketRows.slice(0, 5).map((t) => ({
+    ticket_no: String(t.ticket_no),
+    category: String(t.category),
+    description: String(t.description),
+    created_at: String(t.created_at),
+  }));
+  const attentionRefunds = openRefunds.slice(0, 5).map((r) => ({
+    refund_no: String(r.refund_no),
+    requested_amount: num(r.requested_amount),
+    status: String(r.status),
+    requested_at: String(r.requested_at),
+  }));
+  const attentionOverdue = [...overdueBookings]
+    .sort((a, b) => String(a.return_at ?? "").localeCompare(String(b.return_at ?? "")))
+    .slice(0, 5)
+    .map((b) => ({
+      id: Number(b.id),
+      booking_no: String(b.booking_no),
+      vehicle_name: (b.vehicle_name as string | null) ?? null,
+      return_at: String(b.return_at),
     }));
 
-    pendingDocs = (a(
-      `SELECT d.*, c.name AS customer_name, b.booking_no
-       FROM customer_documents d LEFT JOIN customers c ON c.id = d.customer_id LEFT JOIN bookings b ON b.id = d.booking_id
-       WHERE d.verified = 0 ORDER BY d.created_at DESC`
-    ) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-
-    pendingAfterHours = (a(
-      `SELECT b.*, v.name AS vehicle_name, c.name AS customer_name, c.phone AS customer_phone
-       FROM bookings b LEFT JOIN vehicles v ON v.id = b.vehicle_id LEFT JOIN customers c ON c.id = b.customer_id
-       WHERE b.after_hours = 1 AND b.after_hours_approved_by IS NULL ORDER BY b.created_at DESC`
-    ) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-
-    pendingRefundsData = (a(
-      `SELECT r.*, c.name AS customer_name, b.booking_no
-       FROM refunds r LEFT JOIN customers c ON c.id = r.customer_id LEFT JOIN bookings b ON b.id = r.booking_id
-       WHERE r.status IN ('Requested', 'Under review') ORDER BY r.requested_at DESC`
-    ) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
-  } catch (err: any) {
-    console.error("Dashboard data load error:", err?.message || err);
+  const documents = documentRows.map(flatten);
+  const docsByBooking = new Map<number, Array<Record<string, unknown>>>();
+  for (const d of documents) {
+    const key = Number(d.booking_id);
+    if (!Number.isFinite(key)) continue;
+    const list = docsByBooking.get(key) ?? [];
+    list.push(d);
+    docsByBooking.set(key, list);
   }
+
+  const PENDING_REVIEW = new Set(["Pending", "Pending verification", "Payment received", "Enquiry", "Draft"]);
+  // These four feed a client component with its own row types; the shapes are
+  // validated there, so they stay loosely typed on the way across, as before.
+  const pendingBookings: any[] = bookings
+    .filter((b) => PENDING_REVIEW.has(statusOf(b)))
+    .map((b): Record<string, unknown> => ({ ...b, documents: docsByBooking.get(Number(b.id)) ?? [] }));
+
+  const pendingDocs: any[] = documents.filter((d) => num(d.verified) === 0);
+  const pendingAfterHours: any[] = bookings.filter((b) => num(b.after_hours) === 1 && !b.after_hours_approved_by);
+  const pendingRefundsData: any[] = openRefunds.map(flatten);
 
   const isAdmin = user.role === "admin";
 
