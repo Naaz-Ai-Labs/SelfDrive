@@ -6,6 +6,7 @@ import { gatewayGet, gatewayPost } from "./gateway";
 import { supabaseRestInsert, supabaseRestSelect, supabaseRestUpsert } from "./supabase-rest";
 import type { Vehicle } from "./data";
 import { normalizeDocKind } from "./doc-kind";
+import { normalizePhone } from "./utils";
 
 export type DraftPayload = {
   categoryId: number | null;
@@ -75,6 +76,16 @@ export async function submitBooking(input: {
   termsAccepted: boolean;
   documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }>;
 }): Promise<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }> {
+  // Terms and mandatory documents are enforced here as well as in the CRM, so the
+  // emergency path below cannot be used to skip them.
+  if (!input.termsAccepted) {
+    return { ok: false, error: "Please accept the rental terms and conditions to continue." };
+  }
+  const docKinds = new Set((input.documents ?? []).filter((d) => d.url).map((d) => normalizeDocKind(d.kind)));
+  if (!docKinds.has("licence") || !docKinds.has("govt_id")) {
+    return { ok: false, error: "Please upload the driver's licence and government ID before submitting." };
+  }
+
   // 1. Primary CRM Gateway API Proxy Submission
   try {
     const res = await gatewayPost<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }>("/api/gateway/v1/booking/submit", input);
@@ -86,7 +97,17 @@ export async function submitBooking(input: {
       } catch {}
       return res;
     }
+
+    // The gateway answered. If it declined, that is a BUSINESS decision — vehicle
+    // unavailable, below the weekend minimum, invalid dates — and it is final.
+    // Falling through to the emergency path here (which is what used to happen)
+    // re-attempted the booking with none of those rules applied, so every rule the
+    // CRM enforced could be defeated simply by being rejected once.
+    if (res && res.ok === false) {
+      return { ok: false, error: res.error ?? "This booking could not be confirmed." };
+    }
   } catch (err) {
+    // Only a transport failure reaches here — the CRM is unreachable, not refusing.
     console.warn("Gateway POST submit fetch warning:", err);
   }
 
@@ -102,8 +123,37 @@ export async function submitBooking(input: {
   if (supabaseUrl && supabaseKey) {
     try {
       const supabase = createClient(supabaseUrl, supabaseKey);
-    const bookingNo = `BK-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-01`;
-    const phone = input.contact.phone ? input.contact.phone.replace(/[^\d+]/g, "") : "";
+
+    // Availability is claimed through the SAME database function the CRM uses. It
+    // takes a per-vehicle lock, counts live holds against total_units and inserts the
+    // hold in one transaction — so this path cannot double-book even while the CRM is
+    // down. Previously it performed no availability check at all and created no
+    // availability_blocks row, meaning bookings made here were invisible to the
+    // primary path's count and silently overbooked the same unit.
+    const claimRes = await fetch(`${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/reserve_vehicle_slot`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+      },
+      body: JSON.stringify({
+        p_vehicle_id: input.vehicleId,
+        p_pickup_at: input.pickupAt,
+        p_return_at: input.returnAt,
+      }),
+      cache: "no-store",
+    });
+    const claimedBlockId = claimRes.ok ? ((await claimRes.json()) as number | null) : null;
+    if (!claimedBlockId) {
+      return { ok: false, error: "This vehicle is no longer available for the selected dates." };
+    }
+
+    const bookingNo = `BK-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase().slice(-6)}${Math.floor(Math.random() * 46656).toString(36).toUpperCase().padStart(3, "0")}`;
+    // Same normalization the CRM uses, so both paths resolve to the same customer
+    // row. This previously stripped only non-digits, producing a different key and
+    // therefore a duplicate customer for the same person.
+    const phone = normalizePhone(input.contact.phone ?? "");
 
     // Must never default to a real customer id: an unresolved lookup would attach this
     // booking to somebody else's account, and that person would see it in their portal.
@@ -193,6 +243,8 @@ export async function submitBooking(input: {
     // customer received a confirmation for a row that was never written.
     if (!insertRes.ok || !insertRes.data?.id) {
       console.error("submitBooking fallback: Supabase booking insert failed", insertRes);
+      // The hold we claimed above carries a 10-minute expiry and is skipped by
+      // availability counts once lapsed, so an abandoned claim frees itself.
       return {
         ok: false,
         error: "We could not confirm your booking right now. No payment has been taken. Please try again shortly.",
@@ -200,6 +252,19 @@ export async function submitBooking(input: {
     }
 
     const bookingId = Number(insertRes.data.id);
+
+    // Link the claimed hold to the booking and clear its expiry — it is now a real
+    // reservation, not a pending claim. Without this the hold would lapse in 10
+    // minutes and the vehicle could be sold twice.
+    const linkRes = await supabaseRestUpsert("availability_blocks", {
+      id: claimedBlockId,
+      booking_id: bookingId,
+      expires_at: null,
+      notes: null,
+    });
+    if (!linkRes.ok) {
+      console.error(`submitBooking fallback: could not link availability hold ${claimedBlockId} to booking ${bookingId}`);
+    }
 
     // Save all uploaded customer ID documents in Supabase
     if (input.documents && Array.isArray(input.documents)) {

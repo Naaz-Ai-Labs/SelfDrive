@@ -13,11 +13,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ boo
     return NextResponse.json({ ok: false, error: "Missing booking number." }, { status: 400 });
   }
 
-  const numericId = Number(bookingNo) || 0;
+  // Match ONLY on booking_no. This previously also matched the numeric primary key,
+  // so /track/1, /track/2, /track/3 … walked the entire booking table in order and
+  // this route has no authentication — the booking number was never a barrier.
   const bookingRes = await sbSelectOne<Record<string, any>>(
     "bookings",
     `select=*,customers(name,phone,email),vehicles(name,registration_no,brand,model),invoices(invoice_no,created_at)` +
-      `&or=${encodeURIComponent(`(id.eq.${numericId},booking_no.eq.${bookingNo})`)}`
+      `&booking_no=eq.${encodeURIComponent(bookingNo)}`
   );
   if (!bookingRes.ok) return NextResponse.json({ ok: false, error: bookingRes.error }, { status: 502 });
 
@@ -37,7 +39,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ boo
       : Promise.resolve({ ok: true as const, data: null }),
     sbSelect<Record<string, unknown>>(
       "customer_documents",
-      `select=id,kind,number,verified,created_at&or=${encodeURIComponent(`(booking_id.eq.${bookingId},customer_id.eq.${customerId})`)}`
+      // Scoped to THIS booking. It previously also matched on customer_id, so a
+      // returning customer saw every document from every past booking stacked onto
+      // whichever one they were viewing — seventeen entries on a booking with five.
+      // Every insert always sets booking_id, so nothing legitimate is lost.
+      `select=id,kind,number,verified,created_at&booking_id=eq.${bookingId}`
     ),
     sbSelect<Record<string, unknown>>(
       "payments",
@@ -58,20 +64,30 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ boo
   const totalVerifiedDocs = docs.filter((d) => num(d.verified) === 1).length;
   const isAllDocsVerified = docs.length > 0 && totalVerifiedDocs === docs.length;
 
+  // PUBLIC, UNAUTHENTICATED PROJECTION.
+  //
+  // Anyone holding a booking number reaches this, so it carries only what a customer
+  // needs to see their booking's progress. Removed from the previous response, all of
+  // which was being served to anonymous callers:
+  //   - documents[].number  — the raw driving licence / government ID number
+  //   - customer_phone      — PII
+  //   - notes               — free-text internal/rejection commentary
+  //   - registration_no     — identifies the physical vehicle
+  //   - id, documents[].id  — internal primary keys
+  //   - payment_no, invoice_no — financial document identifiers
+  //   - history[]           — internal audit trail
+  // Document verification is reported as counts and a per-kind status only, which is
+  // all the tracking screen actually renders.
   return NextResponse.json({
     ok: true,
     data: {
-      id: bookingId,
       booking_no: booking.booking_no,
       status: booking.status,
-      notes: booking.notes, // Contains rejection reason if rejected
       pickup_at: booking.pickup_at,
       return_at: booking.return_at,
       pickup_branch: "Darshh Holiday - Hassan & Sakleshpura Branch",
       customer_name: booking.customers?.name ?? null,
-      customer_phone: booking.customers?.phone ?? null,
       vehicle_name: booking.vehicles?.name ?? null,
-      registration_no: booking.vehicles?.registration_no ?? null,
       photo_url: photoUrl,
       base_amount: num(booking.base_amount),
       gst_amount: num(booking.gst_amount),
@@ -79,27 +95,19 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ boo
       total_amount: num(booking.total_amount),
       paid_amount: num(booking.paid_amount),
       documents: docs.map((d) => ({
-        id: Number(d.id),
         kind: String(d.kind),
-        number: d.number ? String(d.number) : null,
         verified: num(d.verified) === 1,
       })),
       total_docs: docs.length,
       verified_docs: totalVerifiedDocs,
       is_all_docs_verified: isAllDocsVerified,
       payments: payments.map((p) => ({
-        payment_no: String(p.payment_no),
         amount: num(p.amount),
         kind: String(p.kind),
         status: String(p.status),
         method: p.method ? String(p.method) : "Online",
         paid_at: p.paid_at ? String(p.paid_at) : null,
       })),
-      history: history.map((h) => ({
-        action: String(h.action),
-        created_at: String(h.created_at),
-      })),
-      invoice_no: invoice?.invoice_no || `INV-${String(bookingId).padStart(5, "0")}`,
       created_at: booking.created_at,
     },
   });

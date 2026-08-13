@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomInt, createHash } from "node:crypto";
+import { consumeRateLimit, resetRateLimit } from "@/lib/rate-limit";
 import { z } from "zod";
 import { requireGatewayKey } from "@/lib/gateway-auth";
 import { sbSelectOne, sbInsert, sbUpdate } from "@/lib/supabase-rest";
@@ -11,8 +13,12 @@ const requestSchema = z.object({ op: z.literal("request"), target: z.string().mi
 const verifySchema = z.object({ op: z.literal("verify"), target: z.string().min(3).max(120), code: z.string().regex(/^\d{6}$/) });
 const logoutSchema = z.object({ op: z.literal("logout"), token: z.string() });
 
-const rateLimits = new Map<string, number>();
 function isEmail(v: string) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+
+/** Never key a shared counter on a raw phone/email — hash it. */
+function rateKeyFor(target: string): string {
+  return `otp:${createHash("sha256").update(target).digest("hex").slice(0, 32)}`;
+}
 
 /** Same OTP flow as the CRM's own customer login, but returns the session token in the
  * JSON body instead of setting a cookie — the web app has its own origin, so it mints its
@@ -36,13 +42,33 @@ export async function POST(req: NextRequest) {
     const target = isEmail(parsed.data.target) ? parsed.data.target.toLowerCase().trim() : normalizePhone(parsed.data.target);
     if (!target) return NextResponse.json({ error: "Enter a valid phone or email." }, { status: 400 });
 
-    const last = rateLimits.get(target) ?? 0;
-    if (Date.now() - last < 60_000) {
-      return NextResponse.json({ error: "Please wait a minute before requesting another OTP." }, { status: 429 });
+    // Shared across instances. The old Map was per-lambda, so the 60s cooldown could
+    // be skipped simply by landing on a different instance — and a cold start reset
+    // it entirely. Two limits: a short resend cooldown, and an hourly cap so one
+    // number cannot be used to pump out messages all day.
+    const rateKey = rateKeyFor(target);
+    const cooldown = await consumeRateLimit({ key: `${rateKey}:resend`, maxAttempts: 1, windowSeconds: 60 });
+    if (!cooldown.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            cooldown.reason === "unavailable"
+              ? "Sign-in is temporarily unavailable. Please try again shortly."
+              : "Please wait a minute before requesting another OTP.",
+        },
+        { status: cooldown.reason === "unavailable" ? 503 : 429 }
+      );
     }
-    rateLimits.set(target, Date.now());
+    const hourly = await consumeRateLimit({ key: `${rateKey}:hourly`, maxAttempts: 8, windowSeconds: 3600, blockSeconds: 3600 });
+    if (!hourly.allowed) {
+      return NextResponse.json({ error: "Too many OTP requests. Please try again later." }, { status: 429 });
+    }
 
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    // Math.random() is not cryptographically secure — its output is predictable from
+    // observed values, so an attacker who requests a few OTPs can forecast the next
+    // one and take over an account without ever seeing the SMS. randomInt() draws
+    // from the OS CSPRNG.
+    const code = String(randomInt(100000, 1000000));
     const inserted = await sbInsert("otp_codes", {
       target,
       purpose: "customer_login",
@@ -55,7 +81,9 @@ export async function POST(req: NextRequest) {
     // Claiming an OTP was sent when it was never stored leaves the customer entering a
     // code that can never verify. Fail loudly instead.
     if (!inserted.ok) {
-      rateLimits.delete(target);
+      // Release the resend cooldown: the customer never got a code, so they must not
+      // be made to wait a minute before trying again.
+      await resetRateLimit(`${rateKey}:resend`);
       return NextResponse.json({ error: "Could not send an OTP right now. Please try again." }, { status: 502 });
     }
     await logMessage(isEmail(target) ? "email" : "whatsapp", target, "Your OTP for Darshh Holiday", `Your login OTP is ${code}. It is valid for 10 minutes.`);

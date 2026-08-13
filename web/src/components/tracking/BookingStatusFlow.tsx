@@ -385,24 +385,21 @@ export function BookingStatusFlow({
               <p className="text-xs text-ink-400">No documents recorded.</p>
             ) : (
               <div className="space-y-2">
+                {/* Verification status is NOT shown here. Documents are checked in
+                    person when the customer collects the vehicle, so a "Reviewing"
+                    badge on the website only invites questions about a process that
+                    does not happen online. Staff still see the real status in the CRM.
+                    The raw licence/ID number is likewise never sent to this public,
+                    unauthenticated page. */}
                 {tracking.documents.map((d) => (
                   <div
-                    key={d.id}
+                    key={d.kind}
                     className="flex items-center justify-between rounded-lg bg-ink-50 p-2.5 text-xs"
                   >
-                    <div>
-                      <p className="font-semibold text-ink-900 capitalize">
-                        {d.kind.replace("_", " ")}
-                      </p>
-                      {d.number && <p className="font-mono text-[11px] text-ink-500">{d.number}</p>}
-                    </div>
-                    <span
-                      className={`badge text-[10px] font-bold ${
-                        d.verified ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
-                      }`}
-                    >
-                      {d.verified ? "Verified ✓" : "Reviewing"}
-                    </span>
+                    <p className="font-semibold text-ink-900 capitalize">
+                      {d.kind.replace("_", " ")}
+                    </p>
+                    <span className="badge bg-ink-100 text-ink-700 text-[10px] font-bold">Received</span>
                   </div>
                 ))}
               </div>

@@ -4,13 +4,16 @@ import { verifyPassword, hashPassword, createSession, persistSession, SESSION_CO
 import { logActivity } from "@/lib/activity";
 import { supabaseAdmin, supabase } from "@/lib/supabase";
 import { sbSelectOne, sbUpdate, sbUpsert } from "@/lib/supabase-rest";
+import { consumeRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
 
-const attempts = new Map<string, { count: number; blockedUntil: number }>();
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_WINDOW_SECONDS = 15 * 60;
+const LOGIN_BLOCK_SECONDS = 10 * 60;
 
 type UserRecord = {
   id: number;
@@ -27,12 +30,25 @@ function ipOf(req: NextRequest): string {
 
 export async function POST(req: NextRequest) {
   const ip = ipOf(req);
-  const key = `${ip}:${req.headers.get("user-agent") ?? ""}`.slice(0, 120);
-  const attempt = attempts.get(key);
-  if (attempt && attempt.blockedUntil > Date.now()) {
+  const key = `login:${`${ip}:${req.headers.get("user-agent") ?? ""}`.slice(0, 120)}`;
+
+  // Counted in the database, so the budget is shared across every serverless
+  // instance and survives a cold start. Fails closed if the counter is unreachable.
+  const limit = await consumeRateLimit({
+    key,
+    maxAttempts: LOGIN_MAX_ATTEMPTS,
+    windowSeconds: LOGIN_WINDOW_SECONDS,
+    blockSeconds: LOGIN_BLOCK_SECONDS,
+  });
+  if (!limit.allowed) {
     return NextResponse.json(
-      { error: "Too many attempts. Please try again in a few minutes." },
-      { status: 429 }
+      {
+        error:
+          limit.reason === "unavailable"
+            ? "Sign-in is temporarily unavailable. Please try again shortly."
+            : "Too many attempts. Please try again in a few minutes.",
+      },
+      { status: limit.reason === "unavailable" ? 503 : 429 }
     );
   }
 
@@ -134,14 +150,13 @@ export async function POST(req: NextRequest) {
   // staff management screen.
 
   if (!isValid || !user) {
-    const current = attempts.get(key) ?? { count: 0, blockedUntil: 0 };
-    current.count += 1;
-    if (current.count >= 5) current.blockedUntil = Date.now() + 10 * 60 * 1000;
-    attempts.set(key, current);
+    // The attempt was already counted by consumeRateLimit at the top of the request,
+    // so a failure needs no extra bookkeeping here.
     return NextResponse.json({ error: "Incorrect email or password." }, { status: 401 });
   }
 
-  attempts.delete(key);
+  // Clear the counter so a legitimate sign-in does not leave the user near a block.
+  await resetRateLimit(key);
   const token = createSession(user.id, ip, { role: user.role, email: user.email, name: user.name });
   await persistSession(token, user.id, ip);
 
