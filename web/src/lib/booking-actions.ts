@@ -91,7 +91,9 @@ export async function submitBooking(input: {
     const bookingNo = `BK-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}-01`;
     const phone = input.contact.phone ? input.contact.phone.replace(/[^\d+]/g, "") : "";
 
-    let customerId = 25;
+    // Must never default to a real customer id: an unresolved lookup would attach this
+    // booking to somebody else's account, and that person would see it in their portal.
+    let customerId: number | null = null;
     try {
       const existingCustomers = await supabaseRestSelect<{ id: number }>("customers", `phone=eq.${encodeURIComponent(phone)}`);
       if (existingCustomers && existingCustomers.length > 0) {
@@ -109,11 +111,20 @@ export async function submitBooking(input: {
       }
     } catch {}
 
-    // Calculate accurate quote for the booking
-    let baseAmount = 1000;
-    let depositAmount = 1000;
-    let gstAmount = 60;
-    let totalAmount = 2060;
+    if (!customerId) {
+      console.error("submitBooking fallback: could not resolve or create a customer record");
+      return {
+        ok: false,
+        error: "We could not confirm your booking right now. No payment has been taken. Please try again shortly.",
+      };
+    }
+
+    // Quote figures start unset. Booking at an invented price is worse than not
+    // booking at all — the customer would be charged an amount nobody agreed to.
+    let baseAmount: number | null = null;
+    let depositAmount: number | null = null;
+    let gstAmount: number | null = null;
+    let totalAmount: number | null = null;
 
     try {
       const { getVehicles } = await import("./data");
@@ -149,7 +160,17 @@ export async function submitBooking(input: {
         gstAmount = Math.round(taxableAmount * 0.06);
         totalAmount = taxableAmount + depositAmount + gstAmount;
       }
-    } catch {}
+    } catch (quoteErr) {
+      console.error("submitBooking fallback: quote calculation failed", quoteErr);
+    }
+
+    if (totalAmount === null || baseAmount === null || depositAmount === null || gstAmount === null) {
+      console.error(`submitBooking fallback: could not price vehicle ${input.vehicleId}`);
+      return {
+        ok: false,
+        error: "We could not price this booking right now. No payment has been taken. Please try again shortly.",
+      };
+    }
 
     const insertRes = await supabaseRestInsert<{ id: number }>("bookings", {
       booking_no: bookingNo,
@@ -161,11 +182,24 @@ export async function submitBooking(input: {
       deposit_amount: depositAmount,
       gst_amount: gstAmount,
       total_amount: totalAmount,
-      status: "Pending",
+      // Must match the status the CRM itself creates (crm/src/lib/bookings.ts).
+      // "Pending" is a value the CRM never produces, so bookings written by this
+      // fallback did not appear in the dashboard's status-filtered views.
+      status: "Pending verification",
       created_at: new Date().toISOString(),
     });
 
-    const bookingId = insertRes.ok && insertRes.data?.id ? Number(insertRes.data.id) : Math.floor(Date.now() / 1000);
+    // A failed insert previously still produced a booking id from the clock, so the
+    // customer received a confirmation for a row that was never written.
+    if (!insertRes.ok || !insertRes.data?.id) {
+      console.error("submitBooking fallback: Supabase booking insert failed", insertRes);
+      return {
+        ok: false,
+        error: "We could not confirm your booking right now. No payment has been taken. Please try again shortly.",
+      };
+    }
+
+    const bookingId = Number(insertRes.data.id);
 
     // Save all uploaded customer ID documents in Supabase
     if (input.documents && Array.isArray(input.documents)) {
