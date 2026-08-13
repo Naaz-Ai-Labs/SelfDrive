@@ -238,6 +238,7 @@ export function BookingForm({
   const [contact, setContact] = useState({ name: "", phone: "", email: "", address: "", dob: "", emergencyContact: "" });
   const [documents, setDocuments] = useState<Record<string, { url: string; number?: string; expiry?: string }>>({});
   const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
   const [termsAccepted, setTermsAccepted] = useState(false);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -462,12 +463,28 @@ export function BookingForm({
 
   async function upload(kind: string, file: File) {
     setUploading(kind);
-    const compressed = await compressImageFile(file, 1600, 0.8);
-    const fd = new FormData();
-    fd.append("file", compressed);
-    const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json()).catch(() => null);
-    setUploading(null);
-    if (res?.path) setDocuments((d) => ({ ...d, [kind]: { ...d[kind], url: res.path } }));
+    setUploadErrors((e) => ({ ...e, [kind]: "" }));
+    try {
+      const compressed = await compressImageFile(file, 1600, 0.8);
+      const fd = new FormData();
+      fd.append("file", compressed);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(`Upload server returned an unexpected response (${res.status}). Please try again.`);
+      }
+      const data = await res.json();
+      if (!res.ok || !data?.path) {
+        throw new Error(data?.error || "Upload failed. Please try again or use a smaller image.");
+      }
+      setDocuments((d) => ({ ...d, [kind]: { ...d[kind], url: data.path } }));
+    } catch (err) {
+      // A silent failure here previously left the customer staring at an "Upload"
+      // button with no explanation and no document on file — this is the fix.
+      setUploadErrors((e) => ({ ...e, [kind]: err instanceof Error ? err.message : "Upload failed. Please try again." }));
+    } finally {
+      setUploading(null);
+    }
   }
 
   async function submit() {
@@ -732,8 +749,8 @@ export function BookingForm({
                 <select className="input" value={returnTime} onChange={(e) => setReturnTime(e.target.value)}>
                   {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`)
                     .filter((t) => {
-                      // Always exclude drop-off time slots from 12 AM (00:00) to 5 AM (05:00)
-                      if (t >= "00:00" && t <= "05:00") {
+                      // Staff won't accept a vehicle return between midnight and 7 AM.
+                      if (t >= "00:00" && t < "07:00") {
                         return false;
                       }
                       const isSameDay = pickupDate && returnDate && pickupDate === returnDate;
@@ -971,6 +988,9 @@ export function BookingForm({
               ].map(([kind, label]) => (
                 <label key={kind} className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-5 text-center text-sm text-ink-500 hover:border-brand-500">
                   {documents[kind]?.url ? <span className="font-semibold text-emerald-700">✓ {label.replace(" *", "")} uploaded</span> : <span>{uploading === kind ? "Uploading…" : `Upload ${label}`}</span>}
+                  {uploadErrors[kind] && (
+                    <span className="text-xs font-medium text-red-600">{uploadErrors[kind]} Tap to retry.</span>
+                  )}
                   <input
                     type="file"
                     accept="image/*,application/pdf"

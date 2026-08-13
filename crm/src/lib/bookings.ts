@@ -13,7 +13,7 @@ import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { calculateQuote } from "./pricing";
 import { getVehicleById, getActiveTermsVersion } from "./data";
-import { sbSelect, sbSelectOne, sbInsert, sbUpdate, num } from "./supabase-rest";
+import { sbSelect, sbSelectOne, sbInsert, sbUpdate, sbDelete, sbRpc, num } from "./supabase-rest";
 
 export type BookingPayload = {
   vehicleId: number;
@@ -174,9 +174,20 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   const pickup = new Date(payload.pickupAt);
   const ret = new Date(payload.returnAt);
   if (!(pickup.getTime() < ret.getTime())) throw new Error("Return time must be after pickup time");
-  if (!(await checkVehicleAvailable(payload.vehicleId, payload.pickupAt, payload.returnAt))) {
+
+  // Atomic claim: reserve_vehicle_slot() checks availability AND inserts the holding
+  // block inside one locked transaction, so two concurrent requests for the last
+  // free unit cannot both succeed — checkVehicleAvailable() alone is a
+  // check-then-insert across two separate calls, which a race can slip through.
+  const claim = await sbRpc<number | null>("reserve_vehicle_slot", {
+    p_vehicle_id: payload.vehicleId,
+    p_pickup_at: payload.pickupAt,
+    p_return_at: payload.returnAt,
+  });
+  if (!claim.ok || !claim.data) {
     throw new Error("This vehicle is not available for the selected dates");
   }
+  const claimedBlockId = claim.data;
 
   const customer = await findOrCreateCustomer(payload.customer);
   if (!customer.ok) throw new Error(customer.error);
@@ -231,19 +242,19 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   }
 
   if (!bookingId || !Number.isFinite(bookingId)) {
+    // The slot was already claimed by reserve_vehicle_slot(). If the booking itself
+    // never got created, release it — otherwise that unit stays phantom-booked
+    // forever with no booking to show for it.
+    await sbDelete("availability_blocks", `id=eq.${claimedBlockId}`);
     throw new Error(`Could not save the booking: ${lastError || "the database did not return a booking id."}`);
   }
 
-  // Both writes are awaited. Neither is fatal — the booking itself is already durable —
-  // but a failure is logged rather than swallowed.
+  // Link the slot claimed atomically above to the real booking — never insert a
+  // second block for the same hold, that would double-count against total_units.
   const [blockRes, historyRes] = await Promise.all([
-    sbInsert("availability_blocks", {
-      vehicle_id: vehicle.id,
-      starts_at: payload.pickupAt,
-      ends_at: payload.returnAt,
-      reason: "booked",
+    sbUpdate("availability_blocks", `id=eq.${claimedBlockId}`, {
       booking_id: bookingId,
-      created_at: nowIso,
+      notes: null,
     }),
     sbInsert("booking_history", {
       booking_id: bookingId,
@@ -252,7 +263,7 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
       created_at: nowIso,
     }),
   ]);
-  if (!blockRes.ok) console.error(`[bookings] ${bookingNo}: availability block not written — ${blockRes.error}`);
+  if (!blockRes.ok) console.error(`[bookings] ${bookingNo}: availability block not linked — ${blockRes.error}`);
   if (!historyRes.ok) console.error(`[bookings] ${bookingNo}: history row not written — ${historyRes.error}`);
 
   await logActivity(null, "booking_created", "booking", bookingId, { booking_no: bookingNo, vehicle: vehicle.name });
