@@ -191,10 +191,28 @@ export default async function DashboardPage() {
   }
 
   const PENDING_REVIEW = new Set(["Pending", "Pending verification", "Payment received", "Enquiry", "Draft"]);
+
+  /**
+   * A booking only needs staff attention once the customer has actually paid.
+   *
+   * The website creates the booking row at the review step, BEFORE Razorpay runs, so
+   * every visitor who reaches step 5 and walks away leaves a permanent "Pending
+   * verification" entry. Those were burying the real queue.
+   *
+   * Nothing is deleted — the rows stay, and every other CRM screen still shows them.
+   * This is the action inbox, so it lists work that is actually actionable.
+   *
+   * The manager_id escape hatch matters: if a staff member has taken ownership of a
+   * booking, it stays visible even at zero payment, so a walk-in or cash-at-pickup
+   * booking your team is handling can never disappear from their own queue.
+   */
+  const awaitingPayment = (b: Record<string, unknown>) =>
+    num(b.paid_amount) <= 0 && !b.manager_id;
+
   // These four feed a client component with its own row types; the shapes are
   // validated there, so they stay loosely typed on the way across, as before.
   const pendingBookings: any[] = bookings
-    .filter((b) => PENDING_REVIEW.has(statusOf(b)))
+    .filter((b) => PENDING_REVIEW.has(statusOf(b)) && !awaitingPayment(b))
     .map((b): Record<string, unknown> => ({ ...b, documents: docsByBooking.get(Number(b.id)) ?? [] }));
 
   const pendingDocs: any[] = documents.filter((d) => num(d.verified) === 0);
