@@ -13,9 +13,29 @@ import {
 import { DocumentVerifier } from "@/components/dashboard/DocumentVerifier";
 import { BookingHeaderActions } from "@/components/dashboard/BookingHeaderActions";
 import { BookingPaymentsList } from "@/components/dashboard/BookingPaymentsList";
+import { BookingExportButton } from "@/components/dashboard/BookingExportButton";
 
 export const metadata: Metadata = { title: "Booking detail", robots: { index: false, follow: false } };
 export const revalidate = 0;
+
+/**
+ * Statuses from which the handover pack can be exported: from the point the booking
+ * is confirmed through to completion. Draft and pending-verification bookings are
+ * not going ahead yet, and cancelled or rejected ones never will — in neither case
+ * is there a reason to copy identity documents out of the CRM.
+ */
+const EXPORTABLE_STATUSES = new Set([
+  "Confirmed",
+  "Ready for pickup",
+  "Vehicle handed over",
+  "Active rental",
+  "Return pending",
+  "Vehicle returned",
+  "Inspection pending",
+  "Additional charges pending",
+  "Refund pending",
+  "Completed",
+]);
 
 export default async function BookingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: paramId } = await params;
@@ -129,6 +149,15 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
             <StatusBadge status={String(booking.status)} />
           </div>
         </div>
+
+        {/* The handover pack. Offered once the booking is actually going ahead —
+            exporting a rejected or cancelled booking's identity documents serves no
+            operational purpose and needlessly copies personal data out of the CRM. */}
+        {EXPORTABLE_STATUSES.has(String(booking.status)) && (
+          <div className="mt-4 max-w-sm">
+            <BookingExportButton bookingId={id} bookingNo={String(booking.booking_no)} />
+          </div>
+        )}
 
         <div className="mt-4">
           <BookingHeaderActions
