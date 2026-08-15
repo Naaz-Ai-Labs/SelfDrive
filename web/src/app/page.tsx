@@ -207,16 +207,32 @@ export default async function HomePage() {
             </Link>
           </Reveal>
           <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {vehicles.slice(0, 6).map((v, i) => (
+            {vehicles.slice(0, 6).map((v, i) => {
+              // Same server-computed availability the listing page uses. Nothing is
+              // recalculated here.
+              const isOutOfStock =
+                (v.available_units ?? v.total_units ?? 0) <= 0 ||
+                (v.status ? v.status !== "available" : false);
+              return (
               <Reveal key={v.id} delay={i * 70}>
-                <Link href={`/vehicles/${v.slug}`} className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-6 shadow-soft transition hover:-translate-y-1 hover:border-brand-400/50 hover:bg-white/[0.08]">
+                <Link
+                  href={`/vehicles/${v.slug}`}
+                  aria-label={isOutOfStock ? `${v.name} — currently unavailable` : v.name}
+                  className={`group relative flex h-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-6 shadow-soft transition ${
+                    isOutOfStock
+                      ? "opacity-60 saturate-0"
+                      : "hover:-translate-y-1 hover:border-brand-400/50 hover:bg-white/[0.08]"
+                  }`}
+                >
                   <span className="absolute right-5 top-5 font-display text-4xl font-black text-white/5">{String(i + 1).padStart(2, "0")}</span>
                   {v.primary_photo && (
                     <div className="relative -mx-6 -mt-6 mb-5 h-36 overflow-hidden bg-white/95">
-                      <Image src={v.primary_photo} alt={`${v.name} self-drive rental in Hassan & Sakleshpura`} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-105" sizes="(max-width: 768px) 100vw, 33vw" />
-                      <span className={`absolute left-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${(v.available_units ?? v.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
+                      <Image src={v.primary_photo} alt={`${v.name} self-drive rental in Hassan & Sakleshpura`} fill loading="lazy" className={`object-contain p-4 transition-transform duration-500 ${isOutOfStock ? "" : "group-hover:scale-105"}`} sizes="(max-width: 768px) 100vw, 33vw" />
+                      {/* "Pending Approval" was shown at zero stock — that is a CRM
+                          workflow term, not something a customer can act on. */}
+                      <span className={`absolute left-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${isOutOfStock ? "bg-ink-700 text-white" : (v.available_units ?? v.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                        {(v.available_units ?? v.total_units ?? 1) > 0 ? `${v.available_units ?? v.total_units} Left` : "Pending Approval"}
+                        {isOutOfStock ? "Out of Stock" : `${v.available_units ?? v.total_units} Left`}
                       </span>
                     </div>
                   )}
@@ -233,13 +249,20 @@ export default async function HomePage() {
                       <span className="font-display text-xl font-semibold text-brand-400">{formatINR(v.rate_24h)}</span>
                       <span className="text-xs">/24h</span>
                     </p>
-                    <span className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-bold text-ink-950 transition group-hover:bg-brand-400 group-hover:gap-3">
-                      View & book
-                    </span>
+                    {isOutOfStock ? (
+                      <span className="inline-flex items-center justify-center rounded-full bg-white/10 px-5 py-2.5 text-sm font-bold text-ink-300">
+                        Out of Stock
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-bold text-ink-950 transition group-hover:bg-brand-400 group-hover:gap-3">
+                        View &amp; book
+                      </span>
+                    )}
                   </div>
                 </Link>
               </Reveal>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>

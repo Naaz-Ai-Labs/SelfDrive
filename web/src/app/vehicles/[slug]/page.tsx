@@ -312,9 +312,18 @@ export default async function VehicleDetailPage(props: {
             <p className="font-display text-lg font-semibold leading-none text-ink-900">{formatINR(vehicle.rate_24h)}</p>
             <p className="text-[11px] text-ink-500">/ 24 hours</p>
           </div>
-          <Link href={bookingHref} className="btn-shine ml-auto flex flex-1 items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
-            Book this vehicle
-          </Link>
+          {/* Mirrors the sidebar CTA above: an unavailable vehicle offers no booking
+              path here either. Without this the desktop button was disabled while the
+              mobile one still went straight into the booking flow. */}
+          {isOutOfStock ? (
+            <div className="ml-auto flex flex-1 items-center justify-center rounded-full bg-ink-100 px-6 py-3 text-sm font-bold uppercase tracking-wide text-ink-500">
+              Out of Stock
+            </div>
+          ) : (
+            <Link href={bookingHref} className="btn-shine ml-auto flex flex-1 items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">
+              Book this vehicle
+            </Link>
+          )}
         </div>
       </div>
       <div className="h-20 lg:hidden" aria-hidden />

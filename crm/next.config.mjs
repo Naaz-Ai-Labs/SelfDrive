@@ -6,7 +6,10 @@ const __dirname = path.dirname(__filename);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["better-sqlite3", "node:sqlite", "bcryptjs"],
+  // pdfkit reads its built-in .afm font metrics from disk at runtime; bundling it
+  // breaks that lookup on a serverless lambda while still working locally.
+  // better-sqlite3 / node:sqlite were removed with the SQLite layer and are gone.
+  serverExternalPackages: ["bcryptjs", "pdfkit"],
   outputFileTracingRoot: path.join(__dirname, ".."),
   turbopack: {
     root: __dirname,
