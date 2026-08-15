@@ -87,19 +87,6 @@ function addDaysISO(dateStr: string, numDays: number): string {
   return `${year}-${month}-${date}`;
 }
 
-function getNextMondayISO(dateStr: string): string {
-  const p = parseDateParts(dateStr);
-  if (!p) return dateStr;
-  const d = new Date(p.year, p.month - 1, p.day);
-  const day = d.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
-  const daysToAdd = day === 0 ? 1 : day === 6 ? 2 : day === 5 ? 3 : (8 - day);
-  d.setDate(d.getDate() + daysToAdd);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const date = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${date}`;
-}
-
 function maxDobISO() {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 18);
@@ -668,7 +655,10 @@ export function BookingForm({
                     {[
                       { label: "Saturday Drop-off", date: addDaysISO(pickupDate, 1), accent: "brand" as const },
                       { label: "Sunday Drop-off", date: addDaysISO(pickupDate, 2), accent: "amber" as const },
-                      { label: "Monday Drop-off", date: getNextMondayISO(pickupDate), accent: "brand" as const },
+                      // No Monday option: the weekend rental covers Friday, Saturday and
+                      // Sunday. Sunday returns are only accepted from 09:00, which is
+                      // past the 08:00 boundary, so a Sunday drop is already charged as
+                      // all three days. Monday would only ever add a fourth.
                     ].map((opt) => {
                       const selected = returnDate === opt.date;
                       const optDays = daysForReturn(opt.date);
@@ -715,25 +705,8 @@ export function BookingForm({
                   <span className="text-xs font-bold uppercase tracking-wider text-brand-900 block mb-2.5">
                     Select Drop-off Day:
                   </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => handleReturnDateChange(getNextMondayISO(pickupDate))}
-                      className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer ${
-                        returnDate === getNextMondayISO(pickupDate)
-                          ? "border-brand-600 bg-white ring-2 ring-brand-500 shadow-sm"
-                          : "border-ink-200 bg-white/70 hover:bg-white hover:border-brand-300"
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 w-full justify-between">
-                        <span className="text-xs font-bold text-ink-950">Monday Drop-off</span>
-                        <span className="rounded bg-brand-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">2 Days (Weekend)</span>
-                      </div>
-                      <span className="text-[11px] text-ink-600 mt-1">
-                        {formatDate(getNextMondayISO(pickupDate))} · Standard 8:00 AM Drop
-                      </span>
-                    </button>
-
+                  {/* Monday removed here too — the weekend rental ends on Sunday. */}
+                  <div className="grid grid-cols-1 gap-2.5">
                     <button
                       type="button"
                       onClick={() => handleReturnDateChange(addDaysISO(pickupDate, 1))}

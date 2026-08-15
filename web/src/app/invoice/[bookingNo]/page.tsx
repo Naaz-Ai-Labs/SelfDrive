@@ -102,12 +102,29 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
             created_at: b.created_at || new Date().toISOString(),
           };
 
-          const businessObj = {
+          // Read the real business details rather than hardcoding them. The literals
+          // here were "+91 98452 10001" / "support@darshhholiday.com", neither of
+          // which is the business's actual contact — so a customer whose invoice
+          // rendered through this fallback was given a phone number that does not
+          // reach anyone. Falls back to the settings row, then to the known-good
+          // values, and never to the stale pair.
+          let businessObj: Record<string, unknown> = {
             name: "Darshh Holiday",
-            address: "Main Branch: Hassan & Sakleshpura, Karnataka 573201",
-            phone: "+91 98452 10001",
-            email: "support@darshhholiday.com",
+            address: "Sakleshpura & Hassan, Hassan District, Karnataka",
+            phone: "+91 76768 75595",
+            email: "hello@darshhrentals.in",
           };
+          try {
+            const { data: setting } = await supabase
+              .from("settings")
+              .select("value")
+              .eq("key", "business")
+              .single();
+            const parsed = typeof setting?.value === "string" ? JSON.parse(setting.value) : setting?.value;
+            if (parsed && typeof parsed === "object") businessObj = { ...businessObj, ...parsed };
+          } catch {
+            // Settings unavailable — the defaults above are still correct contact details.
+          }
 
           invoiceData = {
             booking: bookingObj,

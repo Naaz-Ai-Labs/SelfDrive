@@ -153,23 +153,40 @@ export default async function VehiclesPage(
         ) : (
           <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {vehicles.map((v, i) => {
-              const isOutOfStock = (v.available_units ?? v.total_units ?? 0) <= 0;
+              // Availability comes from the server (`available_units`, computed in
+              // crm/src/lib/data.ts as total_units minus live holds). Nothing about
+              // availability is recalculated here — the card only renders it.
+              // A vehicle taken out of service is unavailable regardless of unit count.
+              const isOutOfStock =
+                (v.available_units ?? v.total_units ?? 0) <= 0 ||
+                (v.status ? v.status !== "available" : false);
               const weekendActive = isWeekend();
               const quote = searchQuotes[i];
 
               const bookingParams = queryParamsStr.toString() ? `&${queryParamsStr.toString()}` : "";
-              const cardHref = hasSearchQuery
-                ? `/booking?vehicle=${v.id}${bookingParams}&step=3`
-                : `/vehicles/${v.slug}${queryString}`;
+              // An unavailable vehicle never deep-links into the booking flow. The
+              // customer can still open its detail page to read specs and pricing —
+              // this only removes the path that would start a booking it cannot fulfil.
+              // Server-side validation remains authoritative; this is UX protection.
+              const cardHref = isOutOfStock
+                ? `/vehicles/${v.slug}${queryString}`
+                : hasSearchQuery
+                  ? `/booking?vehicle=${v.id}${bookingParams}&step=3`
+                  : `/vehicles/${v.slug}${queryString}`;
 
               return (
                 <Reveal key={v.id} delay={(i % 6) * 60}>
                   <Link
                     href={cardHref}
-                    className={`group card block overflow-hidden transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lift ${isOutOfStock ? "opacity-85" : ""}`}
+                    aria-label={isOutOfStock ? `${v.name} — currently unavailable` : v.name}
+                    className={`group card block overflow-hidden transition-all duration-300 ${
+                      isOutOfStock
+                        ? "opacity-60 saturate-0"
+                        : "hover:-translate-y-1.5 hover:shadow-lift"
+                    }`}
                   >
                     <div className="relative h-44 overflow-hidden bg-ink-100">
-                      {v.primary_photo && <Image src={v.primary_photo} alt={`${v.name} self-drive rental in Hassan & Sakleshpura`} fill loading="lazy" className="object-contain p-4 transition-transform duration-500 group-hover:scale-110" sizes="(max-width:768px) 100vw, 33vw" />}
+                      {v.primary_photo && <Image src={v.primary_photo} alt={`${v.name} self-drive rental in Hassan & Sakleshpura`} fill loading="lazy" className={`object-contain p-4 transition-transform duration-500 ${isOutOfStock ? "" : "group-hover:scale-110"}`} sizes="(max-width:768px) 100vw, 33vw" />}
                       <div className="absolute inset-0 bg-gradient-to-t from-ink-950/50 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" aria-hidden />
                       <span className="absolute left-3 top-3 badge bg-white/95 text-ink-800 shadow-sm">{v.category_name}</span>
                       <span className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold shadow-md ${isOutOfStock ? "bg-rose-600 text-white" : (v.available_units ?? v.total_units) <= 1 ? "bg-amber-500 text-ink-950" : "bg-ink-950/90 text-brand-300 backdrop-blur-sm"}`}>
@@ -216,10 +233,16 @@ export default async function VehiclesPage(
                           )}
                         </div>
 
-                        <span className={`flex items-center gap-1 text-sm font-semibold transition group-hover:gap-2 ${isOutOfStock ? "text-rose-600" : "text-brand-700"}`}>
-                          {isOutOfStock ? "Out of Stock" : quote ? "Book Now" : "View"}
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-                        </span>
+                        {isOutOfStock ? (
+                          <span className="flex items-center gap-1 rounded-full bg-ink-100 px-3 py-1 text-sm font-semibold text-ink-500">
+                            Out of Stock
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-sm font-semibold text-brand-700 transition group-hover:gap-2">
+                            {quote ? "Book Now" : "View"}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                          </span>
+                        )}
                       </div>
                     </div>
                   </Link>
