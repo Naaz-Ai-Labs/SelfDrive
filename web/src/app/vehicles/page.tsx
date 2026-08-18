@@ -37,7 +37,7 @@ export default async function VehiclesPage(
 
   const [categories, vehicles] = await Promise.all([
     getVehicleCategories(),
-    getVehicles({ kind: kind || undefined }),
+    getVehicles({ kind: kind || undefined, location: location || undefined }),
   ]);
 
   // Compute temporary Redis-cached search prices for all vehicles if dates were provided

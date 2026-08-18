@@ -357,6 +357,34 @@ export async function saveBranch(input: { id?: number; name: string; city?: stri
   return { ok: true as const };
 }
 
+/**
+ * Takes a whole branch in or out of service.
+ *
+ * Blocking sets available_units to zero for every vehicle at the branch, so the
+ * public cards grey out and reserve_vehicle_slot refuses the claim in the database.
+ * Nothing on the vehicles themselves is touched, so unblocking restores each one's
+ * previous state exactly — a vehicle already in maintenance stays in maintenance.
+ *
+ * Existing bookings are deliberately left alone: this is an inventory control, not
+ * a cancellation. Admin only, matching saveBranch.
+ */
+export async function setBranchBlocked(branchId: number, blocked: boolean, reason?: string) {
+  const user = await staffUser();
+  assertCan(user, "admin");
+
+  const res = await sbUpdate("branches", `id=eq.${branchId}`, {
+    blocked: blocked ? 1 : 0,
+    blocked_at: blocked ? nowIso() : null,
+    blocked_by: blocked ? user.id : null,
+    blocked_reason: blocked ? (reason?.trim() || null) : null,
+  });
+  if (!res.ok) return fail(res, blocked ? "Blocking the branch" : "Unblocking the branch");
+
+  await logActivity(user.id, blocked ? "branch_blocked" : "branch_unblocked", "branch", branchId, { reason: reason ?? null });
+  refresh();
+  return { ok: true as const };
+}
+
 /* ------------------------------ Pricing rules ------------------------------ */
 
 export async function savePricingRule(input: {

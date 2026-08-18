@@ -100,11 +100,11 @@ function inList(values: Array<string | number>): string {
 type RawVehicle = Record<string, unknown> & {
   id: number;
   vehicle_categories?: { name: string; kind: string; slug: string } | null;
-  branches?: { name: string } | null;
+  branches?: { name: string; blocked?: number } | null;
 };
 
-const VEHICLE_EMBED = "*,vehicle_categories(name,kind,slug),branches(name)";
-const VEHICLE_EMBED_INNER = "*,vehicle_categories!inner(name,kind,slug),branches(name)";
+const VEHICLE_EMBED = "*,vehicle_categories(name,kind,slug),branches(name,blocked)";
+const VEHICLE_EMBED_INNER = "*,vehicle_categories!inner(name,kind,slug),branches(name,blocked)";
 
 /**
  * Attaches photos and live availability to raw vehicle rows.
@@ -154,7 +154,15 @@ async function hydrateVehicles(rows: RawVehicle[]): Promise<Vehicle[]> {
     const photos = photoUrls.length > 0 ? photoUrls : [fallbackPhoto];
 
     const totalUnits = num(row.total_units, 1);
-    const availableUnits = Math.max(0, totalUnits - (holdsByVehicle.get(id) ?? 0));
+    // A blocked branch takes its whole fleet out of service. Reporting zero here
+    // means every surface that already reads available_units — the website cards,
+    // the CRM, the booking form — greys out together, with no second rule to keep
+    // in sync. reserve_vehicle_slot enforces the same thing in the database, so a
+    // stale page cannot book around it.
+    const branchBlocked = num((row.branches as { blocked?: number } | null)?.blocked) === 1;
+    const availableUnits = branchBlocked
+      ? 0
+      : Math.max(0, totalUnits - (holdsByVehicle.get(id) ?? 0));
 
     // PostgREST hands back NUMERIC as a string. Without num() every one of these
     // becomes string concatenation the moment a quote is calculated.
@@ -226,6 +234,9 @@ export type VehicleFilters = {
   fuelType?: string;
   maxPrice?: number;
   onlyAvailable?: boolean;
+  /** Restrict to one branch. Vehicles live at a branch, so a customer collecting
+   *  from Hassan cannot be offered one parked in Sakleshpura. */
+  branchId?: number;
 };
 
 export async function getVehicles(filters: VehicleFilters = {}, onlyActive = true): Promise<Vehicle[]> {
@@ -242,6 +253,7 @@ export async function getVehicles(filters: VehicleFilters = {}, onlyActive = tru
   if (filters.fuelType) parts.push(`fuel_type=eq.${encodeURIComponent(filters.fuelType)}`);
   if (filters.maxPrice) parts.push(`rate_24h=lte.${filters.maxPrice}`);
   if (filters.onlyAvailable) parts.push("status=eq.available");
+  if (filters.branchId) parts.push(`branch_id=eq.${filters.branchId}`);
   parts.push("order=rate_24h.asc");
 
   const res = await sbSelect<RawVehicle>("vehicles", parts.join("&"));
