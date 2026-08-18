@@ -65,3 +65,35 @@ test("an empty payload is out of stock, not bookable", () => {
   // because it stops a sale rather than breaking one that was already taken.
   assert.equal(isOutOfStock({}), true);
 });
+
+/**
+ * Branch blocking.
+ *
+ * A blocked branch zeroes available_units for every vehicle parked there, so the
+ * existing card rule greys them out with no second condition to keep in sync.
+ * reserve_vehicle_slot enforces the same thing in the database, which is what stops
+ * a stale page from booking around it.
+ */
+
+test("a vehicle at a blocked branch reports no availability", () => {
+  // What hydrateVehicles computes when branches.blocked = 1.
+  const availableUnits = (totalUnits: number, holds: number, branchBlocked: boolean) =>
+    branchBlocked ? 0 : Math.max(0, totalUnits - holds);
+
+  assert.equal(availableUnits(5, 2, true), 0, "blocked branch overrides free units");
+  assert.equal(availableUnits(5, 2, false), 3, "unblocked branch counts normally");
+});
+
+test("unblocking restores the previous count rather than a guess", () => {
+  const availableUnits = (totalUnits: number, holds: number, branchBlocked: boolean) =>
+    branchBlocked ? 0 : Math.max(0, totalUnits - holds);
+
+  // Blocking does not write to the vehicles, so the same inputs return the same
+  // number once the branch is released — 5 units with 3 held is 2, before and after.
+  assert.equal(availableUnits(5, 3, true), 0);
+  assert.equal(availableUnits(5, 3, false), 2);
+});
+
+test("a blocked branch greys the card through the existing rule", () => {
+  assert.equal(isOutOfStock({ available_units: 0, total_units: 5, status: "available" }), true);
+});

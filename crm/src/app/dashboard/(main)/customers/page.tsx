@@ -5,7 +5,6 @@ import { getCurrentUser } from "@/lib/auth";
 import { sbSelect, num } from "@/lib/supabase-rest";
 import { formatDate, formatINR } from "@/lib/utils";
 import { Avatar, StatusBadge } from "@/components/ui";
-import { CustomerExportButton } from "@/components/dashboard/CustomerExportButton";
 
 export const metadata: Metadata = { title: "Customers", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -105,7 +104,6 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                 <th className="px-4 py-3 font-semibold">Bookings</th>
                 <th className="px-4 py-3 font-semibold">Lifetime paid</th>
                 <th className="px-4 py-3 font-semibold">Since</th>
-                <th className="px-4 py-3 text-right font-semibold">Record</th>
               </tr>
             </thead>
             <tbody>
@@ -126,9 +124,6 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   <td className="px-4 py-3 text-ink-700">{Number(c.booking_count)}</td>
                   <td className="px-4 py-3 font-medium text-emerald-700">{formatINR(Number(c.paid_total))}</td>
                   <td className="px-4 py-3 text-ink-500">{formatDate(String(c.created_at))}</td>
-                  <td className="px-4 py-3 text-right">
-                    <CustomerExportButton customerId={Number(c.id)} customerName={String(c.name)} />
-                  </td>
                 </tr>
               ))}
             </tbody>

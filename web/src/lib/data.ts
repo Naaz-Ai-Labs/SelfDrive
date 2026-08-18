@@ -283,7 +283,14 @@ export async function getVehicleCategory(slug: string): Promise<VehicleCategory 
 
 import { num } from "./pricing";
 
-export type VehicleFilters = { categorySlug?: string; kind?: string };
+export type VehicleFilters = {
+  categorySlug?: string;
+  kind?: string;
+  /** Branch/location the customer is collecting from, e.g. "HASSAN". Matched
+   *  against the vehicle's branch name, since a vehicle parked at one branch
+   *  cannot be handed over at another. */
+  location?: string;
+};
 
 /**
  * Normalises the two rate columns. The weekend rate is the vehicle's OWN
@@ -298,11 +305,38 @@ function withRates<T extends { rate_24h?: number | string | null; weekend_rate_2
   return { ...v, rate_24h: baseRate, weekend_rate_24h: weekend > 0 ? weekend : baseRate };
 }
 
+/** "HASSAN" matches "Hassan Branch". Case- and suffix-insensitive so the branch can
+ *  be renamed without breaking the site. */
+function matchesLocation(branchName: string | null, location?: string): boolean {
+  if (!location) return true;
+  if (!branchName) return false;
+  return branchName.toLowerCase().includes(location.trim().toLowerCase());
+}
+
 export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle[]> {
   const { vehicles } = await getContent();
-  return vehicles
-    .filter((v) => (!filters.kind || v.category_kind === filters.kind) && (!filters.categorySlug || v.category_slug === filters.categorySlug))
-    .map(withRates);
+  const matched = vehicles.filter(
+    (v) =>
+      (!filters.kind || v.category_kind === filters.kind) &&
+      (!filters.categorySlug || v.category_slug === filters.categorySlug) &&
+      matchesLocation(v.branch_name, filters.location)
+  );
+
+  // A branch with no vehicles assigned yet would otherwise render an empty page.
+  // Falling back to the unfiltered list keeps the site usable while the owner is
+  // still assigning vehicles to branches in the CRM; once both branches hold
+  // stock this never triggers.
+  if (filters.location && matched.length === 0) {
+    return vehicles
+      .filter(
+        (v) =>
+          (!filters.kind || v.category_kind === filters.kind) &&
+          (!filters.categorySlug || v.category_slug === filters.categorySlug)
+      )
+      .map(withRates);
+  }
+
+  return matched.map(withRates);
 }
 
 export async function getVehicle(slug: string): Promise<Vehicle | null> {
