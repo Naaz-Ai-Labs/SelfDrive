@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveUser } from "@/lib/actions";
+import { SERVICE_SCOPES, DEFAULT_ROLE_SCOPES, parsePermissions, type ServiceScope } from "@/lib/permissions";
 
 type Row = Record<string, unknown>;
 
@@ -13,6 +14,7 @@ type UserItem = {
   phone: string | null;
   role: string;
   branch: string | null;
+  permissions: string[];
   active: number;
   left_at: string | null;
 };
@@ -29,16 +31,18 @@ type HistoryItem = {
 };
 
 const ROLES = ["staff", "finance", "manager", "admin"];
-const BRANCHES = ["Main HQ", "North Branch", "South Branch", "East Branch", "West Branch", "Airport Branch", "Central Branch"];
+const BRANCHES = ["Main HQ", "Hassan Branch", "Sakleshpura Branch", "North Branch", "South Branch", "Airport Branch", "Central Branch"];
 
 function toUserItem(r: Row): UserItem {
+  const role = String(r.role ?? "staff");
   return {
     id: Number(r.id),
     name: String(r.name ?? ""),
     email: String(r.email ?? ""),
     phone: r.phone != null ? String(r.phone) : null,
-    role: String(r.role ?? "staff"),
+    role,
     branch: r.branch != null ? String(r.branch) : null,
+    permissions: parsePermissions(r.permissions, role),
     active: Number(r.is_active ?? r.active ?? 1),
     left_at: r.left_at != null ? String(r.left_at) : null,
   };
@@ -62,10 +66,41 @@ export function StaffEditor({
     name: "",
     email: "",
     phone: "",
-    branch: "Main HQ",
+    branch: "Hassan Branch",
     role: "staff",
     password: "",
+    permissions: (DEFAULT_ROLE_SCOPES.staff || []) as string[],
   });
+
+  function handleRoleChange(newRole: string) {
+    const defaultScopes = DEFAULT_ROLE_SCOPES[newRole] || DEFAULT_ROLE_SCOPES.staff || [];
+    setForm({
+      ...form,
+      role: newRole,
+      permissions: defaultScopes,
+    });
+  }
+
+  function toggleFormScope(scopeId: string) {
+    const current = new Set(form.permissions);
+    if (current.has(scopeId)) {
+      current.delete(scopeId);
+    } else {
+      current.add(scopeId);
+    }
+    setForm({ ...form, permissions: Array.from(current) });
+  }
+
+  function toggleEditingScope(scopeId: string) {
+    if (!editing) return;
+    const current = new Set(editing.permissions);
+    if (current.has(scopeId)) {
+      current.delete(scopeId);
+    } else {
+      current.add(scopeId);
+    }
+    setEditing({ ...editing, permissions: Array.from(current) });
+  }
 
   function submitAdd() {
     setError("");
@@ -88,13 +123,22 @@ export function StaffEditor({
           phone: form.phone.trim() || undefined,
           branch: form.branch,
           role: form.role,
+          permissions: form.permissions,
           password: form.password,
           active: true,
         });
 
         if (res?.ok) {
-          setSuccess(`Successfully created ${form.name.trim()} and synced credentials with Supabase!`);
-          setForm({ name: "", email: "", phone: "", branch: "Main HQ", role: "staff", password: "" });
+          setSuccess(`Successfully created ${form.name.trim()} with configured service scopes!`);
+          setForm({
+            name: "",
+            email: "",
+            phone: "",
+            branch: "Hassan Branch",
+            role: "staff",
+            password: "",
+            permissions: (DEFAULT_ROLE_SCOPES.staff || []) as string[],
+          });
           router.refresh();
         }
       } catch (err: any) {
@@ -117,11 +161,12 @@ export function StaffEditor({
           phone: editing.phone ?? undefined,
           branch: editing.branch ?? undefined,
           role: editing.role,
+          permissions: editing.permissions,
           active: !!editing.active,
         });
 
         if (res?.ok) {
-          setSuccess(`Updated details for ${editing.name}.`);
+          setSuccess(`Updated details and service scopes for ${editing.name}.`);
           setEditing(null);
           router.refresh();
         }
@@ -149,13 +194,13 @@ export function StaffEditor({
       )}
 
       {/* Main Grid: Add Staff Form + Staff List */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-12">
         {/* Add Staff Credentials Form */}
-        <div className="card h-fit space-y-4 p-6 shadow-sm">
+        <div className="card h-fit space-y-4 p-6 shadow-sm lg:col-span-6">
           <div className="flex items-center justify-between border-b border-ink-100 pb-3">
             <div>
               <h2 className="font-display text-lg font-semibold text-ink-900">Add New Staff Member</h2>
-              <p className="text-xs text-ink-500">Creates login & syncs credentials with Supabase Auth</p>
+              <p className="text-xs text-ink-500">Set credentials & select authorized service access scopes</p>
             </div>
             <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">
               ⚡ Supabase Synced
@@ -186,11 +231,11 @@ export function StaffEditor({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="label text-xs">Role *</label>
+                <label className="label text-xs">Role Preset *</label>
                 <select
                   className="input capitalize"
                   value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
+                  onChange={(e) => handleRoleChange(e.target.value)}
                 >
                   {ROLES.map((r) => (
                     <option key={r} value={r}>
@@ -238,6 +283,60 @@ export function StaffEditor({
                 />
               </div>
             </div>
+
+            {/* Granular Service Scopes Selection */}
+            <div className="rounded-xl border border-brand-200 bg-brand-50/40 p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-xs font-bold text-ink-900">Authorized Service Access Scopes</label>
+                  <p className="text-[11px] text-ink-500">Determine which services & tabs this staff member can access</p>
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, permissions: SERVICE_SCOPES.map((s) => s.id) })}
+                    className="text-brand-700 hover:underline font-semibold"
+                  >
+                    Select All
+                  </button>
+                  <span className="text-ink-300">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, permissions: [] })}
+                    className="text-ink-500 hover:underline"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                {SERVICE_SCOPES.map((scope) => {
+                  const checked = form.permissions.includes(scope.id);
+                  return (
+                    <label
+                      key={scope.id}
+                      className={`flex items-start gap-2 p-2 rounded-lg border text-xs cursor-pointer transition ${
+                        checked
+                          ? "border-brand-400 bg-white font-semibold text-ink-900 shadow-2xs"
+                          : "border-ink-200 bg-ink-50/60 text-ink-500 hover:bg-white"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleFormScope(scope.id)}
+                        className="mt-0.5 h-3.5 w-3.5 rounded accent-brand-600"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate text-xs">{scope.label}</p>
+                        <p className="text-[10px] text-ink-400 font-normal truncate">{scope.description}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           {error && <p className="field-error">{error}</p>}
@@ -246,20 +345,20 @@ export function StaffEditor({
             type="button"
             disabled={pending}
             onClick={submitAdd}
-            className="btn-primary w-full justify-center"
+            className="btn-primary w-full justify-center shadow-sm"
           >
-            {pending ? "Creating & Syncing with Supabase…" : "Create & Sync Staff Credentials"}
+            {pending ? "Creating & Syncing with Supabase…" : "Create Staff & Assign Scopes"}
           </button>
         </div>
 
         {/* Staff Roster & Departure List */}
-        <div className="space-y-3">
+        <div className="space-y-3 lg:col-span-6">
           <div className="flex items-center justify-between">
             <h3 className="font-display text-lg font-semibold text-ink-900">Staff Roster ({users.length})</h3>
             <span className="text-xs text-ink-500">Active vs Left Organization</span>
           </div>
 
-          <div className="max-h-[500px] space-y-3 overflow-y-auto pr-1">
+          <div className="max-h-[600px] space-y-3 overflow-y-auto pr-1">
             {users.map((raw) => {
               const u = toUserItem(raw);
               const isInactive = u.active === 0;
@@ -267,49 +366,75 @@ export function StaffEditor({
               return (
                 <div
                   key={u.id}
-                  className={`card flex items-center justify-between gap-3 p-4 transition ${
-                    isInactive ? "border-red-200 bg-red-50/40" : "bg-white"
+                  className={`card flex flex-col gap-2.5 p-4 transition ${
+                    isInactive ? "border-red-200 bg-red-50/40" : "bg-white border-ink-200"
                   }`}
                 >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate font-semibold text-ink-900">{u.name}</p>
-                      <span
-                        className={`badge ${
-                          u.role === "admin"
-                            ? "bg-amber-100 text-amber-800"
-                            : u.role === "manager"
-                            ? "bg-blue-100 text-blue-800"
-                            : "bg-slate-100 text-slate-700"
-                        }`}
-                      >
-                        {u.role}
-                      </span>
-                      {isInactive ? (
-                        <span className="badge bg-red-100 text-red-700">Left Org</span>
-                      ) : (
-                        <span className="badge bg-emerald-100 text-emerald-700">Active</span>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate font-semibold text-ink-900">{u.name}</p>
+                        <span
+                          className={`badge ${
+                            u.role === "admin"
+                              ? "bg-amber-100 text-amber-800"
+                              : u.role === "manager"
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {u.role}
+                        </span>
+                        {isInactive ? (
+                          <span className="badge bg-red-100 text-red-700">Left Org</span>
+                        ) : (
+                          <span className="badge bg-emerald-100 text-emerald-700">Active</span>
+                        )}
+                      </div>
+
+                      <p className="truncate text-xs text-ink-500">
+                        {u.email} {u.branch ? `• ${u.branch}` : ""}
+                      </p>
+
+                      {isInactive && u.left_at && (
+                        <p className="text-[11px] font-medium text-red-600">
+                          🚪 Left Organization on: {u.left_at}
+                        </p>
                       )}
                     </div>
 
-                    <p className="truncate text-xs text-ink-500">
-                      {u.email} {u.branch ? `• ${u.branch}` : ""}
-                    </p>
-
-                    {isInactive && u.left_at && (
-                      <p className="text-[11px] font-medium text-red-600">
-                        🚪 Left Organization on: {u.left_at}
-                      </p>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setEditing(u)}
+                      className="btn-secondary shrink-0 px-3 py-1.5 text-xs font-semibold"
+                    >
+                      Edit / Scopes ⚙️
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setEditing(u)}
-                    className="btn-secondary shrink-0 px-3 py-1.5 text-xs"
-                  >
-                    Edit / Status
-                  </button>
+                  {/* Service Access Scopes Badges */}
+                  <div className="border-t border-ink-100 pt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-ink-400 mr-1">Access:</span>
+                    {u.role === "admin" ? (
+                      <span className="inline-flex items-center rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200">
+                        ★ Full Unrestricted Admin Access
+                      </span>
+                    ) : u.permissions.length === 0 ? (
+                      <span className="text-[10px] text-ink-400 italic">No services authorized</span>
+                    ) : (
+                      u.permissions.map((p) => {
+                        const scopeDef = SERVICE_SCOPES.find((s) => s.id === p);
+                        return (
+                          <span
+                            key={p}
+                            className="inline-flex items-center rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold text-ink-700 border border-ink-200"
+                          >
+                            {scopeDef?.label.split(" ")[0] || p}
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -317,44 +442,114 @@ export function StaffEditor({
 
           {/* Edit Staff Drawer Modal */}
           {editing && (
-            <div className="card space-y-4 border-2 border-brand-300 bg-brand-50/30 p-5">
+            <div className="card space-y-4 border-2 border-brand-400 bg-brand-50/40 p-5 shadow-md">
               <div className="flex items-center justify-between border-b border-brand-200 pb-2">
-                <h3 className="font-display font-semibold text-ink-900">Manage {editing.name}</h3>
+                <div>
+                  <h3 className="font-display font-semibold text-ink-900">Manage {editing.name}</h3>
+                  <p className="text-[11px] text-ink-500">Edit account details and grant/restrict service scopes</p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setEditing(null)}
                   className="btn-secondary px-2.5 py-1 text-xs"
                 >
-                  Close
+                  ✕ Close
                 </button>
               </div>
 
               <div className="space-y-3">
-                <input
-                  className="input"
-                  value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                />
-
-                <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label text-xs">Full Name</label>
                   <input
                     className="input"
-                    value={editing.phone ?? ""}
-                    placeholder="Phone"
-                    onChange={(e) => setEditing({ ...editing, phone: e.target.value || null })}
+                    value={editing.name}
+                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                   />
+                </div>
 
-                  <select
-                    className="input capitalize"
-                    value={editing.role}
-                    onChange={(e) => setEditing({ ...editing, role: e.target.value })}
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label text-xs">Phone</label>
+                    <input
+                      className="input"
+                      value={editing.phone ?? ""}
+                      placeholder="Phone"
+                      onChange={(e) => setEditing({ ...editing, phone: e.target.value || null })}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="label text-xs">Role Preset</label>
+                    <select
+                      className="input capitalize"
+                      value={editing.role}
+                      onChange={(e) => {
+                        const newRole = e.target.value;
+                        const defaultScopes = DEFAULT_ROLE_SCOPES[newRole] || DEFAULT_ROLE_SCOPES.staff || [];
+                        setEditing({ ...editing, role: newRole, permissions: defaultScopes });
+                      }}
+                    >
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Edit Granular Service Scopes */}
+                <div className="rounded-xl border border-brand-200 bg-white p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-xs font-bold text-ink-900">Authorized Service Access Scopes</label>
+                      <p className="text-[11px] text-ink-500">Check/uncheck to determine accessible modules</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setEditing({ ...editing, permissions: SERVICE_SCOPES.map((s) => s.id) })}
+                        className="text-brand-700 hover:underline font-semibold"
+                      >
+                        Select All
+                      </button>
+                      <span className="text-ink-300">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setEditing({ ...editing, permissions: [] })}
+                        className="text-ink-500 hover:underline"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                    {SERVICE_SCOPES.map((scope) => {
+                      const checked = editing.permissions.includes(scope.id);
+                      return (
+                        <label
+                          key={scope.id}
+                          className={`flex items-start gap-2 p-2 rounded-lg border text-xs cursor-pointer transition ${
+                            checked
+                              ? "border-brand-400 bg-brand-50/50 font-semibold text-ink-900"
+                              : "border-ink-200 bg-ink-50/40 text-ink-500 hover:bg-white"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleEditingScope(scope.id)}
+                            className="mt-0.5 h-3.5 w-3.5 rounded accent-brand-600"
+                          />
+                          <div className="min-w-0">
+                            <p className="truncate text-xs">{scope.label}</p>
+                            <p className="text-[10px] text-ink-400 font-normal truncate">{scope.description}</p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="rounded-lg border border-ink-200 bg-white p-3 space-y-2">
@@ -379,9 +574,9 @@ export function StaffEditor({
                 type="button"
                 disabled={pending}
                 onClick={submitEdit}
-                className="btn-primary w-full justify-center"
+                className="btn-primary w-full justify-center shadow-sm"
               >
-                {pending ? "Saving Changes…" : "Save Staff Changes"}
+                {pending ? "Saving Changes…" : "Save Staff Details & Scopes"}
               </button>
             </div>
           )}

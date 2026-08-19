@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { getVehicle, getVehicles } from "@/lib/data";
+import { getVehicle, getVehicles, getBranches, type Vehicle, type Branch } from "@/lib/data";
 import { getActiveTermsVersion } from "@/lib/data";
 import { formatINR, formatDate, waLink } from "@/lib/utils";
 import { businessInfo } from "@/lib/settings";
@@ -28,7 +28,8 @@ export async function generateMetadata(props: { params: Promise<{ slug: string }
   };
 }
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const SPEC_ICONS: Record<string, string> = {
   brand: "M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4L12 2z",
@@ -52,31 +53,57 @@ function SpecIcon({ d }: { d: string }) {
 
 export default async function VehicleDetailPage(props: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ pickup?: string; pickupTime?: string; return?: string; returnTime?: string }>;
+  searchParams: Promise<{
+    pickup?: string;
+    pickupTime?: string;
+    return?: string;
+    returnTime?: string;
+    branch?: string;
+    branchId?: string;
+    location?: string;
+  }>;
 }) {
   const searchParams = await props.searchParams;
   const params = await props.params;
   const vehicle = await getVehicle(params.slug);
   if (!vehicle) notFound();
-  const [similarAll, terms, info] = await Promise.all([
+  const [similarAll, terms, info, branches] = await Promise.all([
     getVehicles({ categorySlug: vehicle.category_slug ?? undefined }),
     getActiveTermsVersion(),
     businessInfo(),
+    getBranches(),
   ]);
-  const similar = similarAll.filter((v) => v.id !== vehicle.id).slice(0, 3);
+  const similar = similarAll.filter((v: Vehicle) => v.id !== vehicle.id).slice(0, 3);
 
   const pickupDate = searchParams.pickup;
   const pickupTime = searchParams.pickupTime || "08:00";
   const returnDate = searchParams.return;
   const returnTime = searchParams.returnTime || "08:00";
+  const branchParam = searchParams.branch || searchParams.branchId || searchParams.location;
+
+  const selectedBranchId = branchParam
+    ? branchParam === "1" || branchParam.toUpperCase().includes("SAKLESH")
+      ? 1
+      : branchParam === "2" || branchParam.toUpperCase().includes("HASSAN")
+      ? 2
+      : undefined
+    : undefined;
+
+  const targetBranch = selectedBranchId ? branches.find((b: Branch) => Number(b.id) === selectedBranchId) : null;
+  const isTargetBranchBlocked = targetBranch ? Number((targetBranch as any).blocked) === 1 : false;
 
   const searchQuote = Boolean(pickupDate && returnDate)
     ? await getCachedVehicleSearchPrice(vehicle, pickupDate, pickupTime, returnDate, returnTime)
     : null;
 
-  const bookingHref = `/booking?vehicle=${vehicle.id}${pickupDate ? `&pickup=${pickupDate}` : ""}${pickupTime ? `&pickupTime=${pickupTime}` : ""}${returnDate ? `&return=${returnDate}` : ""}${returnTime ? `&returnTime=${returnTime}` : ""}${pickupDate && returnDate ? "&step=3" : ""}`;
+  const branchQuery = branchParam ? `&location=${encodeURIComponent(branchParam)}` : "";
+  const bookingHref = `/booking?vehicle=${vehicle.id}${pickupDate ? `&pickup=${pickupDate}` : ""}${pickupTime ? `&pickupTime=${pickupTime}` : ""}${returnDate ? `&return=${returnDate}` : ""}${returnTime ? `&returnTime=${returnTime}` : ""}${branchQuery}${pickupDate && returnDate ? "&step=3" : ""}`;
 
-  const isOutOfStock = (vehicle.available_units ?? vehicle.total_units ?? 0) <= 0;
+  const isOutOfStock =
+    isTargetBranchBlocked ||
+    (vehicle.available_units ?? vehicle.total_units ?? 0) <= 0 ||
+    vehicle.status === "unavailable" ||
+    vehicle.status === "blocked";
   const weekendActive = isWeekend();
 
   const specs: Array<[string, string | number, string]> = [
@@ -176,7 +203,7 @@ export default async function VehicleDetailPage(props: {
                 <div className="mt-8 rounded-2xl border border-ink-100 bg-ink-50/50 p-5">
                   <h3 className="font-display text-sm font-semibold text-ink-900">Rental Terms & Rules</h3>
                   <ul className="mt-2 space-y-1.5 text-sm text-ink-600">
-                    {terms.content.slice(0, 6).map((t) => (
+                    {terms.content.slice(0, 6).map((t: string) => (
                       <li key={t} className="flex gap-2"><span className="text-brand-600" aria-hidden>✓</span>{t}</li>
                     ))}
                   </ul>
@@ -253,11 +280,43 @@ export default async function VehicleDetailPage(props: {
 
               <ul className="mt-4 space-y-2 border-t border-ink-100 pt-4 text-sm text-ink-600">
                 <li className="flex justify-between font-semibold text-brand-700">
-                  <span>Fleet stock</span>
+                  <span>Total Fleet Stock</span>
                   <span className={isOutOfStock ? "text-rose-600 font-bold" : ""}>
-                    {isOutOfStock ? "Out of Stock" : `${vehicle.available_units ?? vehicle.total_units} available`}
+                    {isOutOfStock ? "Out of Stock" : `${vehicle.available_units ?? vehicle.total_units} units available`}
                   </span>
                 </li>
+
+                {/* Branch-Wise Availability Breakdown */}
+                {vehicle.branch_distribution && vehicle.branch_distribution.length > 0 && (
+                  <li className="rounded-xl border border-brand-200/70 bg-brand-50/50 p-2.5 my-1 space-y-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-brand-800 block">
+                      🏢 Branch Allocation (50-50)
+                    </span>
+                    {vehicle.branch_distribution.map((bd: { branch_id: number; branch_name: string; total_units: number; available_units: number }) => {
+                      const isBdBranchBlocked = Number((branches.find((b: Branch) => Number(b.id) === bd.branch_id) as any)?.blocked) === 1;
+                      const avail = isBdBranchBlocked ? 0 : bd.available_units;
+                      return (
+                        <div key={bd.branch_id} className="flex items-center justify-between text-xs">
+                          <span className="text-ink-700 font-medium flex items-center gap-1">
+                            📍 {bd.branch_name}
+                            <span className="font-mono text-[10px] text-ink-500 bg-white px-1 py-0.2 rounded border border-ink-200">
+                              {bd.branch_id === 1 ? "KA-46" : "KA-13"}
+                            </span>
+                            {isBdBranchBlocked && (
+                              <span className="rounded bg-rose-200 px-1 py-0.2 text-[9px] font-bold text-rose-900">
+                                Blocked
+                              </span>
+                            )}
+                          </span>
+                          <span className={`font-semibold ${isBdBranchBlocked || avail === 0 ? "text-rose-700 font-bold" : "text-brand-900"}`}>
+                            {isBdBranchBlocked ? `0/${bd.total_units} (Hold)` : `${avail}/${bd.total_units} Available`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </li>
+                )}
+
                 <li className="flex justify-between"><span>Included km</span><span className="font-medium text-ink-800">{vehicle.included_km >= 999 ? "Unlimited KM" : `${vehicle.included_km} km/day`}</span></li>
                 <li className="flex justify-between"><span>Extra km rate</span><span className="font-medium text-ink-800">{formatINR((vehicle.category_kind === "bike" || vehicle.category_kind === "scooter") ? 4 : vehicle.extra_km_rate ?? 8)}/km</span></li>
                 <li className="flex justify-between"><span>Security deposit (cash at pickup)</span><span className="font-medium text-ink-800">{formatINR(vehicle.deposit)}</span></li>
@@ -285,7 +344,7 @@ export default async function VehicleDetailPage(props: {
             <div className="mt-16">
               <h2 className="font-display text-xl font-semibold text-ink-900">More in {vehicle.category_name}</h2>
               <div className="mt-6 grid gap-5 sm:grid-cols-3">
-                {similar.map((v) => (
+                {similar.map((v: Vehicle) => (
                   <Link key={v.id} href={`/vehicles/${v.slug}`} className="card overflow-hidden transition hover:-translate-y-1 hover:shadow-lift">
                     {v.primary_photo && (
                       <div className="relative h-32 overflow-hidden bg-ink-100">

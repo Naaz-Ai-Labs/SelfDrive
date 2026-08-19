@@ -224,11 +224,11 @@ export function InspectionForm({ bookingId, kind }: { bookingId: number; kind: "
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    const mandatoryKeys = ["front", "rear", "left", "right"];
+    const mandatoryKeys = ["front", "rear", "left", "right", "odometer"];
     const missingKeys = mandatoryKeys.filter((k) => !capturedPhotos[k]?.url);
 
     if (missingKeys.length > 0) {
-      if (!confirm(`Missing mandatory scans for: ${missingKeys.join(", ").toUpperCase()}. Are you sure you want to proceed without all 4 vehicle sides?`)) {
+      if (!confirm(`Missing scans for: ${missingKeys.join(", ").toUpperCase()}. Are you sure you want to proceed without all vehicle inspection photos & odometer reading?`)) {
         return;
       }
     }

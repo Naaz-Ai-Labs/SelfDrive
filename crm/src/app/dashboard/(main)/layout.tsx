@@ -12,6 +12,7 @@ const NAV = [
   { href: "/dashboard/enquiries", label: "Enquiries", icon: "M9 12h6M9 8h6M9 16h4M4 21V5a2 2 0 012-2h12a2 2 0 012 2v16l-4-2-4 2-4-2-4 2z" },
   { href: "/dashboard/bookings", label: "Bookings", icon: "M8 7V3m8 4V3M3 11h18M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
   { href: "/dashboard/vehicles", label: "Vehicles", icon: "M5 17h14M5 17a2 2 0 104 0M5 17V9l2-4h10l2 4v8M15 17a2 2 0 104 0" },
+  { href: "/dashboard/allocations", label: "Fleet Allocations", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
   { href: "/dashboard/payments", label: "Payments", icon: "M3 10h18M7 15h2m4 0h4M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" },
   { href: "/dashboard/refunds", label: "Refunds", icon: "M3 10h11a5 5 0 010 10H9M3 10l4-4M3 10l4 4" },
   { href: "/dashboard/problem-tickets", label: "Problem tickets", icon: "M12 9v4m0 4h.01M10.29 3.86l-8.18 14.14A1.5 1.5 0 003.5 20h17a1.5 1.5 0 001.39-2l-8.18-14.14a1.5 1.5 0 00-2.62 0z" },
@@ -27,7 +28,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const { items: notifications, unread } = await getNotifications();
 
   const isAdmin = user.role === "admin";
-  const navItems = NAV.filter((item) => canAccessModule(user.role, item.href));
+  const navItems = NAV.filter((item) => canAccessModule(user, item.href));
 
   // Serialize to pure plain objects for React Server Components -> Client Components boundary
   const plainUser = {

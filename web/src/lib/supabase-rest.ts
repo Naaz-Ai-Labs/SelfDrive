@@ -41,85 +41,165 @@ export async function supabaseRestInsert<T = Record<string, unknown>>(
   table: string,
   record: Record<string, unknown>
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-  try {
-    const { url, key } = getSupabaseCredentials();
-    const res = await fetch(`${url}/rest/v1/${table}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify(record),
-      cache: "no-store",
-    });
-    const parsed = await readJson(res, `insert ${table}`);
-    if (!parsed.ok) return parsed;
-    const json = parsed.json;
-    if (!res.ok) {
-      console.warn(`Supabase REST insert error [${table}]:`, json);
-      return { ok: false, error: json?.message || `Insert into ${table} failed` };
+  const maxAttempts = 3;
+  let lastError = `Insert into ${table} failed`;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { url, key } = getSupabaseCredentials();
+      const res = await fetch(`${url}/rest/v1/${table}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify(record),
+        cache: "no-store",
+      });
+      const parsed = await readJson(res, `insert ${table}`);
+      if (!parsed.ok) {
+        lastError = parsed.error;
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 150));
+          continue;
+        }
+        return parsed;
+      }
+      const json = parsed.json;
+      if (!res.ok) {
+        lastError = json?.message || `Insert into ${table} failed (${res.status})`;
+        const isTransient =
+          lastError.toLowerCase().includes("jwt issued at future") ||
+          lastError.toLowerCase().includes("jwt") ||
+          res.status === 401 ||
+          res.status >= 500;
+        if (isTransient && attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 150));
+          continue;
+        }
+        console.warn(`Supabase REST insert error [${table}]:`, json);
+        return { ok: false, error: lastError };
+      }
+      const data = Array.isArray(json) ? json[0] : json;
+      return { ok: true, data: data as T };
+    } catch (err: any) {
+      lastError = err?.message || "Network error communicating with database";
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, attempt * 150));
+        continue;
+      }
+      console.error(`Supabase REST insert network exception [${table}]:`, lastError);
+      return { ok: false, error: lastError };
     }
-    const data = Array.isArray(json) ? json[0] : json;
-    return { ok: true, data: data as T };
-  } catch (err: any) {
-    console.error(`Supabase REST insert network exception [${table}]:`, err?.message || err);
-    return { ok: false, error: err?.message || "Network error communicating with database" };
   }
+
+  return { ok: false, error: lastError };
 }
 
 export async function supabaseRestUpsert<T = Record<string, unknown>>(
   table: string,
   record: Record<string, unknown>
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-  try {
-    const { url, key } = getSupabaseCredentials();
-    const res = await fetch(`${url}/rest/v1/${table}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        Prefer: "resolution=merge-duplicates,return=representation",
-      },
-      body: JSON.stringify(record),
-      cache: "no-store",
-    });
-    const parsed = await readJson(res, `upsert ${table}`);
-    if (!parsed.ok) return parsed;
-    const json = parsed.json;
-    if (!res.ok) {
-      console.warn(`Supabase REST upsert error [${table}]:`, json);
-      return { ok: false, error: json?.message || `Upsert into ${table} failed` };
+  const maxAttempts = 3;
+  let lastError = `Upsert into ${table} failed`;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { url, key } = getSupabaseCredentials();
+      const res = await fetch(`${url}/rest/v1/${table}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          Prefer: "resolution=merge-duplicates,return=representation",
+        },
+        body: JSON.stringify(record),
+        cache: "no-store",
+      });
+      const parsed = await readJson(res, `upsert ${table}`);
+      if (!parsed.ok) {
+        lastError = parsed.error;
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 150));
+          continue;
+        }
+        return parsed;
+      }
+      const json = parsed.json;
+      if (!res.ok) {
+        lastError = json?.message || `Upsert into ${table} failed (${res.status})`;
+        const isTransient =
+          lastError.toLowerCase().includes("jwt issued at future") ||
+          lastError.toLowerCase().includes("jwt") ||
+          res.status === 401 ||
+          res.status >= 500;
+        if (isTransient && attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 150));
+          continue;
+        }
+        console.warn(`Supabase REST upsert error [${table}]:`, json);
+        return { ok: false, error: lastError };
+      }
+      const data = Array.isArray(json) ? json[0] : json;
+      return { ok: true, data: data as T };
+    } catch (err: any) {
+      lastError = err?.message || "Network error communicating with database";
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, attempt * 150));
+        continue;
+      }
+      console.error(`Supabase REST upsert network exception [${table}]:`, lastError);
+      return { ok: false, error: lastError };
     }
-    const data = Array.isArray(json) ? json[0] : json;
-    return { ok: true, data: data as T };
-  } catch (err: any) {
-    console.error(`Supabase REST upsert network exception [${table}]:`, err?.message || err);
-    return { ok: false, error: err?.message || "Network error communicating with database" };
   }
+
+  return { ok: false, error: lastError };
 }
 
 export async function supabaseRestSelect<T = Record<string, unknown>>(
   table: string,
   query: string
 ): Promise<T[] | null> {
-  try {
-    const { url, key } = getSupabaseCredentials();
-    const res = await fetch(`${url}/rest/v1/${table}?${query}`, {
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-      },
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const parsed = await readJson(res, `select ${table}`);
-    if (!parsed.ok) return null;
-    return parsed.json as T[];
-  } catch (err: any) {
-    console.warn(`Supabase REST select error [${table}]:`, err?.message || err);
-    return null;
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { url, key } = getSupabaseCredentials();
+      const res = await fetch(`${url}/rest/v1/${table}?${query}`, {
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+        },
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 150));
+          continue;
+        }
+        return null;
+      }
+      const parsed = await readJson(res, `select ${table}`);
+      if (!parsed.ok) {
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 150));
+          continue;
+        }
+        return null;
+      }
+      return parsed.json as T[];
+    } catch (err: any) {
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, attempt * 150));
+        continue;
+      }
+      console.warn(`Supabase REST select error [${table}]:`, err?.message || err);
+      return null;
+    }
   }
+
+  return null;
 }

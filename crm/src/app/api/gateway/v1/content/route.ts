@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     businessInfo(),
     rentalRules(),
     getVehicleCategories(),
-    getVehicles({ onlyAvailable: true }),
+    getVehicles(),
     getBranches(),
     getTestimonials(),
     getGallery(),

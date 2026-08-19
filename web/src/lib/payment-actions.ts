@@ -208,6 +208,10 @@ export async function verifyBookingPayment(input: {
       kind: "online",
       amount: paidAmount,
       status: "Paid",
+      method: "UPI",
+      gateway_ref: input.razorpayPaymentId,
+      razorpay_order_id: input.razorpayOrderId,
+      razorpay_payment_id: input.razorpayPaymentId,
       notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
       created_at: new Date().toISOString(),
     });

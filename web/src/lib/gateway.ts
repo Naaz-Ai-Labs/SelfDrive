@@ -71,7 +71,7 @@ async function gatewayFetch<T>(path: string, init: RequestInit & FetchOptions = 
 import { cacheGet, cacheSet } from "./redis";
 
 export async function gatewayGet<T>(path: string, opts: FetchOptions = {}): Promise<T> {
-  const isCacheable = !opts.auth && (path.includes("/content") || path.includes("/vehicle"));
+  const isCacheable = !opts.auth && opts.revalidate !== 0 && opts.cache !== "no-store" && (path.includes("/content") || path.includes("/vehicle"));
   const cacheKey = `web:gateway:${path}`;
 
   if (isCacheable) {
@@ -82,7 +82,7 @@ export async function gatewayGet<T>(path: string, opts: FetchOptions = {}): Prom
   const result = await gatewayFetch<T>(path, { method: "GET", ...opts });
 
   if (isCacheable && result && typeof result === "object" && !("error" in (result as any))) {
-    await cacheSet(cacheKey, result, 600);
+    await cacheSet(cacheKey, result, 60);
   }
 
   return result;

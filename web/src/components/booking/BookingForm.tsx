@@ -163,7 +163,9 @@ export function BookingForm({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [categoryKind, setCategoryKind] = useState(search.get("kind") ?? "");
-  const [location, setLocation] = useState(search.get("location") ?? "HASSAN");
+  const branchParam = search.get("branch") || search.get("branchId") || search.get("location");
+  const initialLoc = branchParam === "1" || (branchParam && branchParam.toUpperCase().includes("SAKLESH")) ? "SAKLESHPURA" : "HASSAN";
+  const [location, setLocation] = useState(initialLoc);
 
   const liveClock = useMemo(() => getLiveClockMinPickup(), []);
 
@@ -358,11 +360,11 @@ export function BookingForm({
     if (step === 2 || (!vehiclesFetchedRef.current && vehicleId)) {
       vehiclesFetchedRef.current = true;
       setLoadingVehicles(true);
-      getAvailableVehicles(categoryKind || null, pickupAt || null, returnAt || null)
+      getAvailableVehicles(categoryKind || null, pickupAt || null, returnAt || null, location || null)
         .then((res) => { if (res && res.length > 0) setAvailableVehicles(res); })
         .finally(() => setLoadingVehicles(false));
     }
-  }, [step, categoryKind, pickupAt, returnAt, vehicleId]);
+  }, [step, categoryKind, pickupAt, returnAt, vehicleId, location]);
 
   // Live quote when vehicle + dates are known.
   useEffect(() => {
@@ -597,14 +599,14 @@ export function BookingForm({
                 </select>
               </div>
               <div>
-                <label className="label">Preferred location</label>
+                <label className="label">Pickup &amp; Return Branch</label>
                 <select
                   className="input font-semibold text-ink-900"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                 >
-                  <option value="HASSAN">Hassan (Main Branch)</option>
-                  <option value="SAKLESHPURA">Sakleshpura</option>
+                  <option value="HASSAN">📍 Hassan Branch (BM Road)</option>
+                  <option value="SAKLESHPURA">📍 Sakleshpura Branch (Main Road)</option>
                 </select>
               </div>
 
@@ -871,7 +873,12 @@ export function BookingForm({
                             {isOutOfStock ? "Out of Stock" : `${v.available_units ?? v.total_units} Left`}
                           </span>
                         </div>
-                        <p className="mt-1 text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day (Extra KM: ₹${(v.category_kind === "bike" || v.category_kind === "scooter") ? 4 : v.extra_km_rate ?? 8}/km)`}</p>
+                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 font-semibold text-brand-800 bg-brand-50 border border-brand-200/80 rounded px-1.5 py-0.2 text-[10px]">
+                            🏢 {v.branch_name || (location === "SAKLESHPURA" ? "Sakleshpura Branch" : "Hassan Branch")}
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs text-ink-500">{v.transmission} · {v.fuel_type} · {v.included_km >= 999 ? "Unlimited KM" : `${v.included_km} km/day (Extra KM: ₹${(v.category_kind === "bike" || v.category_kind === "scooter") ? 4 : v.extra_km_rate ?? 8}/km)`}</p>
 
                         <div className="mt-3 flex items-end justify-between border-t border-ink-100/80 pt-2.5">
                           <div>

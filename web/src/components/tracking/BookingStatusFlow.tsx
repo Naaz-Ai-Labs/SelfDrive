@@ -33,10 +33,13 @@ export function BookingStatusFlow({
       <div className="card p-6 border-ink-200 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-ink-100 pb-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold uppercase tracking-wider text-ink-400">Booking Reference</span>
               <span className="rounded bg-brand-100 px-2 py-0.5 font-mono text-xs font-bold text-brand-950">
                 {tracking.booking_no}
+              </span>
+              <span suppressHydrationWarning className="inline-flex items-center rounded-md bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-700">
+                🕒 Created: {formatDateTime(tracking.created_at)}
               </span>
             </div>
             <h2 className="font-display text-2xl font-bold text-ink-950 mt-1">

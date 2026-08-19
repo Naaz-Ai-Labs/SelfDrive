@@ -107,7 +107,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   };
 
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable}`}>
+    <html lang="en" data-scroll-behavior="smooth" className={`${display.variable} ${sans.variable}`}>
       <body className="flex min-h-screen flex-col">
         <script
           dangerouslySetInnerHTML={{

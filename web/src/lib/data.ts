@@ -13,6 +13,7 @@ export type Vehicle = {
   fuel_type: string; transmission: string; seats: number; mileage: string | null; included_km: number;
   extra_km_rate: number; rate_12h: number; rate_24h: number; hourly_rate: number; weekend_rate_24h: number | null;
   deposit: number; late_fee_per_hour: number; total_units: number; available_units?: number; description: string | null; terms: string | null; status: string;
+  branch_distribution?: Array<{ branch_id: number; branch_name: string; total_units: number; available_units: number }>;
   active: number; photos: string[]; primary_photo: string | null;
 };
 
@@ -40,30 +41,81 @@ const FALLBACK_CATEGORIES: VehicleCategory[] = [
 ];
 
 const FALLBACK_VEHICLES: Vehicle[] = [
-  // Scooters (Category 3) — 16 units
-  { id: 1, slug: "honda-dio", name: "Honda Dio", brand: "Honda", model: "Dio", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-1234", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "45 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 4, available_units: 4, description: "Light, easy-to-ride scooter.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-dio.avif"], primary_photo: "/vehicles/honda-dio.avif" },
-  { id: 2, slug: "honda-activa", name: "Honda Activa 6G", brand: "Honda", model: "Activa 6G", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-5678", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "50 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 3, available_units: 3, description: "Automatic, light and simple to ride.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-activa.webp"], primary_photo: "/vehicles/honda-activa.webp" },
-  { id: 3, slug: "tvs-jupiter", name: "TVS Jupiter", brand: "TVS", model: "Jupiter", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-9012", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "50 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 4, available_units: 4, description: "Smooth ride with high comfort.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-jupiter.webp"], primary_photo: "/vehicles/tvs-jupiter.webp" },
-  { id: 4, slug: "yamaha-rayzr", name: "Yamaha RayZR", brand: "Yamaha", model: "RayZR", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-3456", cc: 125, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "52 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 550, rate_24h: 950, hourly_rate: 100, weekend_rate_24h: 1000, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Sporty 125cc scooter.", terms: null, status: "available", active: 1, photos: ["/vehicles/yamaha-rayzr.avif"], primary_photo: "/vehicles/yamaha-rayzr.avif" },
-  { id: 5, slug: "tvs-ntorq", name: "TVS NTorq 125", brand: "TVS", model: "NTorq", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-E-7890", cc: 125, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "45 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 600, rate_24h: 1000, hourly_rate: 110, weekend_rate_24h: 1050, deposit: 1000, late_fee_per_hour: 100, total_units: 3, available_units: 3, description: "Performance scooter with bluetooth console.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-ntorq.webp"], primary_photo: "/vehicles/tvs-ntorq.webp" },
+  // Scooters (Category 3) — Exact original counts
+  {
+    id: 1, slug: "honda-dio", name: "Honda Dio", brand: "Honda", model: "Dio", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 13 D 6730", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "45 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 4, available_units: 4, description: "Light, easy-to-ride scooter.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-dio.avif"], primary_photo: "/vehicles/honda-dio.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 2, available_units: 2 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 2, available_units: 2 }]
+  },
+  {
+    id: 2, slug: "honda-activa", name: "Honda Activa 6G", brand: "Honda", model: "Activa 6G", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 13 D 6731", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "50 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Automatic, light and simple to ride.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-activa.webp"], primary_photo: "/vehicles/honda-activa.webp",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 1, available_units: 1 }]
+  },
+  {
+    id: 3, slug: "tvs-jupiter", name: "TVS Jupiter", brand: "TVS", model: "Jupiter", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 13 AA 6607", cc: 110, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "50 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 500, rate_24h: 900, hourly_rate: 100, weekend_rate_24h: 950, deposit: 1000, late_fee_per_hour: 100, total_units: 6, available_units: 6, description: "Smooth ride with high comfort.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-jupiter.webp"], primary_photo: "/vehicles/tvs-jupiter.webp",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 3, available_units: 3 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 3, available_units: 3 }]
+  },
+  {
+    id: 4, slug: "yamaha-rayzr", name: "Yamaha RayZR", brand: "Yamaha", model: "RayZR", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 66 Q 5483", cc: 125, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "52 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 550, rate_24h: 950, hourly_rate: 100, weekend_rate_24h: 1000, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Sporty 125cc scooter.", terms: null, status: "available", active: 1, photos: ["/vehicles/yamaha-rayzr.avif"], primary_photo: "/vehicles/yamaha-rayzr.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 1, available_units: 1 }]
+  },
+  {
+    id: 5, slug: "tvs-ntorq", name: "TVS NTorq 125", brand: "TVS", model: "NTorq", year: 2023, category_id: 3, category_name: "Scooters", category_kind: "scooter", category_slug: "scooters", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 13 AA 7007", cc: 125, fuel_type: "Petrol", transmission: "Automatic", seats: 2, mileage: "45 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 600, rate_24h: 1000, hourly_rate: 110, weekend_rate_24h: 1050, deposit: 1000, late_fee_per_hour: 100, total_units: 3, available_units: 3, description: "Performance scooter with bluetooth console.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-ntorq.webp"], primary_photo: "/vehicles/tvs-ntorq.webp",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 2, available_units: 2 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 1, available_units: 1 }]
+  },
 
-  // Bikes (Category 2) — 9 units
-  { id: 6, slug: "tvs-ronin", name: "TVS Ronin 225", brand: "TVS", model: "Ronin", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-9012", cc: 225, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "35 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 1000, rate_24h: 1800, hourly_rate: 150, weekend_rate_24h: 1850, deposit: 1000, late_fee_per_hour: 120, total_units: 2, available_units: 2, description: "Modern cruiser styling.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-ronin.avif"], primary_photo: "/vehicles/tvs-ronin.avif" },
-  { id: 7, slug: "honda-cb200x", name: "Honda CB200X", brand: "Honda", model: "CB200X", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-3456", cc: 184, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "38 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 1000, rate_24h: 1800, hourly_rate: 150, weekend_rate_24h: 1850, deposit: 1000, late_fee_per_hour: 120, total_units: 2, available_units: 2, description: "Adventure-styled bike.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-cb200x.jpg"], primary_photo: "/vehicles/honda-cb200x.jpg" },
-  { id: 8, slug: "tvs-raider", name: "TVS Raider 125", brand: "TVS", model: "Raider", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-1122", cc: 125, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "55 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 700, rate_24h: 1200, hourly_rate: 110, weekend_rate_24h: 1250, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Sleek commuter bike.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-radar.avif"], primary_photo: "/vehicles/tvs-radar.avif" },
-  { id: 9, slug: "bajaj-pulsar-ns", name: "Bajaj Pulsar NS200", brand: "Bajaj", model: "Pulsar NS", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-3344", cc: 200, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "35 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 800, rate_24h: 1300, hourly_rate: 120, weekend_rate_24h: 1350, deposit: 1000, late_fee_per_hour: 100, total_units: 1, available_units: 1, description: "Naked streetfighter performance.", terms: null, status: "available", active: 1, photos: ["/vehicles/bajaj-pulsar-ns.png"], primary_photo: "/vehicles/bajaj-pulsar-ns.png" },
-  { id: 10, slug: "honda-shine", name: "Honda Shine 125", brand: "Honda", model: "Shine", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-M-5566", cc: 125, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "55 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 600, rate_24h: 1000, hourly_rate: 100, weekend_rate_24h: 1050, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Reliable and comfortable commuter.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-shine.avif"], primary_photo: "/vehicles/honda-shine.avif" },
+  // Bikes (Category 2) — Exact original counts
+  {
+    id: 6, slug: "tvs-ronin", name: "TVS Ronin 225", brand: "TVS", model: "Ronin", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 66 R 2082", cc: 225, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "35 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 1000, rate_24h: 1800, hourly_rate: 150, weekend_rate_24h: 1850, deposit: 1000, late_fee_per_hour: 120, total_units: 1, available_units: 1, description: "Modern cruiser styling.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-ronin.avif"], primary_photo: "/vehicles/tvs-ronin.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 0, available_units: 0 }]
+  },
+  {
+    id: 7, slug: "honda-cb200x", name: "Honda CB200X", brand: "Honda", model: "CB200X", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 2, branch_name: "Hassan Branch", registration_no: "KA 13 D 9771", cc: 184, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "38 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 1000, rate_24h: 1800, hourly_rate: 150, weekend_rate_24h: 1850, deposit: 1000, late_fee_per_hour: 120, total_units: 1, available_units: 1, description: "Adventure-styled bike.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-cb200x.jpg"], primary_photo: "/vehicles/honda-cb200x.jpg",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 0, available_units: 0 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 1, available_units: 1 }]
+  },
+  {
+    id: 8, slug: "tvs-raider", name: "TVS Raider 125", brand: "TVS", model: "Raider", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 13 AA 7007", cc: 125, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "55 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 700, rate_24h: 1200, hourly_rate: 110, weekend_rate_24h: 1250, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Sleek commuter bike.", terms: null, status: "available", active: 1, photos: ["/vehicles/tvs-radar.avif"], primary_photo: "/vehicles/tvs-radar.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 1, available_units: 1 }]
+  },
+  {
+    id: 9, slug: "bajaj-pulsar-ns", name: "Bajaj Pulsar NS200", brand: "Bajaj", model: "Pulsar NS", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 66 L 4592", cc: 200, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "35 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 800, rate_24h: 1300, hourly_rate: 120, weekend_rate_24h: 1350, deposit: 1000, late_fee_per_hour: 100, total_units: 1, available_units: 1, description: "Naked streetfighter performance.", terms: null, status: "available", active: 1, photos: ["/vehicles/bajaj-pulsar-ns.png"], primary_photo: "/vehicles/bajaj-pulsar-ns.png",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 0, available_units: 0 }]
+  },
+  {
+    id: 10, slug: "honda-shine", name: "Honda Shine 125", brand: "Honda", model: "Shine", year: 2023, category_id: 2, category_name: "Bikes", category_kind: "bike", category_slug: "bikes", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 13 D 6729", cc: 125, fuel_type: "Petrol", transmission: "Manual", seats: 2, mileage: "55 km/l", included_km: 100, extra_km_rate: 4, rate_12h: 600, rate_24h: 1000, hourly_rate: 100, weekend_rate_24h: 1050, deposit: 1000, late_fee_per_hour: 100, total_units: 2, available_units: 2, description: "Reliable and comfortable commuter.", terms: null, status: "available", active: 1, photos: ["/vehicles/honda-shine.avif"], primary_photo: "/vehicles/honda-shine.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 1, available_units: 1 }]
+  },
 
-  // Cars (Category 1) — 7 units
-  { id: 11, slug: "maruti-baleno-manual", name: "Maruti Suzuki Baleno", brand: "Maruti Suzuki", model: "Baleno", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-7890", cc: 1197, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "21 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2000, rate_24h: 3500, hourly_rate: 200, weekend_rate_24h: 3550, deposit: 2000, late_fee_per_hour: 150, total_units: 2, available_units: 2, description: "Comfortable premium hatchback.", terms: null, status: "available", active: 1, photos: ["/vehicles/baleno-manual.avif"], primary_photo: "/vehicles/baleno-manual.avif" },
-  { id: 13, slug: "maruti-dzire", name: "Maruti Dzire", brand: "Maruti Suzuki", model: "Dzire", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-1122", cc: 1197, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "23 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2000, rate_24h: 3500, hourly_rate: 200, weekend_rate_24h: 3550, deposit: 2000, late_fee_per_hour: 150, total_units: 1, available_units: 1, description: "Fuel-efficient compact sedan.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-dzire.avif"], primary_photo: "/vehicles/maruti-dzire.avif" },
-  { id: 14, slug: "maruti-ciaz", name: "Maruti Ciaz", brand: "Maruti Suzuki", model: "Ciaz", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-3344", cc: 1462, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "20 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2400, rate_24h: 4000, hourly_rate: 240, weekend_rate_24h: 4050, deposit: 2500, late_fee_per_hour: 180, total_units: 1, available_units: 1, description: "Spacious premium sedan for highway trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-ciaz.jpg"], primary_photo: "/vehicles/maruti-ciaz.jpg" },
-  { id: 15, slug: "maruti-ertiga-7-seater", name: "Maruti Ertiga 7 Seater", brand: "Maruti Suzuki", model: "Ertiga", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-5566", cc: 1462, fuel_type: "Petrol", transmission: "Manual", seats: 7, mileage: "19 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2800, rate_24h: 4500, hourly_rate: 280, weekend_rate_24h: 4550, deposit: 3000, late_fee_per_hour: 200, total_units: 1, available_units: 1, description: "Spacious 7-seater MPV for family trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-ertiga.avif"], primary_photo: "/vehicles/maruti-ertiga.avif" },
-  { id: 16, slug: "mahindra-thar-manual", name: "Mahindra Thar 4x4", brand: "Mahindra", model: "Thar", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-C-9999", cc: 2184, fuel_type: "Diesel", transmission: "Manual", seats: 4, mileage: "15 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 3000, rate_24h: 5000, hourly_rate: 300, weekend_rate_24h: 5500, deposit: 3000, late_fee_per_hour: 250, total_units: 2, available_units: 2, description: "Iconic 4x4 SUV for offroad exploration.", terms: null, status: "available", active: 1, photos: ["/vehicles/mahindra-thar.avif"], primary_photo: "/vehicles/mahindra-thar.avif" },
+  // Cars (Category 1) — Exact original counts
+  {
+    id: 11, slug: "maruti-baleno-manual", name: "Maruti Suzuki Baleno", brand: "Maruti Suzuki", model: "Baleno", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 13 MA 0550", cc: 1197, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "21 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2000, rate_24h: 3500, hourly_rate: 200, weekend_rate_24h: 3550, deposit: 2000, late_fee_per_hour: 150, total_units: 2, available_units: 2, description: "Comfortable premium hatchback.", terms: null, status: "available", active: 1, photos: ["/vehicles/baleno-manual.avif"], primary_photo: "/vehicles/baleno-manual.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 1, available_units: 1 }]
+  },
+  {
+    id: 13, slug: "maruti-dzire", name: "Maruti Dzire", brand: "Maruti Suzuki", model: "Dzire", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 18 O 3985", cc: 1197, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "23 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2000, rate_24h: 3500, hourly_rate: 200, weekend_rate_24h: 3550, deposit: 2000, late_fee_per_hour: 150, total_units: 1, available_units: 1, description: "Fuel-efficient compact sedan.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-dzire.avif"], primary_photo: "/vehicles/maruti-dzire.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 0, available_units: 0 }]
+  },
+  {
+    id: 14, slug: "maruti-ciaz", name: "Maruti Ciaz", brand: "Maruti Suzuki", model: "Ciaz", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 2, branch_name: "Hassan Branch", registration_no: "KA 13 AA 0810", cc: 1462, fuel_type: "Petrol", transmission: "Manual", seats: 5, mileage: "20 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2400, rate_24h: 4000, hourly_rate: 240, weekend_rate_24h: 4050, deposit: 2500, late_fee_per_hour: 180, total_units: 1, available_units: 1, description: "Spacious premium sedan for highway trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-ciaz.jpg"], primary_photo: "/vehicles/maruti-ciaz.jpg",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 0, available_units: 0 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 1, available_units: 1 }]
+  },
+  {
+    id: 15, slug: "maruti-ertiga-7-seater", name: "Maruti Ertiga 7 Seater", brand: "Maruti Suzuki", model: "Ertiga", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 18 MB 0040", cc: 1462, fuel_type: "Petrol", transmission: "Manual", seats: 7, mileage: "19 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 2800, rate_24h: 4500, hourly_rate: 280, weekend_rate_24h: 4550, deposit: 3000, late_fee_per_hour: 200, total_units: 1, available_units: 1, description: "Spacious 7-seater MPV for family trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/maruti-ertiga.avif"], primary_photo: "/vehicles/maruti-ertiga.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 0, available_units: 0 }]
+  },
+  {
+    id: 16, slug: "mahindra-thar-manual", name: "Mahindra Thar 4x4", brand: "Mahindra", model: "Thar", year: 2023, category_id: 1, category_name: "Cars", category_kind: "car", category_slug: "cars", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 18 MB 7629", cc: 2184, fuel_type: "Diesel", transmission: "Manual", seats: 4, mileage: "15 km/l", included_km: 300, extra_km_rate: 8, rate_12h: 3000, rate_24h: 5000, hourly_rate: 300, weekend_rate_24h: 5500, deposit: 3000, late_fee_per_hour: 250, total_units: 1, available_units: 1, description: "Iconic 4x4 SUV for offroad exploration.", terms: null, status: "available", active: 1, photos: ["/vehicles/mahindra-thar.avif"], primary_photo: "/vehicles/mahindra-thar.avif",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 0, available_units: 0 }]
+  },
 
-  // Tempo Traveller (Category 4) — 1 unit
-  { id: 18, slug: "tempo-traveller-12", name: "Tempo Traveller — Sakleshpura Sightseeing", brand: "Force Motors", model: "Traveller", year: 2023, category_id: 4, category_name: "Tempo Traveller", category_kind: "van", category_slug: "tempo-traveller", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-V-1212", cc: 2596, fuel_type: "Diesel", transmission: "Manual", seats: 12, mileage: "12 km/l", included_km: 999, extra_km_rate: 0, rate_12h: 8000, rate_24h: 12000, hourly_rate: 500, weekend_rate_24h: 12050, deposit: 2000, late_fee_per_hour: 250, total_units: 1, available_units: 1, description: "Chauffeur driven 12 seater for day trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/tempo-traveller.jpg"], primary_photo: "/vehicles/tempo-traveller.jpg" },
-  { id: 19, slug: "tempo-traveller-2days", name: "Tempo Traveller — Sakleshpura & Chikmagalur (2 Days)", brand: "Force Motors", model: "Traveller", year: 2023, category_id: 4, category_name: "Tempo Traveller", category_kind: "van", category_slug: "tempo-traveller", branch_id: 1, branch_name: "Sakleshpura Main Branch", registration_no: "KA-46-V-1213", cc: 2596, fuel_type: "Diesel", transmission: "Manual", seats: 12, mileage: "12 km/l", included_km: 999, extra_km_rate: 0, rate_12h: 8000, rate_24h: 12000, hourly_rate: 500, weekend_rate_24h: 12050, deposit: 2000, late_fee_per_hour: 250, total_units: 0, available_units: 0, description: "Chauffeur driven 12 seater for 2-day hill station tours.", terms: null, status: "available", active: 1, photos: ["/vehicles/cta-tempo-banner.jpg"], primary_photo: "/vehicles/cta-tempo-banner.jpg" },
+  // Tempo Traveller (Category 4) — Exact original counts
+  {
+    id: 18, slug: "tempo-traveller-12", name: "Tempo Traveller — Sakleshpura Sightseeing", brand: "Force Motors", model: "Traveller", year: 2023, category_id: 4, category_name: "Tempo Traveller", category_kind: "van", category_slug: "tempo-traveller", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 18 D 4391", cc: 2596, fuel_type: "Diesel", transmission: "Manual", seats: 12, mileage: "12 km/l", included_km: 999, extra_km_rate: 0, rate_12h: 8000, rate_24h: 12000, hourly_rate: 500, weekend_rate_24h: 12050, deposit: 2000, late_fee_per_hour: 250, total_units: 1, available_units: 1, description: "Chauffeur driven 12 seater for day trips.", terms: null, status: "available", active: 1, photos: ["/vehicles/tempo-traveller.jpg"], primary_photo: "/vehicles/tempo-traveller.jpg",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 0, available_units: 0 }]
+  },
+  {
+    id: 19, slug: "tempo-traveller-2days", name: "Tempo Traveller — Sakleshpura & Chikmagalur (2 Days)", brand: "Force Motors", model: "Traveller", year: 2023, category_id: 4, category_name: "Tempo Traveller", category_kind: "van", category_slug: "tempo-traveller", branch_id: 1, branch_name: "Sakleshpura Branch", registration_no: "KA 18 D 4391", cc: 2596, fuel_type: "Diesel", transmission: "Manual", seats: 12, mileage: "12 km/l", included_km: 999, extra_km_rate: 0, rate_12h: 8000, rate_24h: 12000, hourly_rate: 500, weekend_rate_24h: 12050, deposit: 2000, late_fee_per_hour: 250, total_units: 1, available_units: 1, description: "Chauffeur driven 12 seater for 2-day hill station tours.", terms: null, status: "available", active: 1, photos: ["/vehicles/cta-tempo-banner.jpg"], primary_photo: "/vehicles/cta-tempo-banner.jpg",
+    branch_distribution: [{ branch_id: 1, branch_name: "Sakleshpura Branch", total_units: 1, available_units: 1 }, { branch_id: 2, branch_name: "Hassan Branch", total_units: 0, available_units: 0 }]
+  },
 ];
 
 const FALLBACK_BLOG_POSTS: Array<Record<string, unknown>> = [
@@ -140,6 +192,7 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
       { data: supaVehicles },
       { data: supaPhotos },
       { data: supaBranches },
+      { data: supaUnits },
       { data: supaTestimonials },
       { data: supaFaqs },
       { data: supaTerms },
@@ -147,9 +200,10 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
       { data: supaSettings },
     ] = await Promise.all([
       supabase.from("vehicle_categories").select("*").eq("active", 1).order("sort"),
-      supabase.from("vehicles").select("*, vehicle_categories(name, kind, slug)").eq("active", 1),
+      supabase.from("vehicles").select("*, vehicle_categories(name, kind, slug), branches(name)").eq("active", 1).neq("status", "archived"),
       supabase.from("vehicle_photos").select("*").order("is_primary", { ascending: false }),
       supabase.from("branches").select("*").eq("active", 1),
+      supabase.from("vehicle_units").select("id, vehicle_id, current_branch_id, status, active").eq("active", 1),
       supabase.from("testimonials").select("*").eq("active", 1).order("sort"),
       supabase.from("faqs").select("*").eq("active", 1).order("sort"),
       supabase.from("terms_versions").select("*").eq("active", 1).order("version", { ascending: false }).limit(1),
@@ -157,7 +211,41 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
       supabase.from("settings").select("*"),
     ]);
 
-    if (!supaVehicles || supaVehicles.length === 0) return null;
+    if (!supaVehicles) return null;
+
+    const branchNameMap = new Map<number, string>();
+    const branchBlockedMap = new Map<number, boolean>();
+    if (supaBranches) {
+      for (const b of supaBranches) {
+        branchNameMap.set(b.id, b.name);
+        branchBlockedMap.set(b.id, Number((b as any).blocked) === 1);
+      }
+    }
+
+    const unitsByVehicle = new Map<number, Array<{ id: number; vehicle_id?: number; current_branch_id: number | null; status: string }>>();
+    if (supaUnits && supaUnits.length > 0) {
+      for (const u of supaUnits) {
+        const list = unitsByVehicle.get(u.vehicle_id) || [];
+        list.push(u);
+        unitsByVehicle.set(u.vehicle_id, list);
+      }
+    } else {
+      // 50-50 branch distribution fallback across Sakleshpura (1) and Hassan (2)
+      const twoUnitScooters = new Set([1, 2, 3, 5]); // Dio, Activa, Jupiter, NTorq (4 units total: 2 Sakleshpura, 2 Hassan)
+      for (const v of (supaVehicles || [])) {
+        const vId = Number(v.id);
+        const isTwoUnit = twoUnitScooters.has(vId);
+        const list: Array<{ id: number; vehicle_id?: number; current_branch_id: number | null; status: string }> = [
+          { id: vId * 100 + 1, vehicle_id: vId, current_branch_id: 1, status: "available" },
+          { id: vId * 100 + 2, vehicle_id: vId, current_branch_id: 2, status: "available" },
+        ];
+        if (isTwoUnit) {
+          list.push({ id: vId * 100 + 3, vehicle_id: vId, current_branch_id: 1, status: "available" });
+          list.push({ id: vId * 100 + 4, vehicle_id: vId, current_branch_id: 2, status: "available" });
+        }
+        unitsByVehicle.set(vId, list);
+      }
+    }
 
     const photoMap = new Map<number, { photos: string[]; primary: string }>();
     if (supaPhotos) {
@@ -191,19 +279,76 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
       "tempo-traveller-2days": "/vehicles/cta-tempo-banner.jpg",
     };
 
-    const vehicles: Vehicle[] = supaVehicles.map((v: any) => {
+    const vehicles: Vehicle[] = (supaVehicles || []).map((v: any) => {
       const cat = v.vehicle_categories;
       const ph = photoMap.get(v.id);
-      const fallback = DEFAULT_SLUG_PHOTOS[v.slug] || "/vehicles/baleno-manual.avif";
+      const catStr = `${cat?.kind || ""} ${cat?.slug || ""} ${cat?.name || ""}`.toLowerCase();
+      let fallback = DEFAULT_SLUG_PHOTOS[v.slug];
+      if (!fallback) {
+        if (catStr.includes("scooter") || catStr.includes("activa") || catStr.includes("jupiter") || catStr.includes("dio")) {
+          fallback = "/vehicles/honda-activa.webp";
+        } else if (catStr.includes("bike") || catStr.includes("motorcycle") || catStr.includes("two-wheeler") || catStr.includes("shine") || catStr.includes("pulsar") || catStr.includes("ronin")) {
+          fallback = "/vehicles/honda-shine.avif";
+        } else if (catStr.includes("tempo") || catStr.includes("traveller") || catStr.includes("van") || catStr.includes("bus")) {
+          fallback = "/vehicles/tempo-traveller.jpg";
+        } else {
+          fallback = "/vehicles/baleno-manual.avif";
+        }
+      }
       const vehiclePhotos = ph?.photos && ph.photos.length > 0 ? ph.photos : (Array.isArray(v.photos) ? v.photos : [fallback]);
+      const branchName = v.branches?.name || (v.branch_id ? branchNameMap.get(v.branch_id) : null) || null;
+
+      // Compute branch distribution
+      const isVehicleUnavailable = v.status === "unavailable" || v.status === "blocked" || v.status === "maintenance";
+      const vUnits = unitsByVehicle.get(v.id) || [];
+      const branchDist: Array<{ branch_id: number; branch_name: string; total_units: number; available_units: number }> = [];
+
+      if (vUnits.length > 0) {
+        const counts = new Map<number, { total: number; available: number }>();
+        for (const u of vUnits) {
+          if (!u.current_branch_id) continue;
+          const entry = counts.get(u.current_branch_id) || { total: 0, available: 0 };
+          entry.total += 1;
+          if (u.status === "available" && !branchBlockedMap.get(u.current_branch_id)) entry.available += 1;
+          counts.set(u.current_branch_id, entry);
+        }
+        for (const [bId, stats] of counts.entries()) {
+          const bName = branchNameMap.get(bId) || `Branch ${bId}`;
+          const isBranchBlocked = Boolean(branchBlockedMap.get(bId));
+          branchDist.push({
+            branch_id: bId,
+            branch_name: bName,
+            total_units: stats.total,
+            available_units: isVehicleUnavailable || isBranchBlocked ? 0 : Math.max(0, stats.available),
+          });
+        }
+      } else if (v.branch_id) {
+        const bName = branchNameMap.get(v.branch_id) || branchName || "Main Branch";
+        const isBranchBlocked = Boolean(branchBlockedMap.get(v.branch_id));
+        branchDist.push({
+          branch_id: v.branch_id,
+          branch_name: bName,
+          total_units: v.total_units || 1,
+          available_units: isVehicleUnavailable || isBranchBlocked ? 0 : (v.available_units ?? v.total_units ?? 1),
+        });
+      }
+
+      const totalAvailable = isVehicleUnavailable
+        ? 0
+        : (vUnits.length > 0
+            ? Math.max(0, vUnits.filter((u) => u.status === "available" && !branchBlockedMap.get(u.current_branch_id || 0)).length)
+            : (v.available_units ?? v.total_units ?? 1));
+
       return {
         ...v,
+        branch_name: branchName,
         category_name: cat?.name || v.category_name || "Vehicle",
         category_kind: cat?.kind || v.category_kind || "car",
         category_slug: cat?.slug || v.category_slug || "cars",
         photos: vehiclePhotos,
         primary_photo: ph?.primary || vehiclePhotos[0] || fallback,
-        available_units: v.available_units ?? v.total_units ?? 1,
+        available_units: totalAvailable,
+        branch_distribution: branchDist.length > 0 ? branchDist : undefined,
         vehicle_categories: undefined,
       };
     });
@@ -238,12 +383,11 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
 }
 
 /** Fetched once per request (React cache dedupes repeated calls within the same render
- * pass) — the CRM gateway returns the whole read-mostly content model in one payload, so
- * a page that needs categories, vehicles and testimonials makes one network round trip. */
+ * pass) — the CRM gateway returns the whole read-mostly content model in one payload. */
 export const getContent = cache(async (): Promise<Content> => {
   try {
     const data = await gatewayGet<Content & { error?: string }>("/api/gateway/v1/content", { revalidate: 0 });
-    if (data && !("error" in data) && Array.isArray(data.vehicles) && data.vehicles.length > 0) {
+    if (data && !("error" in data) && Array.isArray(data.vehicles)) {
       return {
         ...data,
         blogPosts: data.blogPosts?.length ? data.blogPosts : FALLBACK_BLOG_POSTS,
@@ -255,7 +399,7 @@ export const getContent = cache(async (): Promise<Content> => {
 
   // Direct Supabase Live Data Fallback
   const supaContent = await fetchContentFromSupabase();
-  if (supaContent && Array.isArray(supaContent.vehicles) && supaContent.vehicles.length > 0) {
+  if (supaContent && Array.isArray(supaContent.vehicles)) {
     return {
       ...EMPTY_CONTENT,
       ...supaContent,
@@ -286,10 +430,9 @@ import { num } from "./pricing";
 export type VehicleFilters = {
   categorySlug?: string;
   kind?: string;
-  /** Branch/location the customer is collecting from, e.g. "HASSAN". Matched
-   *  against the vehicle's branch name, since a vehicle parked at one branch
-   *  cannot be handed over at another. */
+  /** Branch/location the customer is collecting from, e.g. "HASSAN" or "SAKLESHPURA" */
   location?: string;
+  branchId?: number;
 };
 
 /**
@@ -305,8 +448,6 @@ function withRates<T extends { rate_24h?: number | string | null; weekend_rate_2
   return { ...v, rate_24h: baseRate, weekend_rate_24h: weekend > 0 ? weekend : baseRate };
 }
 
-/** "HASSAN" matches "Hassan Branch". Case- and suffix-insensitive so the branch can
- *  be renamed without breaking the site. */
 function matchesLocation(branchName: string | null, location?: string): boolean {
   if (!location) return true;
   if (!branchName) return false;
@@ -314,26 +455,50 @@ function matchesLocation(branchName: string | null, location?: string): boolean 
 }
 
 export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle[]> {
-  const { vehicles } = await getContent();
-  const matched = vehicles.filter(
-    (v) =>
-      (!filters.kind || v.category_kind === filters.kind) &&
-      (!filters.categorySlug || v.category_slug === filters.categorySlug) &&
-      matchesLocation(v.branch_name, filters.location)
-  );
+  const { vehicles, branches } = await getContent();
+  const matched: Vehicle[] = [];
 
-  // A branch with no vehicles assigned yet would otherwise render an empty page.
-  // Falling back to the unfiltered list keeps the site usable while the owner is
-  // still assigning vehicles to branches in the CRM; once both branches hold
-  // stock this never triggers.
-  if (filters.location && matched.length === 0) {
-    return vehicles
-      .filter(
-        (v) =>
-          (!filters.kind || v.category_kind === filters.kind) &&
-          (!filters.categorySlug || v.category_slug === filters.categorySlug)
-      )
-      .map(withRates);
+  const targetBranchId = filters.branchId
+    ? Number(filters.branchId)
+    : filters.location
+      ? (filters.location.toUpperCase().includes("SAKLESH") ? 1 : filters.location.toUpperCase().includes("HASSAN") ? 2 : undefined)
+      : undefined;
+
+  const targetBranch = targetBranchId ? branches.find((b) => Number(b.id) === targetBranchId) : null;
+  const isTargetBranchBlocked = targetBranch ? Number((targetBranch as any).blocked) === 1 : false;
+
+  for (const v of vehicles) {
+    if (filters.kind && v.category_kind !== filters.kind) continue;
+    if (filters.categorySlug && v.category_slug !== filters.categorySlug) continue;
+
+    if (targetBranchId) {
+      const bName = targetBranchId === 1 ? "Sakleshpura Branch" : "Hassan Branch";
+      const match = v.branch_distribution?.find((bd) => bd.branch_id === targetBranchId);
+
+      if (match) {
+        if (match.total_units > 0) {
+          const avail = isTargetBranchBlocked ? 0 : (match.available_units !== undefined ? match.available_units : match.total_units);
+          matched.push({
+            ...v,
+            total_units: match.total_units,
+            available_units: avail,
+            branch_id: targetBranchId,
+            branch_name: bName,
+          });
+        }
+      } else if (!v.branch_distribution || v.branch_distribution.length === 0) {
+        if (v.branch_id === targetBranchId || !v.branch_id) {
+          matched.push({
+            ...v,
+            available_units: isTargetBranchBlocked ? 0 : (v.available_units ?? v.total_units ?? 1),
+            branch_id: targetBranchId,
+            branch_name: bName,
+          });
+        }
+      }
+    } else {
+      matched.push(v);
+    }
   }
 
   return matched.map(withRates);
@@ -370,7 +535,12 @@ export async function getActiveTermsVersion() {
 }
 
 export async function getBranches(): Promise<Branch[]> {
-  return (await getContent()).branches;
+  const { branches } = await getContent();
+  if (branches && branches.length > 0) return branches;
+  return [
+    { id: 1, name: "Sakleshpura Branch", address: "Main Road, Near Bus Stand", city: "Sakleshpura", phone: "+917676875595", active: 1 },
+    { id: 2, name: "Hassan Branch", address: "BM Road, Hassan", city: "Hassan", phone: "+918088283908", active: 1 },
+  ];
 }
 
 export async function getBlogPosts() {

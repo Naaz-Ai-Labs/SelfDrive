@@ -14,6 +14,7 @@ import { DocumentVerifier } from "@/components/dashboard/DocumentVerifier";
 import { BookingHeaderActions } from "@/components/dashboard/BookingHeaderActions";
 import { BookingPaymentsList } from "@/components/dashboard/BookingPaymentsList";
 import { BookingExportButton } from "@/components/dashboard/BookingExportButton";
+import { SignedDocumentUploader } from "@/components/dashboard/SignedDocumentUploader";
 
 export const metadata: Metadata = { title: "Booking detail", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -120,6 +121,14 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
     amount_paise: num(p.amount_paise),
   }));
   const documents = documentsRes.ok ? documentsRes.data : [];
+  const signedDocs = documents
+    .filter((d) => String(d.number || "").includes("SIGNED-HANDOVER") || String(d.number || "").includes("SIGNED-RETURN") || String(d.file_path || "").includes("signed_agreements"))
+    .map((d) => ({
+      id: Number(d.id),
+      file_path: String(d.file_path),
+      number: d.number ? String(d.number) : null,
+      created_at: d.created_at ? String(d.created_at) : null,
+    }));
 
   const inspectionIds = inspections.map((i) => Number(i.id)).filter(Boolean);
   let inspectionPhotos: Array<Record<string, unknown>> = [];
@@ -133,7 +142,7 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
   }
 
   const hasHandover = inspections.some((i) => i.kind === "handover");
-  const hasReturn = inspections.some((i) => i.kind === "return");
+  const hasReturn = inspections.some((i) => i.kind === "return") || ["Vehicle returned", "Inspection pending", "Completed", "Refund pending"].includes(String(booking.status));
   const needsAfterHoursApproval = Number(booking.after_hours) === 1 && !booking.after_hours_approved_by;
 
   return (
@@ -141,23 +150,57 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
       <div>
         <Link href="/dashboard/bookings" className="text-sm text-brand-700 hover:underline">← All bookings</Link>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="font-display text-2xl font-semibold text-ink-900">{String(booking.booking_no)}</h1>
-            <p className="text-xs text-ink-500">Created: {formatDateTime(String(booking.created_at))}</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="font-display text-2xl font-bold text-ink-900 font-mono">{String(booking.booking_no)}</h1>
+            <span suppressHydrationWarning className="inline-flex items-center rounded-lg bg-ink-100 px-2.5 py-1 text-xs font-semibold text-ink-800">
+              🕒 Created: {formatDateTime(String(booking.created_at))}
+            </span>
           </div>
           <div className="flex items-center gap-3">
             <StatusBadge status={String(booking.status)} />
           </div>
         </div>
 
-        {/* The handover pack. Offered once the booking is actually going ahead —
-            exporting a rejected or cancelled booking's identity documents serves no
-            operational purpose and needlessly copies personal data out of the CRM. */}
-        {EXPORTABLE_STATUSES.has(String(booking.status)) && (
-          <div className="mt-4 max-w-sm">
-            <BookingExportButton bookingId={id} bookingNo={String(booking.booking_no)} />
-          </div>
-        )}
+        {/* Handover & Return Inspection Reports */}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          {EXPORTABLE_STATUSES.has(String(booking.status)) && (
+            <div className="max-w-sm">
+              <BookingExportButton bookingId={id} bookingNo={String(booking.booking_no)} />
+            </div>
+          )}
+          {hasHandover && (
+            <a
+              href={`/api/bookings/${id}/inspection-report?type=handover`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-secondary text-xs font-semibold flex items-center gap-2 border-brand-300 text-brand-700 hover:bg-brand-50"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+              </svg>
+              Handover Inspection Report (PDF)
+            </a>
+          )}
+          {hasReturn && (
+            <a
+              href={`/api/bookings/${id}/inspection-report?type=return`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-secondary text-xs font-semibold flex items-center gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+              </svg>
+              Return & Drop-Off Report (PDF)
+            </a>
+          )}
+        </div>
 
         <div className="mt-4">
           <BookingHeaderActions
@@ -224,9 +267,39 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
             </div>
           </div>
 
-          <div className="card p-5">
-            <h2 className="font-display text-lg font-semibold text-ink-900">Handover inspection</h2>
-            {hasHandover ? <p className="mt-2 text-sm text-emerald-700">✓ Handover recorded.</p> : <div className="mt-3"><InspectionForm bookingId={id} kind="handover" /></div>}
+          <div className="card p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-ink-100 pb-3">
+              <div>
+                <h2 className="font-display text-lg font-semibold text-ink-900">Handover Inspection & Physical Audit</h2>
+                <p className="text-xs text-ink-500">
+                  Authoritative inspection report, terms agreement, and physically signed document uploads
+                </p>
+              </div>
+              {hasHandover && (
+                <a
+                  href={`/api/bookings/${id}/inspection-report`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-primary text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+                >
+                  📄 Print / Download Inspection PDF
+                </a>
+              )}
+            </div>
+
+            {hasHandover ? (
+              <div className="space-y-4">
+                <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 font-semibold flex items-center gap-2">
+                  <span>✓</span>
+                  <span>Handover inspection photos and odometer readings recorded in CRM.</span>
+                </div>
+                <SignedDocumentUploader bookingId={id} existingSignedDocs={signedDocs} />
+              </div>
+            ) : (
+              <div className="mt-2">
+                <InspectionForm bookingId={id} kind="handover" />
+              </div>
+            )}
           </div>
 
           <div className="card p-5">

@@ -8,27 +8,48 @@ import { BookingReviewModal, type BookingReviewData } from "./BookingReviewModal
 
 export function BookingsTableWithTabs({
   initialBookings,
+  branches = [],
 }: {
   initialBookings: BookingReviewData[];
+  branches?: Array<{ id: number; name: string; slug?: string }>;
 }) {
   const [activeTab, setActiveTab] = useState<"all" | "active" | "pending" | "rejected">("all");
+  const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBooking, setSelectedBooking] = useState<BookingReviewData | null>(null);
 
-  // Filter Bookings by Tab
-  const allCount = initialBookings.length;
-  const activeCount = initialBookings.filter((b) =>
+  // Filter Bookings by Tab & Branch
+  const branchFilteredList = useMemo(() => {
+    if (selectedBranch === "all") return initialBookings;
+    return initialBookings.filter((b) => {
+      if (b.branch_id !== undefined && b.branch_id !== null && String(b.branch_id) === selectedBranch) {
+        return true;
+      }
+      const targetBr = branches.find((br) => String(br.id) === selectedBranch);
+      const targetName = targetBr?.name.toLowerCase() || selectedBranch.toLowerCase();
+      if (b.branch_name && b.branch_name.toLowerCase().includes(targetName)) {
+        return true;
+      }
+      if (b.pickup_location && b.pickup_location.toLowerCase().includes(targetName)) {
+        return true;
+      }
+      return false;
+    });
+  }, [initialBookings, selectedBranch, branches]);
+
+  const allCount = branchFilteredList.length;
+  const activeCount = branchFilteredList.filter((b) =>
     ["Confirmed", "Ready for pickup", "Vehicle handed over", "Active rental", "Return pending"].includes(b.status)
   ).length;
-  const pendingCount = initialBookings.filter((b) =>
+  const pendingCount = branchFilteredList.filter((b) =>
     ["Pending verification", "Payment received", "Draft", "Pending payment"].includes(b.status)
   ).length;
-  const rejectedCount = initialBookings.filter((b) =>
+  const rejectedCount = branchFilteredList.filter((b) =>
     ["Rejected", "Cancelled"].includes(b.status)
   ).length;
 
   const filteredBookings = useMemo(() => {
-    let list = initialBookings;
+    let list = branchFilteredList;
 
     if (activeTab === "active") {
       list = list.filter((b) =>
@@ -50,12 +71,14 @@ export function BookingsTableWithTabs({
           (b.customer_name && b.customer_name.toLowerCase().includes(q)) ||
           (b.customer_phone && b.customer_phone.toLowerCase().includes(q)) ||
           (b.vehicle_name && b.vehicle_name.toLowerCase().includes(q)) ||
+          (b.branch_name && b.branch_name.toLowerCase().includes(q)) ||
+          (b.pickup_location && b.pickup_location.toLowerCase().includes(q)) ||
           (b.notes && b.notes.toLowerCase().includes(q))
       );
     }
 
     return list;
-  }, [initialBookings, activeTab, searchQuery]);
+  }, [branchFilteredList, activeTab, searchQuery]);
 
   return (
     <div className="space-y-4" suppressHydrationWarning>
@@ -127,11 +150,37 @@ export function BookingsTableWithTabs({
           </button>
         </nav>
 
+        {/* Branch Filter Selector */}
+        {branches && branches.length > 0 && (
+          <div className="flex items-center gap-1.5 rounded-xl border border-ink-200 bg-white px-3 py-1.5 shadow-xs">
+            <span className="text-xs text-ink-500">🏢 Branch:</span>
+            <select
+              value={selectedBranch}
+              onChange={(e) => setSelectedBranch(e.target.value)}
+              className="bg-transparent text-xs font-bold text-ink-800 focus:outline-none cursor-pointer pr-1"
+            >
+              <option value="all">All Branches ({initialBookings.length})</option>
+              {branches.map((br) => {
+                const count = initialBookings.filter((b) =>
+                  (b.branch_id !== undefined && b.branch_id !== null && String(b.branch_id) === String(br.id)) ||
+                  (b.branch_name && b.branch_name.toLowerCase().includes(br.name.toLowerCase())) ||
+                  (b.pickup_location && b.pickup_location.toLowerCase().includes(br.name.toLowerCase()))
+                ).length;
+                return (
+                  <option key={br.id} value={String(br.id)}>
+                    {br.name} ({count})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
+
         {/* Quick Search */}
         <div className="relative min-w-[240px] flex-1 sm:max-w-xs">
           <input
             type="text"
-            placeholder="Search booking #, customer, phone, vehicle..."
+            placeholder="Search booking #, customer, phone, vehicle, branch..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-xl border border-ink-200 bg-white py-1.5 pl-8 pr-3 text-xs text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-hidden"
@@ -155,8 +204,8 @@ export function BookingsTableWithTabs({
         <div className="card p-10 text-center text-sm text-ink-500 space-y-1">
           <p className="font-semibold">No bookings found</p>
           <p className="text-xs text-ink-400">
-            {searchQuery
-              ? "No records matched your search query."
+            {searchQuery || selectedBranch !== "all"
+              ? "No records matched your search query or selected branch."
               : activeTab === "rejected"
               ? "Great! No rejected or cancelled bookings in this section."
               : "No bookings present in this category."}
@@ -175,7 +224,7 @@ export function BookingsTableWithTabs({
               <tr className="border-b border-ink-100 bg-ink-50/50 text-left text-xs uppercase tracking-wider text-ink-400">
                 <th className="px-4 py-3 font-semibold">Booking</th>
                 <th className="px-4 py-3 font-semibold">Customer</th>
-                <th className="px-4 py-3 font-semibold">Vehicle</th>
+                <th className="px-4 py-3 font-semibold">Vehicle & Branch</th>
                 <th className="px-4 py-3 font-semibold">Rejection Reason & Notes</th>
                 <th className="px-4 py-3 font-semibold">Paid / Total</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
@@ -190,10 +239,15 @@ export function BookingsTableWithTabs({
                   className="cursor-pointer border-b border-ink-50 bg-red-50/10 hover:bg-red-50/30 transition"
                 >
                   <td className="px-4 py-3.5">
-                    <span className="font-bold text-red-950 hover:underline">
-                      {b.booking_no}
-                    </span>
-                    <p suppressHydrationWarning className="text-[11px] text-ink-400">{formatDateTime(b.created_at || b.pickup_at)}</p>
+                    <div className="space-y-0.5">
+                      <span className="font-bold font-mono text-red-950 hover:underline">
+                        {b.booking_no}
+                      </span>
+                      <p suppressHydrationWarning className="text-[11px] font-medium text-ink-500 flex items-center gap-1">
+                        <span className="text-ink-400">🕒</span>
+                        <span>{formatDateTime(b.created_at || b.pickup_at)}</span>
+                      </p>
+                    </div>
                   </td>
 
                   <td className="px-4 py-3.5">
@@ -203,7 +257,14 @@ export function BookingsTableWithTabs({
 
                   <td className="px-4 py-3.5">
                     <p className="font-medium text-ink-800">{b.vehicle_name ?? "—"}</p>
-                    <p className="text-xs text-ink-400">{b.registration_no ?? "—"}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                      <span className="text-xs text-ink-400 font-mono">{b.registration_no ?? "—"}</span>
+                      {(b.branch_name || b.pickup_location) && (
+                        <span className="inline-flex items-center rounded-sm bg-red-100/80 px-1.5 py-0.2 text-[10px] font-semibold text-red-800">
+                          🏢 {b.branch_name || b.pickup_location}
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   <td className="px-4 py-3.5 max-w-xs">
@@ -248,7 +309,7 @@ export function BookingsTableWithTabs({
               <tr className="border-b border-ink-100 bg-ink-50/50 text-left text-xs uppercase tracking-wider text-ink-400">
                 <th className="px-4 py-3 font-semibold">Booking</th>
                 <th className="px-4 py-3 font-semibold">Customer</th>
-                <th className="px-4 py-3 font-semibold">Vehicle</th>
+                <th className="px-4 py-3 font-semibold">Vehicle & Branch</th>
                 <th className="px-4 py-3 font-semibold">Pickup</th>
                 <th className="px-4 py-3 font-semibold">Return</th>
                 <th className="px-4 py-3 font-semibold">Documents</th>
@@ -269,9 +330,17 @@ export function BookingsTableWithTabs({
                     className="cursor-pointer border-b border-ink-50 hover:bg-ink-50/60 transition"
                   >
                     <td className="px-4 py-3.5">
-                      <span className="font-bold text-ink-900 hover:text-brand-700">
-                        {b.booking_no}
-                      </span>
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold font-mono text-ink-900 hover:text-brand-700">
+                            {b.booking_no}
+                          </span>
+                        </div>
+                        <p suppressHydrationWarning className="text-[11px] font-medium text-ink-500 flex items-center gap-1">
+                          <span className="text-ink-400">🕒</span>
+                          <span>{formatDateTime(b.created_at)}</span>
+                        </p>
+                      </div>
                     </td>
 
                     <td className="px-4 py-3.5">
@@ -294,7 +363,14 @@ export function BookingsTableWithTabs({
 
                     <td className="px-4 py-3.5">
                       <p className="font-medium text-ink-800">{b.vehicle_name ?? "—"}</p>
-                      <p className="text-xs text-ink-400">{b.registration_no ?? "—"}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                        <span className="text-xs text-ink-400 font-mono">{b.registration_no ?? "—"}</span>
+                        {(b.branch_name || b.pickup_location) && (
+                          <span className="inline-flex items-center rounded-sm bg-brand-50 border border-brand-200 px-1.5 py-0.2 text-[10px] font-semibold text-brand-800">
+                            🏢 {b.branch_name || b.pickup_location}
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     <td className="px-4 py-3.5 text-xs text-ink-600" suppressHydrationWarning>

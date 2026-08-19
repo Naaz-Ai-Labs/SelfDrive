@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('admin','manager','finance','staff')),
   branch TEXT,
+  permissions TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   last_login TIMESTAMP WITH TIME ZONE,
@@ -557,3 +558,66 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- ===========================================================================
+-- Physical Vehicle Units & Dynamic Multi-Branch Allocation
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS vehicle_units (
+  id BIGSERIAL PRIMARY KEY,
+  vehicle_id BIGINT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  unit_identifier TEXT NOT NULL,
+  registration_no TEXT,
+  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'booked', 'maintenance', 'blocked', 'transit', 'inactive')),
+  current_branch_id BIGINT REFERENCES branches(id) ON DELETE SET NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  CONSTRAINT uq_vehicle_unit_identifier UNIQUE (vehicle_id, unit_identifier)
+);
+CREATE INDEX IF NOT EXISTS idx_vehicle_units_vehicle ON vehicle_units(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_units_branch ON vehicle_units(current_branch_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_units_status ON vehicle_units(status);
+CREATE INDEX IF NOT EXISTS idx_vehicle_units_active ON vehicle_units(active);
+
+CREATE TABLE IF NOT EXISTS branch_allocations (
+  id BIGSERIAL PRIMARY KEY,
+  vehicle_unit_id BIGINT NOT NULL REFERENCES vehicle_units(id) ON DELETE CASCADE,
+  branch_id BIGINT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+  starts_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  ends_at TIMESTAMP WITH TIME ZONE,
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_branch_allocations_unit ON branch_allocations(vehicle_unit_id);
+CREATE INDEX IF NOT EXISTS idx_branch_allocations_branch ON branch_allocations(branch_id);
+CREATE INDEX IF NOT EXISTS idx_branch_allocations_dates ON branch_allocations(starts_at, ends_at);
+
+CREATE TABLE IF NOT EXISTS branch_transfers (
+  id BIGSERIAL PRIMARY KEY,
+  vehicle_unit_id BIGINT NOT NULL REFERENCES vehicle_units(id) ON DELETE CASCADE,
+  from_branch_id BIGINT REFERENCES branches(id) ON DELETE SET NULL,
+  to_branch_id BIGINT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+  effective_date TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  reason TEXT,
+  performed_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_branch_transfers_unit ON branch_transfers(vehicle_unit_id);
+CREATE INDEX IF NOT EXISTS idx_branch_transfers_dates ON branch_transfers(effective_date);
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  id BIGSERIAL PRIMARY KEY,
+  key TEXT UNIQUE NOT NULL,
+  operation TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+  response_json TEXT,
+  status_code INTEGER DEFAULT 200,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '24 hours')
+);
+CREATE INDEX IF NOT EXISTS idx_idempotency_key ON idempotency_keys(key);
+CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
+

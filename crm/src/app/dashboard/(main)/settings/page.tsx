@@ -12,6 +12,8 @@ import { TemplateEditor } from "@/components/dashboard/settings/TemplateEditor";
 import { ContentEditors } from "@/components/dashboard/settings/ContentEditors";
 import { StaffEditor } from "@/components/dashboard/settings/StaffEditor";
 
+import { getVehicleUnits } from "@/lib/data";
+
 export const metadata: Metadata = { title: "Settings", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
@@ -34,14 +36,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   const active = TABS.some((t) => t.id === sp.tab) ? sp.tab! : "business";
 
-  const [settings, categoriesRes, branchesRes, branchVehiclesRes, templatesRes, testimonialsRes, faqsRes, postsRes, galleryRes, usersRes, historyRes] =
+  const [settings, categoriesRes, branchesRes, units, templatesRes, testimonialsRes, faqsRes, postsRes, galleryRes, usersRes, historyRes] =
     await Promise.all([
       getAllSettings(),
       sbSelect<Record<string, unknown>>("vehicle_categories", "select=*&order=sort.asc,name.asc"),
       sbSelect<Record<string, unknown>>("branches", "select=id,name,city,blocked&order=name.asc"),
-      // Only ids are needed; the count is tallied in memory rather than issuing one
-      // query per branch.
-      sbSelect<{ branch_id: number | null }>("vehicles", "select=branch_id&active=eq.1"),
+      getVehicleUnits(),
       sbSelect<Record<string, unknown>>("message_templates", "select=*&order=name.asc"),
       sbSelect<Record<string, unknown>>("testimonials", "select=*&order=sort.asc,id.asc"),
       sbSelect<Record<string, unknown>>("faqs", "select=*&order=sort.asc,id.asc"),
@@ -76,12 +76,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const categories = (categoriesRes.ok ? categoriesRes.data : []) as unknown as Array<{ id: number; name: string; kind: string; icon: string | null; image: string | null; short_desc: string | null; description: string | null; active: number; sort: number }>;
 
   const vehiclesPerBranch = new Map<number, number>();
-  if (branchVehiclesRes.ok) {
-    for (const v of branchVehiclesRes.data) {
-      const bid = Number(v.branch_id);
-      if (Number.isFinite(bid)) vehiclesPerBranch.set(bid, (vehiclesPerBranch.get(bid) ?? 0) + 1);
-    }
+  for (const u of units) {
+    const bid = Number(u.current_branch_id);
+    if (Number.isFinite(bid)) vehiclesPerBranch.set(bid, (vehiclesPerBranch.get(bid) ?? 0) + 1);
   }
+
   const branches = (branchesRes.ok ? branchesRes.data : []).map((b) => ({
     id: Number(b.id),
     name: String(b.name),

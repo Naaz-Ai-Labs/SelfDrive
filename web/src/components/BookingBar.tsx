@@ -31,7 +31,7 @@ export function BookingBar({
   const initialReturnTime = initialValues?.returnTime ?? initialAutoReturn.returnTime;
 
   const [kind, setKind] = useState(initialValues?.kind ?? "");
-  const [location, setLocation] = useState(initialValues?.location ?? "HASSAN");
+  const [location, setLocation] = useState(initialValues?.location ?? "");
   const [pickupDate, setPickupDate] = useState(initialPickupDate);
   const [pickupTime, setPickupTime] = useState(initialPickupTime);
   const [returnDate, setReturnDate] = useState(initialReturnDate);
@@ -112,8 +112,9 @@ export function BookingBar({
           onChange={(e) => setLocation(e.target.value)}
           className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm text-white shadow-sm transition focus:border-brand-400 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-brand-400/30 [&>option]:bg-ink-900 [&>option]:text-white"
         >
-          <option value="HASSAN">Hassan (Main Branch)</option>
-          <option value="SAKLESHPURA">Sakleshpura</option>
+          <option value="">🏢 All Branches</option>
+          <option value="SAKLESHPURA">📍 Sakleshpura Branch (KA-46)</option>
+          <option value="HASSAN">📍 Hassan Branch (KA-13)</option>
         </select>
       </label>
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { sbSelect, num } from "@/lib/supabase-rest";
+import { getBranches } from "@/lib/data";
 import { BookingsTableWithTabs } from "@/components/dashboard/BookingsTableWithTabs";
 import type { BookingReviewData, CustomerDocument } from "@/components/dashboard/BookingReviewModal";
 import { AfterHoursPanel, type AfterHoursRequest } from "@/components/dashboard/AfterHoursPanel";
@@ -10,15 +11,26 @@ export const revalidate = 0;
 export default async function BookingsPage() {
   // bookings references users twice (manager_id, after_hours_approved_by), so the
   // manager name cannot be embedded; it is not rendered by this table anyway.
-  const bookingsRes = await sbSelect<Record<string, unknown>>(
-    "bookings",
-    "select=*,customers(name,phone,email),vehicles(name,registration_no)&order=created_at.desc,pickup_at.desc&limit=200"
-  );
+  const [bookingsRes, branches] = await Promise.all([
+    sbSelect<Record<string, unknown>>(
+      "bookings",
+      "select=*,customers(name,phone,email),vehicles(name,registration_no,branch_id)&order=created_at.desc,pickup_at.desc&limit=200"
+    ),
+    getBranches(true),
+  ]);
   if (!bookingsRes.ok) throw new Error(`Could not load bookings: ${bookingsRes.error}`);
+
+  const branchMap = new Map<number, string>();
+  for (const b of branches) {
+    branchMap.set(b.id, b.name);
+  }
 
   const rawRows = bookingsRes.data.map((r): Record<string, unknown> => {
     const customer = r.customers as { name?: string; phone?: string; email?: string } | null;
-    const vehicle = r.vehicles as { name?: string; registration_no?: string } | null;
+    const vehicle = r.vehicles as { name?: string; registration_no?: string; branch_id?: number } | null;
+    const branchId = r.pickup_branch_id ? Number(r.pickup_branch_id) : (vehicle?.branch_id ? Number(vehicle.branch_id) : null);
+    const branchName = (branchId ? branchMap.get(branchId) : null) || (r.pickup_location as string) || (branchId ? `Branch #${branchId}` : null);
+
     return {
       ...r,
       customer_name: customer?.name ?? null,
@@ -26,6 +38,9 @@ export default async function BookingsPage() {
       customer_email: customer?.email ?? null,
       vehicle_name: vehicle?.name ?? null,
       registration_no: vehicle?.registration_no ?? null,
+      branch_id: branchId,
+      branch_name: branchName,
+      pickup_location: (r.pickup_location as string) ?? branchName,
     };
   });
 
@@ -78,6 +93,9 @@ export default async function BookingsPage() {
     vehicle_id: r.vehicle_id ? Number(r.vehicle_id) : null,
     vehicle_name: (r.vehicle_name as string) ?? null,
     registration_no: (r.registration_no as string) ?? null,
+    branch_id: r.branch_id ? Number(r.branch_id) : null,
+    branch_name: (r.branch_name as string) ?? null,
+    pickup_location: (r.pickup_location as string) ?? null,
     pickup_at: (r.pickup_at as string) ?? "2026-08-12T00:00:00.000Z",
     return_at: (r.return_at as string) ?? "2026-08-13T00:00:00.000Z",
     status: (r.status as string) ?? "Pending",
@@ -128,7 +146,7 @@ export default async function BookingsPage() {
 
       <AfterHoursPanel requests={afterHoursRequests} />
 
-      <BookingsTableWithTabs initialBookings={bookings} />
+      <BookingsTableWithTabs initialBookings={bookings} branches={branches} />
     </div>
   );
 }

@@ -20,14 +20,16 @@ export type BookingPayload = {
   pickupAt: string;
   returnAt: string;
   location?: string;
+  branchId?: number;
   customer: { name: string; phone: string; email?: string; address?: string; dob?: string; emergencyContact?: string };
   passengers?: number;
   notes?: string;
   enquiryId?: number | null;
+  idempotencyKey?: string;
 };
 
 /** A booking in one of these states is holding a unit. Cancelled/Completed/Draft are not. */
-const BLOCKING_STATUSES = ["Cancelled", "Completed", "Draft"];
+const BLOCKING_STATUSES = ["Cancelled", "Completed", "Draft", "Rejected"];
 
 function inList(values: Array<string | number>): string {
   return `(${values.map((v) => (typeof v === "number" ? String(v) : `"${v}"`)).join(",")})`;
@@ -35,10 +37,6 @@ function inList(values: Array<string | number>): string {
 
 /**
  * Finds a customer by phone or email, or creates one.
- *
- * Returns null when the database could not be reached. The old version fell through to
- * `lastInsertRowid` on a mock connection and handed back a customer id that referenced
- * nothing, which then became a booking pointing at a non-existent customer.
  */
 export async function findOrCreateCustomer(
   contact: BookingPayload["customer"]
@@ -60,7 +58,6 @@ export async function findOrCreateCustomer(
     if (found.data) {
       const id = Number(found.data.id);
       const patch: Record<string, unknown> = { name: contact.name, updated_at: new Date().toISOString() };
-      // COALESCE semantics: only overwrite a column when we actually have a value.
       if (phone) {
         patch.phone = phone;
         patch.whatsapp = phone;
@@ -93,25 +90,79 @@ export async function findOrCreateCustomer(
 }
 
 /**
- * True when the vehicle still has a free unit across the requested window.
- *
- * Reads Supabase. The SQLite version silently degraded to a mock that returned no rows,
- * so every vehicle read as available and a single unit could be booked without limit.
- * A failed read now returns false — refusing a bookable vehicle is recoverable, taking
- * money for a double-booked one is not.
+ * True when the vehicle still has a free physical unit across the requested window and branch.
  */
 export async function checkVehicleAvailable(
   vehicleId: number,
   pickupAt: string,
   returnAt: string,
+  branchId?: number,
   excludeBookingId?: number
 ): Promise<boolean> {
   const pickup = encodeURIComponent(pickupAt);
   const ret = encodeURIComponent(returnAt);
 
-  // Overlap: NOT (return_at <= pickup OR pickup_at >= ret)
-  const overlap = `return_at=gt.${pickup}&pickup_at=lt.${ret}`;
+  // Check physical units first if available
+  const unitsRes = await sbSelect<{ id: number; current_branch_id: number | null }>(
+    "vehicle_units",
+    `select=id,current_branch_id&vehicle_id=eq.${vehicleId}&active=eq.1&status=eq.available`
+  );
 
+  if (unitsRes.ok && Array.isArray(unitsRes.data) && unitsRes.data.length > 0) {
+    const units = unitsRes.data;
+    const unitIds = units.map((u) => Number(u.id));
+
+    // Check branch allocations for each unit
+    const [allocsRes, blocksRes, bookingsRes] = await Promise.all([
+      branchId
+        ? sbSelect<{ vehicle_unit_id: number; branch_id: number; starts_at: string; ends_at: string | null }>(
+            "branch_allocations",
+            `select=vehicle_unit_id,branch_id,starts_at,ends_at&vehicle_unit_id=in.(${unitIds.join(",")})&branch_id=eq.${branchId}&starts_at=lte.${pickup}`
+          )
+        : Promise.resolve({ ok: true, data: [] }),
+      sbSelect<{ vehicle_unit_id: number; booking_id: number | null }>(
+        "availability_blocks",
+        `select=vehicle_unit_id,booking_id&vehicle_id=eq.${vehicleId}&ends_at=gt.${pickup}&starts_at=lt.${ret}` +
+          `${excludeBookingId ? `&or=${encodeURIComponent(`(booking_id.is.null,booking_id.neq.${excludeBookingId})`)}` : ""}`
+      ),
+      sbSelect<{ id: number; vehicle_unit_id: number | null }>(
+        "bookings",
+        `select=id,vehicle_unit_id&vehicle_id=eq.${vehicleId}&status=not.in.${encodeURIComponent(inList(BLOCKING_STATUSES))}` +
+          `&return_at=gt.${pickup}&pickup_at=lt.${ret}${excludeBookingId ? `&id=neq.${excludeBookingId}` : ""}`
+      ),
+    ]);
+
+    const blockedUnitIds = new Set<number>();
+    if (blocksRes.ok && blocksRes.data) {
+      for (const b of blocksRes.data) {
+        if (b.vehicle_unit_id) blockedUnitIds.add(Number(b.vehicle_unit_id));
+      }
+    }
+    if (bookingsRes.ok && bookingsRes.data) {
+      for (const bk of bookingsRes.data) {
+        if (bk.vehicle_unit_id) blockedUnitIds.add(Number(bk.vehicle_unit_id));
+      }
+    }
+
+    const validUnits = units.filter((u) => {
+      if (blockedUnitIds.has(Number(u.id))) return false;
+      if (!branchId) return true;
+      if (allocsRes.ok && allocsRes.data) {
+        const alloc = allocsRes.data.find(
+          (a) =>
+            Number(a.vehicle_unit_id) === Number(u.id) &&
+            (!a.ends_at || new Date(a.ends_at).getTime() >= new Date(returnAt).getTime())
+        );
+        if (alloc) return true;
+      }
+      return u.current_branch_id === branchId;
+    });
+
+    return validUnits.length > 0;
+  }
+
+  // Fallback to model-level total_units check
+  const overlap = `return_at=gt.${pickup}&pickup_at=lt.${ret}`;
   const [vehicleRes, bookingsRes, blocksRes] = await Promise.all([
     sbSelectOne<{ total_units: number }>("vehicles", `select=total_units&id=eq.${vehicleId}`),
     sbSelect<{ id: number }>(
@@ -127,14 +178,11 @@ export async function checkVehicleAvailable(
   ]);
 
   if (!vehicleRes.ok || !bookingsRes.ok || !blocksRes.ok) {
-    console.error("[bookings] availability check failed; treating the vehicle as unavailable");
     return false;
   }
 
   const totalUnits = Math.max(1, num(vehicleRes.data?.total_units, 1));
   const bookedIds = new Set(bookingsRes.data.map((b) => Number(b.id)));
-  // A 'booked' block mirrors a booking row; counting both would double-count the same
-  // hold. Manual blocks and maintenance have no booking, so they count on their own.
   const extraBlocks = blocksRes.data.filter((b) => {
     const bookingId = Number(b.booking_id);
     return !Number.isFinite(bookingId) || !bookedIds.has(bookingId);
@@ -143,18 +191,6 @@ export async function checkVehicleAvailable(
   return bookedIds.size + extraBlocks < totalUnits;
 }
 
-/**
- * Builds a booking number.
- *
- * The old `nextNumber("BK", …)` counted from a module-level variable that reset on every
- * cold start, so two lambdas happily minted the same number. `booking_no` is UNIQUE, so
- * the collision surfaced as a failed insert. This mixes the epoch millisecond with
- * randomness, and `createBooking` retries on the unique violation regardless.
- */
-/** Delegates to the shared generator so booking numbers get the same entropy as
- * every other reference number. The previous local copy drew from 46,656 random
- * values, which collides across a burst inside one millisecond — survivable here
- * only because the insert retries, but it burned retries for no reason. */
 function makeBookingNo(): string {
   return nextNumber("BK", null);
 }
@@ -165,8 +201,7 @@ function isUniqueViolation(error: string, status?: number): boolean {
 
 /**
  * Creates or reuses a customer, computes the quote, and inserts a booking in
- * 'Pending verification'. Throws on a validation problem; returns a failure only if a
- * write did not land. Nothing here reports success for a booking that was not persisted.
+ * 'Pending verification' with atomic unit-level slot reservation.
  */
 export async function createBooking(payload: BookingPayload): Promise<{ bookingId: number; bookingNo: string; customerId: number }> {
   const vehicle = await getVehicleById(payload.vehicleId);
@@ -176,19 +211,43 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   const ret = new Date(payload.returnAt);
   if (!(pickup.getTime() < ret.getTime())) throw new Error("Return time must be after pickup time");
 
-  // Atomic claim: reserve_vehicle_slot() checks availability AND inserts the holding
-  // block inside one locked transaction, so two concurrent requests for the last
-  // free unit cannot both succeed — checkVehicleAvailable() alone is a
-  // check-then-insert across two separate calls, which a race can slip through.
-  const claim = await sbRpc<number | null>("reserve_vehicle_slot", {
-    p_vehicle_id: payload.vehicleId,
-    p_pickup_at: payload.pickupAt,
-    p_return_at: payload.returnAt,
-  });
-  if (!claim.ok || !claim.data) {
-    throw new Error("This vehicle is not available for the selected dates");
+  const branchId = payload.branchId ?? vehicle.branch_id;
+
+  // 1. Try unit-level atomic reservation RPC
+  let claimedBlockId: number | null = null;
+  let claimedUnitId: number | null = null;
+
+  try {
+    const unitClaim = await sbRpc<Array<{ block_id: number; unit_id: number | null; unit_identifier: string | null }>>(
+      "reserve_vehicle_unit_slot",
+      {
+        p_vehicle_id: payload.vehicleId,
+        p_pickup_at: payload.pickupAt,
+        p_return_at: payload.returnAt,
+        p_branch_id: branchId ?? null,
+      }
+    );
+
+    if (unitClaim.ok && Array.isArray(unitClaim.data) && unitClaim.data.length > 0) {
+      claimedBlockId = Number(unitClaim.data[0].block_id);
+      claimedUnitId = unitClaim.data[0].unit_id ? Number(unitClaim.data[0].unit_id) : null;
+    }
+  } catch {
+    // Non-critical fallback below
   }
-  const claimedBlockId = claim.data;
+
+  // 2. If unit claim didn't run, fallback to standard reserve_vehicle_slot
+  if (!claimedBlockId) {
+    const claim = await sbRpc<number | null>("reserve_vehicle_slot", {
+      p_vehicle_id: payload.vehicleId,
+      p_pickup_at: payload.pickupAt,
+      p_return_at: payload.returnAt,
+    });
+    if (!claim.ok || !claim.data) {
+      throw new Error("This vehicle is not available for the selected dates and branch.");
+    }
+    claimedBlockId = Number(claim.data);
+  }
 
   const customer = await findOrCreateCustomer(payload.customer);
   if (!customer.ok) throw new Error(customer.error);
@@ -206,7 +265,8 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
     enquiry_id: payload.enquiryId ?? null,
     customer_id: customerId,
     vehicle_id: vehicle.id,
-    branch_id: vehicle.branch_id,
+    vehicle_unit_id: claimedUnitId,
+    branch_id: branchId ?? null,
     pickup_at: payload.pickupAt,
     return_at: payload.returnAt,
     after_hours: quote.afterHours ? 1 : 0,
@@ -243,18 +303,15 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   }
 
   if (!bookingId || !Number.isFinite(bookingId)) {
-    // The slot was already claimed by reserve_vehicle_slot(). If the booking itself
-    // never got created, release it — otherwise that unit stays phantom-booked
-    // forever with no booking to show for it.
     await sbDelete("availability_blocks", `id=eq.${claimedBlockId}`);
     throw new Error(`Could not save the booking: ${lastError || "the database did not return a booking id."}`);
   }
 
-  // Link the slot claimed atomically above to the real booking — never insert a
-  // second block for the same hold, that would double-count against total_units.
+  // Link availability block to the booking and unit
   const [blockRes, historyRes] = await Promise.all([
     sbUpdate("availability_blocks", `id=eq.${claimedBlockId}`, {
       booking_id: bookingId,
+      vehicle_unit_id: claimedUnitId,
       notes: null,
     }),
     sbInsert("booking_history", {

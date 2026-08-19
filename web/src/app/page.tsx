@@ -238,6 +238,11 @@ export default async function HomePage() {
                   )}
                   <p className="text-xs font-bold uppercase tracking-wider text-brand-400/90">{v.category_name}</p>
                   <h3 className="mt-2 font-display text-xl font-semibold">{v.name}</h3>
+                  <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                    <span className="inline-flex items-center gap-1 font-semibold text-brand-300 bg-white/10 rounded px-2 py-0.5 text-[10px]">
+                      🏢 Hassan &amp; Sakleshpura Branches
+                    </span>
+                  </div>
                   <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-ink-300/80">
                     <span className="flex items-center gap-1.5"><SpecIcon d={SPEC_ICONS.transmission} />{v.transmission}</span>
                     <span className="flex items-center gap-1.5"><SpecIcon d={SPEC_ICONS.fuel} />{v.fuel_type}</span>

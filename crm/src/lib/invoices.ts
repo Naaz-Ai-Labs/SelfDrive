@@ -28,14 +28,20 @@ export async function getInvoiceForBooking(bookingId: number): Promise<Invoice |
  * columns arrive from PostgREST as NUMERIC strings, so every amount goes through num()
  * before arithmetic — plain `+` on them concatenates.
  */
-export async function generateInvoiceForBooking(bookingId: number): Promise<{ id: number; invoiceNo: string }> {
-  const existing = await getInvoiceForBooking(bookingId);
-  if (existing) return { id: Number(existing.id), invoiceNo: existing.invoice_no };
+export async function generateInvoiceForBooking(bookingRef: number | string): Promise<{ id: number; invoiceNo: string }> {
+  const rawRef = String(bookingRef).trim();
+  const filter = /^\d+$/.test(rawRef)
+    ? `or=(id.eq.${rawRef},booking_no.eq.${rawRef},booking_no.eq.BK-${rawRef})`
+    : `or=(booking_no.eq.${encodeURIComponent(rawRef)},booking_no.eq.${encodeURIComponent(rawRef.replace(/^BK-/i, ""))})`;
 
-  const bookingRes = await sbSelectOne<Record<string, unknown>>("bookings", `select=*&id=eq.${bookingId}`);
+  const bookingRes = await sbSelectOne<Record<string, unknown>>("bookings", `select=*&${filter}`);
   if (!bookingRes.ok) throw new Error(`Could not load the booking: ${bookingRes.error}`);
   const booking = bookingRes.data;
-  if (!booking) throw new Error(`Booking ${bookingId} not found.`);
+  if (!booking) throw new Error(`Booking ${bookingRef} not found.`);
+
+  const bookingId = Number(booking.id);
+  const existing = await getInvoiceForBooking(bookingId);
+  if (existing) return { id: Number(existing.id), invoiceNo: existing.invoice_no };
 
   const gstPct = await getSetting<number>("tax_pct", 6);
 

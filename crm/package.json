@@ -4,12 +4,12 @@
   "private": true,
   "description": "Darshh Holiday — staff CRM, database owner and API gateway backend",
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 3001",
+    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS=\"--max-old-space-size=4096\" next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
     "migrate:supabase": "tsx scripts/migrate_to_supabase.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/rental-clock.test.ts tests/storage-buckets.test.ts tests/identifiers.test.ts tests/availability-display.test.ts",
+    "test": "tsx --test tests/rental-clock.test.ts tests/storage-buckets.test.ts tests/identifiers.test.ts tests/availability-display.test.ts tests/idempotency.test.ts tests/allocations-and-units.test.ts tests/comprehensive-hardening.test.ts tests/permissions-and-scopes.test.ts",
     "test:integration": "tsx --test tests/integration.test.ts"
   },
   "dependencies": {

@@ -178,9 +178,15 @@ export function FleetGanttCalendar({
                     </Link>
                     <div className="flex items-center gap-1 mt-0.5 text-[10px]">
                       <span className="text-ink-500">{formatINR(v.rate24h)}/24h</span> •{" "}
-                      <span className="font-semibold text-emerald-700">
-                        {v.availableUnits}/{v.totalUnits} Units
-                      </span>
+                      {v.availableUnits === 0 || v.status === "unavailable" || v.status === "blocked" ? (
+                        <span className="font-bold text-rose-700">
+                          0/{v.totalUnits} Unavailable
+                        </span>
+                      ) : (
+                        <span className="font-semibold text-emerald-700">
+                          {v.availableUnits}/{v.totalUnits} Units
+                        </span>
+                      )}
                     </div>
                   </div>
 

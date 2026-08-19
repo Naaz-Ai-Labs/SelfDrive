@@ -17,12 +17,12 @@ const MANDATORY_SIDES: Array<{ key: CapturedPhoto["side"]; label: string; icon: 
   { key: "rear", label: "Rear / Back View", icon: "🚙", guide: "Position camera facing the REAR bumper & tail lights" },
   { key: "left", label: "Left Side", icon: "⬅️", guide: "Capture full LEFT side profile from front door to rear panel" },
   { key: "right", label: "Right Side", icon: "➡️", guide: "Capture full RIGHT side profile from front door to rear panel" },
+  { key: "odometer", label: "Odometer Reading", icon: "🔢", guide: "Capture clear photo of the dashboard odometer & km reading" },
 ];
 
 const OPTIONAL_SIDES: Array<{ key: CapturedPhoto["side"]; label: string; icon: string; guide: string }> = [
-  { key: "odometer", label: "Odometer", icon: "🔢", guide: "Capture clear reading of the dashboard odometer" },
   { key: "fuel", label: "Fuel Gauge", icon: "⛽", guide: "Capture fuel level indicator on instrument cluster" },
-  { key: "damage", label: "Pre-existing Damage", icon: "⚠️", guide: "Close-up photo of any existing scratch or dent" },
+  { key: "damage", label: "Pre-existing Damage", icon: "⚠️", guide: "Close-up photo of any existing scratch, dent, or marks" },
 ];
 
 interface VehicleCameraScannerProps {
@@ -258,24 +258,32 @@ export function VehicleCameraScanner({
       const file = new File([blob], `vehicle_${side}_${Date.now()}.jpg`, { type: "image/jpeg" });
       const compressed = await compressImageFile(file, 1600, 0.85);
 
-      const formData = new FormData();
-      formData.append("file", compressed);
-      formData.append("folder", "inspections");
+      let savedUrl = canvas.toDataURL("image/jpeg", 0.85);
 
-      const res = await fetch("/api/upload", { method: "POST", body: formData }).then((r) => r.json());
-      if (res?.path) {
-        onPhotoCaptured({
-          side,
-          url: res.path,
-          notes,
-          lat: gpsLocation?.lat,
-          lng: gpsLocation?.lng,
-          timestamp: new Date().toISOString(),
-        });
+      try {
+        const formData = new FormData();
+        formData.append("file", compressed);
+        formData.append("folder", "inspections");
+
+        const res = await fetch("/api/upload", { method: "POST", body: formData }).then((r) => r.json());
+        if (res?.path) {
+          savedUrl = res.path;
+        }
+      } catch (uploadErr) {
+        console.warn("Upload proxy warning, using persistent frame buffer:", uploadErr);
       }
+
+      onPhotoCaptured({
+        side,
+        url: savedUrl,
+        notes,
+        lat: gpsLocation?.lat,
+        lng: gpsLocation?.lng,
+        timestamp: new Date().toISOString(),
+      });
     } catch (err: unknown) {
       console.error("Geotag capture error:", err);
-      alert("Failed to capture image. Please try again.");
+      alert("Failed to capture image frame. Please try again.");
     } finally {
       setCapturing(false);
     }
@@ -300,6 +308,7 @@ export function VehicleCameraScanner({
     e.target.value = "";
   };
 
+  const totalMandatory = MANDATORY_SIDES.length;
   const completedMandatoryCount = MANDATORY_SIDES.filter((s) => capturedPhotos[s.key]?.url).length;
 
   return (
@@ -309,9 +318,9 @@ export function VehicleCameraScanner({
         <div className="flex items-center gap-2">
           <span className="text-xl">📱</span>
           <div>
-            <h4 className="text-xs font-semibold text-ink-900">4-Side Live Camera Geotag Inspection</h4>
+            <h4 className="text-xs font-semibold text-ink-900">Vehicle Live Geotag Inspection Scanner</h4>
             <p className="text-[11px] text-ink-500">
-              Mandatory live photos with GPS stamp: Front, Rear, Left, Right
+              Mandatory live photos with GPS stamp: Front, Rear, Left, Right, Odometer
             </p>
           </div>
         </div>
@@ -319,12 +328,14 @@ export function VehicleCameraScanner({
         <div className="flex items-center gap-2">
           <span
             className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-              completedMandatoryCount === 4
+              completedMandatoryCount >= totalMandatory
                 ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
                 : "bg-amber-100 text-amber-800 border border-amber-300"
             }`}
           >
-            {completedMandatoryCount === 4 ? "✓ 4/4 Mandatory Scans Complete" : `${completedMandatoryCount}/4 Mandatory Scans`}
+            {completedMandatoryCount >= totalMandatory
+              ? `✓ ${totalMandatory}/${totalMandatory} Mandatory Scans Complete`
+              : `${completedMandatoryCount}/${totalMandatory} Mandatory Scans`}
           </span>
 
           <button

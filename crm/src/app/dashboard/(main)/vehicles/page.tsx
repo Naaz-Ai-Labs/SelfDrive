@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getVehicles, getVehicleCategories, getBranches } from "@/lib/data";
+import { getVehicles, getVehicleCategories, getBranches, getCategoryPresetPhoto, getVehicleUnits } from "@/lib/data";
 import { sbSelect } from "@/lib/supabase-rest";
 import { formatINR } from "@/lib/utils";
 import { StatusBadge, EmptyState } from "@/components/ui";
 import { VehicleForm } from "@/components/dashboard/VehicleForm";
 import { FleetGanttCalendar } from "@/components/dashboard/FleetGanttCalendar";
+import { FleetUnitBlockManager } from "@/components/dashboard/FleetUnitBlockManager";
 
 export const metadata: Metadata = { title: "Vehicles Management", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -14,6 +15,7 @@ export default async function VehiclesAdminPage() {
   let vehicles: Awaited<ReturnType<typeof getVehicles>> = [];
   let categories: Awaited<ReturnType<typeof getVehicleCategories>> = [];
   let branches: Awaited<ReturnType<typeof getBranches>> = [];
+  let units: Awaited<ReturnType<typeof getVehicleUnits>> = [];
   let rawBookings: Array<{
     id: number;
     bookingNo: string;
@@ -24,23 +26,37 @@ export default async function VehiclesAdminPage() {
     status: string;
   }> = [];
 
-  const [vehiclesResult, categoriesResult, branchesResult, bookingsResult] = await Promise.all([
-    getVehicles({}, false),
-    getVehicleCategories(false),
-    getBranches(false),
+  const [vehiclesResult, categoriesResult, branchesResult, bookingsResult, unitsResult] = await Promise.all([
+    getVehicles({}, true).catch((err) => {
+      console.error("[VehiclesAdminPage] getVehicles error:", err);
+      return [] as Awaited<ReturnType<typeof getVehicles>>;
+    }),
+    getVehicleCategories(false).catch((err) => {
+      console.error("[VehiclesAdminPage] getVehicleCategories error:", err);
+      return [] as Awaited<ReturnType<typeof getVehicleCategories>>;
+    }),
+    getBranches(false).catch((err) => {
+      console.error("[VehiclesAdminPage] getBranches error:", err);
+      return [] as Awaited<ReturnType<typeof getBranches>>;
+    }),
     sbSelect<Record<string, unknown>>(
       "bookings",
       `select=id,booking_no,vehicle_id,pickup_at,return_at,status,customers(name)&status=not.${encodeURIComponent('in.("Cancelled","Draft")')}`
     ),
+    getVehicleUnits().catch((err) => {
+      console.error("[VehiclesAdminPage] getVehicleUnits error:", err);
+      return [] as Awaited<ReturnType<typeof getVehicleUnits>>;
+    }),
   ]);
 
-  vehicles = vehiclesResult;
+  vehicles = vehiclesResult.filter((v) => v.active === 1 && v.status !== "archived");
   categories = categoriesResult;
   branches = branchesResult;
+  units = unitsResult;
 
-  if (!bookingsResult.ok) throw new Error(`Could not load the fleet schedule: ${bookingsResult.error}`);
+  const bookingsList = bookingsResult.ok ? bookingsResult.data : [];
 
-  rawBookings = bookingsResult.data.map((r) => ({
+  rawBookings = bookingsList.map((r) => ({
     id: Number(r.id),
     bookingNo: String(r.booking_no),
     customerName: String((r.customers as { name?: string } | null)?.name ?? "Guest"),
@@ -66,7 +82,7 @@ export default async function VehiclesAdminPage() {
         <div>
           <h1 className="font-display text-2xl font-semibold text-ink-900">Fleet & Vehicle Management</h1>
           <p className="text-xs text-ink-500">
-            Real-time fleet inventory units tracking, vehicle status, and pricing controls
+            Real-time fleet inventory tracking, license plate blocking, vehicle status, and pricing controls
           </p>
         </div>
       </div>
@@ -74,71 +90,12 @@ export default async function VehiclesAdminPage() {
       {/* Interactive Fleet Gantt Timeline Schedule */}
       <FleetGanttCalendar vehicles={ganttVehicles} bookings={rawBookings} />
 
-      {/* Vehicle Roster Table */}
-      <div className="card overflow-x-auto shadow-sm">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-100 text-left text-xs uppercase tracking-wider text-ink-400">
-              <th className="px-4 py-3 font-semibold">Vehicle</th>
-              <th className="px-4 py-3 font-semibold">Category</th>
-              <th className="px-4 py-3 font-semibold">Fleet Inventory</th>
-              <th className="px-4 py-3 font-semibold">24h Rate</th>
-              <th className="px-4 py-3 font-semibold">Deposit</th>
-              <th className="px-4 py-3 font-semibold">Status</th>
-              <th className="px-4 py-3 font-semibold text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {vehicles.map((v) => (
-              <tr key={v.id} className="border-b border-ink-50 hover:bg-ink-50/40">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    {v.photos && v.photos.length > 0 ? (
-                      <img src={v.photos[0]} alt={v.name} className="h-10 w-14 rounded-lg object-cover border border-ink-200" />
-                    ) : (
-                      <div className="h-10 w-14 rounded-lg bg-ink-100 flex items-center justify-center text-xs text-ink-400">
-                        🚗
-                      </div>
-                    )}
-                    <div>
-                      <Link href={`/dashboard/vehicles/${v.id}`} className="font-semibold text-ink-900 hover:text-brand-700">
-                        {v.name}
-                      </Link>
-                      <p className="text-xs text-ink-400">{v.registration_no ?? "—"}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-ink-600">{v.category_name ?? "—"}</td>
-                <td className="px-4 py-3">
-                  <span className="font-semibold text-ink-900 bg-ink-100 px-2 py-0.5 rounded text-xs">
-                    📦 {v.total_units ?? 1} Units
-                  </span>
-                </td>
-                <td className="px-4 py-3 font-medium text-ink-800">{formatINR(v.rate_24h)}</td>
-                <td className="px-4 py-3 text-ink-600">{formatINR(v.deposit)}</td>
-                <td className="px-4 py-3">
-                  {v.status === "maintenance" ? (
-                    <span className="badge bg-amber-100 text-amber-800 font-semibold">Maintenance</span>
-                  ) : (v.available_units ?? v.total_units ?? 1) > 0 ? (
-                    <span className="badge bg-emerald-100 text-emerald-800 font-semibold">
-                      {v.available_units ?? v.total_units ?? 1}/{v.total_units ?? 1} Available
-                    </span>
-                  ) : (
-                    <span className="badge bg-red-100 text-red-800 font-semibold">
-                      0/{v.total_units ?? 1} Booked
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <Link href={`/dashboard/vehicles/${v.id}`} className="btn-secondary px-3 py-1 text-xs">
-                    Edit / Manage
-                  </Link>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {vehicles.length === 0 && <EmptyState title="No vehicles found" body="Add your first vehicle using the form below." />}
+      {/* Fast Multi-Select Physical Units & License Numbers Blocking Manager */}
+      <div className="space-y-2">
+        <h2 className="font-display text-base font-semibold text-ink-900 flex items-center gap-2">
+          <span>🛡️ Fleet Availability & Multi-Select License Plate Blocking</span>
+        </h2>
+        <FleetUnitBlockManager vehicles={vehicles} units={units} branches={branches} />
       </div>
 
       {/* Add New Vehicle Form */}

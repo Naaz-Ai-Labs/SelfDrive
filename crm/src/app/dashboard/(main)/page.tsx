@@ -97,8 +97,9 @@ export default async function DashboardPage() {
 
   const totalFleetUnits = vehicleRows.reduce((acc, v) => acc + num(v.total_units, 1), 0);
   const maintUnits = vehicleRows.filter((v) => v.status === "maintenance").reduce((acc, v) => acc + num(v.total_units, 1), 0);
+  const unavailVehicleUnits = vehicleRows.filter((v) => v.status === "unavailable" || v.status === "blocked").reduce((acc, v) => acc + num(v.total_units, 1), 0);
   const bookedUnits = bookings.filter((b) => HOLDING.has(statusOf(b)) && String(b.return_at ?? "") >= nowIso).length;
-  const availableFleetUnits = Math.max(0, totalFleetUnits - bookedUnits - maintUnits);
+  const availableFleetUnits = Math.max(0, totalFleetUnits - bookedUnits - maintUnits - unavailVehicleUnits);
 
   const todaysPickups = { c: bookings.filter((b) => String(b.pickup_at ?? "").slice(0, 10) === today && !["Cancelled", "Rejected"].includes(statusOf(b))).length };
   const todaysReturns = { c: bookings.filter((b) => String(b.return_at ?? "").slice(0, 10) === today && OUT.has(statusOf(b))).length };
@@ -386,8 +387,10 @@ export default async function DashboardPage() {
             {upcomingBookings.map((b) => (
               <Link key={Number(b.id)} href={`/dashboard/bookings/${Number(b.id)}`} className="card flex items-center justify-between gap-3 p-4 transition hover:shadow-lift">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-ink-900">{String(b.vehicle_name ?? "—")}</p>
-                  <p className="text-xs text-ink-400">{String(b.booking_no)} · {formatDateTime(String(b.pickup_at))}</p>
+                  <p className="text-xs text-ink-500 font-mono">
+                    <span className="font-semibold text-ink-700">{String(b.booking_no)}</span>
+                    <span className="ml-1 text-[11px] text-ink-400">🕒 {formatDateTime(String(b.created_at || b.pickup_at))}</span>
+                  </p>
                 </div>
                 <StatusBadge status={String(b.status)} />
               </Link>
