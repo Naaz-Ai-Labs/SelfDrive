@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getVehicleById, getVehicleCategories, getBranches } from "@/lib/data";
+import { getVehicleById, getVehicleCategories, getBranches, getVehicleUnits } from "@/lib/data";
 import { sbSelect, num } from "@/lib/supabase-rest";
 import { formatDateTime } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
@@ -18,7 +18,7 @@ export default async function VehicleAdminDetailPage({ params }: { params: Promi
   const vehicle = await getVehicleById(paramId);
   if (!vehicle) notFound();
 
-  const [categories, branches, rulesResult, bookingsResult] = await Promise.all([
+  const [categories, branches, rulesResult, bookingsResult, units] = await Promise.all([
     getVehicleCategories(false),
     getBranches(false),
     sbSelect<Record<string, unknown>>("pricing_rules", `select=*&vehicle_id=eq.${vehicle.id}&order=priority.desc`),
@@ -26,13 +26,14 @@ export default async function VehicleAdminDetailPage({ params }: { params: Promi
       "bookings",
       `select=*,customers(name)&vehicle_id=eq.${vehicle.id}&order=pickup_at.desc&limit=10`
     ),
+    getVehicleUnits(vehicle.id),
   ]);
 
   if (!rulesResult.ok) throw new Error(`Could not load pricing rules: ${rulesResult.error}`);
   if (!bookingsResult.ok) throw new Error(`Could not load bookings: ${bookingsResult.error}`);
 
   // NUMERIC arrives as a string over PostgREST; the rule form does arithmetic on these.
-  const rules: PricingRule[] = rulesResult.data.map((r) => ({
+  const rules: PricingRule[] = rulesResult.data.map((r: Record<string, unknown>) => ({
     id: Number(r.id),
     name: String(r.name),
     day_type: String(r.day_type),
@@ -43,7 +44,7 @@ export default async function VehicleAdminDetailPage({ params }: { params: Promi
     priority: num(r.priority),
   }));
 
-  const bookings = bookingsResult.data.map((b): Record<string, unknown> => ({
+  const bookings = bookingsResult.data.map((b: Record<string, unknown>): Record<string, unknown> => ({
     ...b,
     customer_name: (b.customers as { name?: string } | null)?.name ?? null,
   }));
@@ -61,7 +62,7 @@ export default async function VehicleAdminDetailPage({ params }: { params: Promi
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="card p-5 lg:col-span-2">
           <h2 className="font-display text-lg font-semibold text-ink-900">Edit vehicle</h2>
-          <div className="mt-4"><VehicleForm categories={categories} branches={branches} vehicle={vehicle} /></div>
+          <div className="mt-4"><VehicleForm categories={categories} branches={branches} vehicle={vehicle} initialUnits={units} /></div>
         </div>
         <div className="space-y-6">
           <div className="card p-5">

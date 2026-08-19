@@ -680,3 +680,70 @@ test(
     );
   }
 );
+
+test(
+  "vehicle soft-deletion removes vehicle immediately from active queries and availability",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    const slug = `${TAG}-del-vehicle`.toLowerCase();
+    const createRes = await rest("vehicles", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        slug,
+        name: `${TAG} Delete Vehicle`,
+        brand: "TestBrand",
+        model: "DeleteModel",
+        active: 1,
+        status: "available",
+        seats: 4,
+        rate_24h: 1500,
+        deposit: 2000,
+        total_units: 1,
+      }),
+    });
+
+    assert.ok(createRes.ok, `vehicle must be created: ${JSON.stringify(createRes.body)}`);
+    const created = Array.isArray(createRes.body) ? (createRes.body[0] as { id: number }) : (createRes.body as { id: number });
+    const testVehId = Number(created.id);
+
+    try {
+      // 1. Verify it is returned by active vehicles query
+      const activeList = await rest(`vehicles?id=eq.${testVehId}&active=eq.1&status=neq.archived`);
+      assert.ok(activeList.ok);
+      const activeRows = Array.isArray(activeList.body) ? activeList.body : [];
+      assert.equal(activeRows.length, 1, "created vehicle must appear in active query");
+
+      // 2. Perform soft delete (mark active = 0, status = 'archived')
+      const delRes = await rest(`vehicles?id=eq.${testVehId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          active: 0,
+          status: "archived",
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      assert.ok(delRes.ok, "soft delete mutation must succeed");
+
+      // 3. Verify it is immediately excluded from active query
+      const afterDelList = await rest(`vehicles?id=eq.${testVehId}&active=eq.1&status=neq.archived`);
+      assert.ok(afterDelList.ok);
+      const afterRows = Array.isArray(afterDelList.body) ? afterDelList.body : [];
+      assert.equal(afterRows.length, 0, "deleted vehicle must NOT appear in active query");
+
+      // 4. Verify reservation RPC rejects deleted vehicle
+      const reserveRes = await rpc("reserve_vehicle_unit_slot", {
+        p_vehicle_id: testVehId,
+        p_pickup_at: new Date(Date.now() + 86400000).toISOString(),
+        p_return_at: new Date(Date.now() + 172800000).toISOString(),
+      });
+      const reservedBlocks = Array.isArray(reserveRes.body) ? reserveRes.body : [];
+      assert.equal(reservedBlocks.length, 0, "deleted vehicle cannot be reserved");
+    } finally {
+      // Clean up test vehicle
+      await rest(`vehicles?id=eq.${testVehId}`, { method: "DELETE" });
+    }
+  }
+);

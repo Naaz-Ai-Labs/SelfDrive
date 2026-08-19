@@ -13,30 +13,48 @@ import { issueRazorpayRefund } from "./razorpay";
 import { sbSelect, sbSelectOne, sbInsert, sbUpdate, sbUpsert, sbDelete, sbRpc, num } from "./supabase-rest";
 import type { RestResult } from "./supabase-rest";
 import { cacheInvalidatePrefix } from "./redis";
+import { withIdempotency } from "./idempotency";
 
-function refresh(path = "/dashboard") {
-  revalidatePath(path, "layout");
-  // Not awaited by design: a stale cache is self-healing (it expires on TTL), so this
-  // must never delay or fail a mutation that has already been committed.
-  void invalidateContentCaches().catch(() => {});
-}
-
-/**
- * Clears the content caches that back the public website.
- *
- * `revalidatePath` only busts Next's own cache — it does nothing to the Redis/memory
- * layer in `data.ts`, whose keys embed their filter arguments. Before this, editing a
- * vehicle or a pricing rule in the CRM left the website serving stale data for the
- * full TTL (10 minutes for vehicles, an hour for categories/testimonials/FAQs), which
- * read as "I changed the price and the site didn't update".
- */
-async function invalidateContentCaches(): Promise<void> {
+export async function invalidateContentCaches(): Promise<void> {
+  // 1. Invalidate Redis Cache prefixes
   await Promise.all([
     cacheInvalidatePrefix("vehicles:"),
     cacheInvalidatePrefix("vehicle_categories:"),
+    cacheInvalidatePrefix("branches:"),
+    cacheInvalidatePrefix("web:gateway:"),
     cacheInvalidatePrefix("testimonials:"),
     cacheInvalidatePrefix("faqs:"),
-  ]);
+  ]).catch(() => {});
+
+  // 2. Trigger instant On-Demand Revalidation on the Web frontend (< 200ms)
+  try {
+    const webUrl =
+      process.env.WEB_URL ||
+      process.env.NEXT_PUBLIC_WEB_URL ||
+      (process.env.NODE_ENV === "production" || process.env.VERCEL ? "https://selfdrive.bike" : "http://localhost:3000");
+
+    const gatewayKey = process.env.GATEWAY_API_KEY;
+    if (webUrl && gatewayKey) {
+      void fetch(`${webUrl.replace(/\/$/, "")}/api/revalidate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-gateway-key": gatewayKey,
+        },
+        body: JSON.stringify({ paths: ["/", "/vehicles", "/booking"] }),
+        cache: "no-store",
+      }).catch((err) => {
+        console.warn("[revalidate] Web frontend webhook warning:", err?.message);
+      });
+    }
+  } catch {
+    // Non-blocking best-effort
+  }
+}
+
+function refresh(path = "/dashboard") {
+  revalidatePath(path, "layout");
+  void invalidateContentCaches().catch(() => {});
 }
 
 /* ----------------------------- Write plumbing ------------------------------ */
@@ -206,86 +224,661 @@ export async function saveVehicle(input: {
   status?: string;
   active?: boolean;
   photoUrl?: string;
+  branchAllocations?: Array<{ branchId: number; quantity: number }>;
+  unallocatedUnits?: number;
+  physicalUnits?: Array<{ id?: number; unit_identifier?: string; registration_no?: string; current_branch_id?: number | null; status?: string }>;
+  idempotencyKey?: string;
 }) {
-  const user = await staffUser();
-  assertCan(user, "manager");
+  return withIdempotency(input.idempotencyKey, "save_vehicle", input, async () => {
+    const user = await staffUser();
+    assertCan(user, "staff");
 
-  // `active` is INTEGER 1/0 in the schema, not a boolean column.
-  const activeVal = input.active === false ? 0 : 1;
-  const units = input.totalUnits ?? 1;
+    if (!input.branchId) {
+      return { ok: false as const, error: "Please assign a primary branch to the vehicle." };
+    }
 
-  const fields = {
-    name: input.name,
-    brand: input.brand,
-    model: input.model,
-    year: input.year ?? null,
-    category_id: input.categoryId ?? null,
-    branch_id: input.branchId ?? null,
-    registration_no: input.registrationNo ?? null,
-    cc: input.cc ?? null,
-    fuel_type: input.fuelType ?? "Petrol",
-    transmission: input.transmission ?? "Manual",
-    seats: input.seats ?? 2,
-    mileage: input.mileage ?? null,
-    included_km: input.includedKm ?? 100,
-    extra_km_rate: input.extraKmRate ?? 5,
-    rate_12h: input.rate12h ?? 0,
-    rate_24h: input.rate24h ?? 0,
-    hourly_rate: input.hourlyRate ?? 0,
-    deposit: input.deposit ?? 0,
-    late_fee_per_hour: input.lateFeePerHour ?? 0,
-    total_units: units,
-    description: input.description ?? null,
-    terms: input.terms ?? null,
-    status: input.status ?? "available",
-    active: activeVal,
-  };
+    const activeVal = input.active === false ? 0 : 1;
+    const units = Math.max(1, input.totalUnits ?? 1);
 
-  let vehicleId = input.id;
+    // Validate branch allocations if provided
+    if (input.branchAllocations && input.branchAllocations.length > 0) {
+      const sumBranchQty = input.branchAllocations.reduce((sum, a) => sum + Math.max(0, Number(a.quantity) || 0), 0);
+      const unallocated = Math.max(0, Number(input.unallocatedUnits) || 0);
+      if (sumBranchQty + unallocated > units) {
+        return {
+          ok: false as const,
+          error: `Total branch allocations (${sumBranchQty} + ${unallocated} unallocated = ${sumBranchQty + unallocated}) cannot exceed total units (${units}).`,
+        };
+      }
+    }
 
-  if (vehicleId) {
-    const updated = await sbUpdate("vehicles", `id=eq.${vehicleId}`, { ...fields, updated_at: nowIso() });
-    if (!updated.ok) return fail(updated, "Saving the vehicle");
-    if (updated.data.length === 0) return { ok: false as const, error: `Vehicle ${vehicleId} no longer exists.` };
-    await logActivity(user.id, "vehicle_updated", "vehicle", vehicleId, { name: input.name });
-  } else {
-    // The slug is UNIQUE; the random suffix keeps two same-named vehicles from clashing.
-    const slug = `${slugify(input.name)}-${randomUUID().slice(0, 6)}`;
-    const inserted = await sbInsert<{ id: number }>("vehicles", { slug, ...fields });
-    if (!inserted.ok) return fail(inserted, "Creating the vehicle");
-    vehicleId = Number(inserted.data.id);
-    await logActivity(user.id, "vehicle_created", "vehicle", vehicleId, { name: input.name });
-  }
+    const primaryRegNo = input.physicalUnits && input.physicalUnits[0]?.registration_no
+      ? input.physicalUnits[0].registration_no
+      : input.registrationNo ?? null;
 
-  if (input.photoUrl) {
-    const photo = await sbInsert("vehicle_photos", { vehicle_id: vehicleId, url: input.photoUrl, is_primary: 1 });
-    if (!photo.ok) return fail(photo, "Saving the vehicle photo");
-  }
+    const isVehicleUnavailableInput = input.status === "unavailable" || input.status === "blocked";
+    let calculatedVehicleStatus = input.status ?? "available";
 
-  refresh("/");
-  refresh();
-  return { ok: true as const, id: vehicleId };
+    if (input.physicalUnits && input.physicalUnits.length > 0) {
+      const allUnitsUnavailable = input.physicalUnits.every(
+        (u) => u.status === "unavailable" || u.status === "blocked"
+      );
+      if (allUnitsUnavailable || isVehicleUnavailableInput) {
+        calculatedVehicleStatus = isVehicleUnavailableInput ? input.status! : "unavailable";
+      } else if (input.physicalUnits.some((u) => u.status === "available")) {
+        calculatedVehicleStatus = "available";
+      }
+    }
+
+    const fields = {
+      name: input.name,
+      brand: input.brand,
+      model: input.model,
+      year: input.year ?? null,
+      category_id: input.categoryId ?? null,
+      branch_id: input.branchId ?? null,
+      registration_no: primaryRegNo,
+      cc: input.cc ?? null,
+      fuel_type: input.fuelType ?? "Petrol",
+      transmission: input.transmission ?? "Manual",
+      seats: input.seats ?? 2,
+      mileage: input.mileage ?? null,
+      included_km: input.includedKm ?? 100,
+      extra_km_rate: input.extraKmRate ?? 5,
+      rate_12h: input.rate12h ?? 0,
+      rate_24h: input.rate24h ?? 0,
+      hourly_rate: input.hourlyRate ?? 0,
+      deposit: input.deposit ?? 0,
+      late_fee_per_hour: input.lateFeePerHour ?? 0,
+      total_units: units,
+      description: input.description ?? null,
+      terms: input.terms ?? null,
+      status: calculatedVehicleStatus,
+      active: activeVal,
+    };
+
+    let vehicleId = input.id;
+
+    if (vehicleId) {
+      const updated = await sbUpdate("vehicles", `id=eq.${vehicleId}`, { ...fields, updated_at: nowIso() });
+      if (!updated.ok) return fail(updated, "Saving the vehicle");
+      if (updated.data.length === 0) return { ok: false as const, error: `Vehicle ${vehicleId} no longer exists.` };
+      await logActivity(user.id, "vehicle_updated", "vehicle", vehicleId, { name: input.name });
+    } else {
+      const slug = `${slugify(input.name)}-${randomUUID().slice(0, 6)}`;
+      const inserted = await sbInsert<{ id: number }>("vehicles", { slug, ...fields });
+      if (!inserted.ok) return fail(inserted, "Creating the vehicle");
+      vehicleId = Number(inserted.data.id);
+      await logActivity(user.id, "vehicle_created", "vehicle", vehicleId, { name: input.name });
+    }
+
+    if (input.photoUrl) {
+      const photo = await sbInsert("vehicle_photos", { vehicle_id: vehicleId, url: input.photoUrl, is_primary: 1 });
+      if (!photo.ok) return fail(photo, "Saving the vehicle photo");
+    }
+
+    // Physical units synchronization & branch segregation
+    try {
+      const existingUnitsRes = await sbSelect<{ id: number; unit_identifier: string; registration_no: string | null; current_branch_id: number | null; status: string }>(
+        "vehicle_units",
+        `select=id,unit_identifier,registration_no,current_branch_id,status&vehicle_id=eq.${vehicleId}&active=eq.1&order=id.asc`
+      );
+
+      const existingUnits = existingUnitsRes.ok ? existingUnitsRes.data : [];
+      const prefix = UPPER_SLUG(input.name);
+
+      if (input.physicalUnits && input.physicalUnits.length > 0) {
+        // Save units from the explicit physical units list
+        for (let i = 0; i < units; i++) {
+          const uInput = input.physicalUnits[i];
+          const unitIdent = uInput?.unit_identifier?.trim() || `${prefix}-${String(i + 1).padStart(3, "0")}`;
+          const regNo = uInput?.registration_no?.trim() || (i === 0 ? input.registrationNo ?? null : null);
+          const branch = uInput?.current_branch_id ?? input.branchId ?? null;
+          const status = isVehicleUnavailableInput
+            ? input.status!
+            : (uInput?.status || "available");
+
+          if (i < existingUnits.length) {
+            const existing = existingUnits[i];
+            const branchChanged = existing.current_branch_id !== branch;
+
+            await sbUpdate("vehicle_units", `id=eq.${existing.id}`, {
+              unit_identifier: unitIdent,
+              registration_no: regNo,
+              current_branch_id: branch,
+              status,
+              updated_at: nowIso(),
+            });
+
+            if (branchChanged) {
+              await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${existing.id}&ends_at=is.null`, { ends_at: nowIso() });
+              if (branch) {
+                await sbInsert("branch_allocations", {
+                  vehicle_unit_id: existing.id,
+                  branch_id: branch,
+                  starts_at: nowIso(),
+                  ends_at: null,
+                  notes: "Updated unit branch allocation",
+                });
+              }
+            }
+          } else {
+            const newUnit = await sbInsert<{ id: number }>("vehicle_units", {
+              vehicle_id: vehicleId,
+              unit_identifier: unitIdent,
+              registration_no: regNo,
+              status,
+              current_branch_id: branch,
+              active: 1,
+            });
+
+            if (newUnit.ok && newUnit.data && branch) {
+              await sbInsert("branch_allocations", {
+                vehicle_unit_id: Number(newUnit.data.id),
+                branch_id: branch,
+                starts_at: nowIso(),
+                ends_at: null,
+                notes: "Initial unit creation allocation",
+              });
+            }
+          }
+        }
+
+        // Deactivate excess units if totalUnits decreased
+        if (existingUnits.length > units) {
+          for (let i = units; i < existingUnits.length; i++) {
+            const excess = existingUnits[i];
+            await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${excess.id}&ends_at=is.null`, { ends_at: nowIso() });
+            await sbUpdate("vehicle_units", `id=eq.${excess.id}`, { active: 0, updated_at: nowIso() });
+          }
+        }
+      } else {
+        // Fallback: sync existing unit statuses if overall vehicle status changed
+        if (existingUnits.length > 0 && isVehicleUnavailableInput) {
+          await sbUpdate("vehicle_units", `vehicle_id=eq.${vehicleId}&active=eq.1`, {
+            status: input.status,
+            updated_at: nowIso(),
+          });
+        } else if (existingUnits.length > 0 && input.status === "available") {
+          await sbUpdate("vehicle_units", `vehicle_id=eq.${vehicleId}&active=eq.1&status=eq.unavailable`, {
+            status: "available",
+            updated_at: nowIso(),
+          });
+        }
+
+        if (existingUnits.length < units) {
+          for (let i = existingUnits.length + 1; i <= units; i++) {
+            const unitIdent = `${prefix}-${String(i).padStart(3, "0")}`;
+            const newUnit = await sbInsert<{ id: number }>("vehicle_units", {
+              vehicle_id: vehicleId,
+              unit_identifier: unitIdent,
+              registration_no: i === 1 ? input.registrationNo ?? null : null,
+              status: input.status ?? "available",
+              current_branch_id: input.branchId ?? null,
+              active: 1,
+            });
+
+            if (newUnit.ok && newUnit.data && input.branchId) {
+              await sbInsert("branch_allocations", {
+                vehicle_unit_id: Number(newUnit.data.id),
+                branch_id: input.branchId,
+                starts_at: nowIso(),
+                ends_at: null,
+                notes: "Initial creation allocation",
+              });
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-critical if vehicle_units table is not yet migrated
+    }
+
+    await invalidateContentCaches();
+    revalidatePath("/dashboard/vehicles");
+    revalidatePath(`/dashboard/vehicles/${vehicleId}`);
+    revalidatePath("/dashboard/allocations");
+    revalidatePath("/dashboard/bookings");
+    revalidatePath("/dashboard");
+    revalidatePath("/vehicles");
+    revalidatePath("/");
+    return { ok: true as const, id: vehicleId };
+  });
 }
 
-export async function deleteVehicle(id: number) {
+function UPPER_SLUG(name: string): string {
+  const clean = name.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  return clean.slice(0, 6) || "UNIT";
+}
+
+export async function deleteVehicle(id: number, idempotencyKey?: string) {
+  return withIdempotency(idempotencyKey, "delete_vehicle", { id }, async () => {
+    const user = await staffUser();
+    assertCan(user, "admin");
+
+    // Soft-delete vehicle: mark active = 0 and status = 'archived'
+    // Preserves booking history, invoices, inspection history, and relationships
+    const vehicle = await sbUpdate("vehicles", `id=eq.${id}`, {
+      active: 0,
+      status: "archived",
+      updated_at: nowIso(),
+    });
+    if (!vehicle.ok) return fail(vehicle, "Archiving the vehicle");
+
+    // Also deactivate associated physical units
+    try {
+      await sbUpdate("vehicle_units", `vehicle_id=eq.${id}`, {
+        active: 0,
+        status: "inactive",
+        updated_at: nowIso(),
+      });
+      // Clear any pending unlinked reservation blocks for this vehicle
+      await sbDelete("availability_blocks", `vehicle_id=eq.${id}&booking_id=is.null`);
+    } catch {
+      // Best-effort if table not present
+    }
+
+    await logActivity(user.id, "vehicle_deleted", "vehicle", id);
+    await invalidateContentCaches();
+    revalidatePath("/dashboard/vehicles");
+    revalidatePath("/dashboard/vehicles/[id]", "page");
+    revalidatePath("/dashboard/allocations");
+    revalidatePath("/dashboard/problem-tickets");
+    revalidatePath("/dashboard", "layout");
+    revalidatePath("/");
+    return { ok: true as const };
+  });
+}
+
+export async function bulkUpdateUnitStatus(
+  unitIds: number[],
+  status: "available" | "unavailable" | "blocked",
+  reason?: string
+) {
   const user = await staffUser();
-  assertCan(user, "admin");
+  assertCan(user, "staff");
 
-  const photos = await sbDelete("vehicle_photos", `vehicle_id=eq.${id}`);
-  if (!photos.ok) return fail(photos, "Deleting the vehicle photos");
+  if (!unitIds || unitIds.length === 0) {
+    return { ok: false as const, error: "Please select at least one vehicle unit." };
+  }
 
-  const vehicle = await sbDelete("vehicles", `id=eq.${id}`);
-  if (!vehicle.ok) return fail(vehicle, "Deleting the vehicle");
+  const effDate = nowIso();
+  const idPredicate = `in.(${unitIds.join(",")})`;
 
-  await logActivity(user.id, "vehicle_deleted", "vehicle", id);
-  refresh("/");
-  refresh();
-  return { ok: true as const };
+  // 1. Update only the selected physical vehicle units
+  const updateRes = await sbUpdate(
+    "vehicle_units",
+    `id=${encodeURIComponent(idPredicate)}`,
+    {
+      status,
+      notes: reason ? reason.trim() : null,
+      updated_at: effDate,
+    }
+  );
+
+  if (!updateRes.ok) {
+    return fail(updateRes, "Updating unit status");
+  }
+
+  // 2. Fetch affected vehicle_ids so we can sync parent vehicle status
+  const unitsRes = await sbSelect<{ id: number; vehicle_id: number; status: string }>(
+    "vehicle_units",
+    `select=id,vehicle_id,status&id=${encodeURIComponent(idPredicate)}`
+  );
+
+  if (unitsRes.ok && unitsRes.data) {
+    const parentVehicleIds = Array.from(new Set(unitsRes.data.map((u) => Number(u.vehicle_id))));
+
+    for (const vId of parentVehicleIds) {
+      const allUnitsRes = await sbSelect<{ id: number; status: string }>(
+        "vehicle_units",
+        `select=id,status&vehicle_id=eq.${vId}&active=eq.1`
+      );
+
+      if (allUnitsRes.ok && allUnitsRes.data) {
+        const allUnits = allUnitsRes.data;
+        const anyAvailable = allUnits.some((u) => u.status === "available");
+        const newVehicleStatus = anyAvailable ? "available" : "unavailable";
+
+        await sbUpdate("vehicles", `id=eq.${vId}`, {
+          status: newVehicleStatus,
+          updated_at: effDate,
+        });
+      }
+    }
+  }
+
+  await logActivity(user.id, "bulk_units_status_updated", "vehicle_units", unitIds[0], {
+    count: unitIds.length,
+    unitIds,
+    status,
+    reason,
+  });
+
+  await invalidateContentCaches();
+  revalidatePath("/dashboard/vehicles");
+  revalidatePath("/dashboard/allocations");
+  revalidatePath("/dashboard/bookings");
+  revalidatePath("/dashboard");
+  revalidatePath("/vehicles");
+  revalidatePath("/");
+
+  return { ok: true as const, count: unitIds.length };
+}
+
+export async function bulkUpdateVehicleStatus(
+  vehicleIds: number[],
+  status: "available" | "unavailable" | "blocked"
+) {
+  const user = await staffUser();
+  assertCan(user, "staff");
+
+  if (!vehicleIds || vehicleIds.length === 0) {
+    return { ok: false as const, error: "Please select at least one vehicle." };
+  }
+
+  const effDate = nowIso();
+  const idPredicate = `in.(${vehicleIds.join(",")})`;
+
+  // Update vehicles table
+  const updateRes = await sbUpdate(
+    "vehicles",
+    `id=${encodeURIComponent(idPredicate)}`,
+    {
+      status,
+      updated_at: effDate,
+    }
+  );
+
+  if (!updateRes.ok) {
+    return fail(updateRes, "Updating vehicles status");
+  }
+
+  // Also update physical units for these vehicles
+  await sbUpdate(
+    "vehicle_units",
+    `vehicle_id=${encodeURIComponent(idPredicate)}&active=eq.1`,
+    {
+      status,
+      updated_at: effDate,
+    }
+  );
+
+  await logActivity(user.id, "bulk_vehicles_status_updated", "vehicles", vehicleIds[0], {
+    count: vehicleIds.length,
+    vehicleIds,
+    status,
+  });
+
+  await invalidateContentCaches();
+  revalidatePath("/dashboard/vehicles");
+  revalidatePath("/dashboard/allocations");
+  revalidatePath("/dashboard/bookings");
+  revalidatePath("/dashboard");
+  revalidatePath("/vehicles");
+  revalidatePath("/");
+
+  return { ok: true as const, count: vehicleIds.length };
+}
+
+export async function transferVehicleUnit(input: {
+  unitId: number;
+  toBranchId: number;
+  effectiveDate: string;
+  reason?: string;
+  idempotencyKey?: string;
+}) {
+  return withIdempotency(input.idempotencyKey, "transfer_vehicle_unit", input, async () => {
+    const user = await staffUser();
+    assertCan(user, "staff");
+
+    const unitRes = await sbSelectOne<{ id: number; vehicle_id: number; current_branch_id: number | null; unit_identifier: string }>(
+      "vehicle_units",
+      `select=id,vehicle_id,current_branch_id,unit_identifier&id=eq.${input.unitId}&active=eq.1`
+    );
+    if (!unitRes.ok || !unitRes.data) {
+      return { ok: false as const, error: "Vehicle unit not found." };
+    }
+    const unit = unitRes.data;
+
+    const branchRes = await sbSelectOne<{ id: number; name: string; blocked: number }>(
+      "branches",
+      `select=id,name,blocked&id=eq.${input.toBranchId}&active=eq.1`
+    );
+    if (!branchRes.ok || !branchRes.data) {
+      return { ok: false as const, error: "Target branch not found." };
+    }
+
+    const effDate = new Date(input.effectiveDate).toISOString();
+
+    // Close previous open allocation
+    await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${unit.id}&ends_at=is.null`, { ends_at: effDate });
+
+    // Insert new allocation
+    const newAlloc = await sbInsert("branch_allocations", {
+      vehicle_unit_id: unit.id,
+      branch_id: input.toBranchId,
+      starts_at: effDate,
+      ends_at: null,
+      notes: input.reason || "Branch transfer",
+    });
+    if (!newAlloc.ok) return fail(newAlloc, "Creating branch allocation");
+
+    // Update current branch on unit
+    await sbUpdate("vehicle_units", `id=eq.${unit.id}`, {
+      current_branch_id: input.toBranchId,
+      updated_at: nowIso(),
+    });
+
+    // Write audit record
+    await sbInsert("branch_transfers", {
+      vehicle_unit_id: unit.id,
+      from_branch_id: unit.current_branch_id,
+      to_branch_id: input.toBranchId,
+      effective_date: effDate,
+      reason: input.reason || null,
+      performed_by: user.id,
+    });
+
+    await logActivity(user.id, "unit_transferred", "vehicle_unit", unit.id, {
+      unit_identifier: unit.unit_identifier,
+      to_branch: branchRes.data.name,
+    });
+
+    await invalidateContentCaches();
+    refresh("/dashboard/allocations");
+    refresh("/dashboard/vehicles");
+    return { ok: true as const };
+  });
+}
+
+export async function updateVehicleFleetAllocations(input: {
+  vehicleId: number;
+  branchAllocations: Array<{ branchId: number; quantity: number }>;
+  effectiveDate?: string;
+  reason?: string;
+  idempotencyKey?: string;
+}) {
+  return withIdempotency(input.idempotencyKey, "update_vehicle_fleet_allocations", input, async () => {
+    const user = await staffUser();
+    assertCan(user, "staff");
+
+    const vehicleRes = await sbSelectOne<{ id: number; name: string; total_units: number }>(
+      "vehicles",
+      `select=id,name,total_units&id=eq.${input.vehicleId}&active=eq.1`
+    );
+    if (!vehicleRes.ok || !vehicleRes.data) {
+      return { ok: false as const, error: "Vehicle not found." };
+    }
+    const vehicle = vehicleRes.data;
+    const totalUnits = Number(vehicle.total_units) || 1;
+
+    // Validate quantities
+    const sumAllocated = input.branchAllocations.reduce((sum, a) => sum + Math.max(0, Number(a.quantity) || 0), 0);
+    if (sumAllocated > totalUnits) {
+      return {
+        ok: false as const,
+        error: `Total allocated units (${sumAllocated}) cannot exceed vehicle total fleet units (${totalUnits}).`,
+      };
+    }
+
+    const effDate = input.effectiveDate ? new Date(input.effectiveDate).toISOString() : nowIso();
+
+    // Fetch existing active units for this vehicle
+    const unitsRes = await sbSelect<{ id: number; unit_identifier: string; current_branch_id: number | null }>(
+      "vehicle_units",
+      `select=id,unit_identifier,current_branch_id&vehicle_id=eq.${input.vehicleId}&active=eq.1&order=id.asc`
+    );
+    const units = unitsRes.ok ? unitsRes.data : [];
+
+    let unitIdx = 0;
+    for (const alloc of input.branchAllocations) {
+      const qty = Math.max(0, Number(alloc.quantity) || 0);
+      for (let q = 0; q < qty && unitIdx < units.length; q++, unitIdx++) {
+        const u = units[unitIdx];
+        if (u.current_branch_id !== alloc.branchId) {
+          // Close previous open allocation
+          await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${u.id}&ends_at=is.null`, { ends_at: effDate });
+          // Insert new allocation
+          await sbInsert("branch_allocations", {
+            vehicle_unit_id: u.id,
+            branch_id: alloc.branchId,
+            starts_at: effDate,
+            ends_at: null,
+            notes: input.reason || "Fleet re-allocation update",
+          });
+          // Update unit
+          await sbUpdate("vehicle_units", `id=eq.${u.id}`, { current_branch_id: alloc.branchId, updated_at: nowIso() });
+          // Audit
+          await sbInsert("branch_transfers", {
+            vehicle_unit_id: u.id,
+            from_branch_id: u.current_branch_id,
+            to_branch_id: alloc.branchId,
+            effective_date: effDate,
+            reason: input.reason || "Bulk fleet re-allocation",
+            performed_by: user.id,
+          });
+        }
+      }
+    }
+
+    // Remaining units become unallocated (null branch)
+    while (unitIdx < units.length) {
+      const u = units[unitIdx++];
+      if (u.current_branch_id !== null) {
+        await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${u.id}&ends_at=is.null`, { ends_at: effDate });
+        await sbUpdate("vehicle_units", `id=eq.${u.id}`, { current_branch_id: null, updated_at: nowIso() });
+        await sbInsert("branch_transfers", {
+          vehicle_unit_id: u.id,
+          from_branch_id: u.current_branch_id,
+          to_branch_id: null,
+          effective_date: effDate,
+          reason: input.reason || "Unallocated fleet inventory",
+          performed_by: user.id,
+        });
+      }
+    }
+
+    await logActivity(user.id, "fleet_reallocated", "vehicle", vehicle.id, {
+      vehicle_name: vehicle.name,
+      allocations: input.branchAllocations,
+    });
+
+    await invalidateContentCaches();
+    refresh("/dashboard/allocations");
+    refresh("/dashboard/vehicles");
+    refresh("/");
+    return { ok: true as const };
+  });
+}
+
+export async function updateVehicleUnitDetails(input: {
+  unitId: number;
+  registrationNo?: string;
+  status?: string;
+  branchId?: number | null;
+  effectiveDate?: string;
+  notes?: string;
+  idempotencyKey?: string;
+}) {
+  return withIdempotency(input.idempotencyKey, "update_vehicle_unit_details", input, async () => {
+    const user = await staffUser();
+    assertCan(user, "staff");
+
+    const unitRes = await sbSelectOne<{ id: number; vehicle_id: number; current_branch_id: number | null; unit_identifier: string }>(
+      "vehicle_units",
+      `select=id,vehicle_id,current_branch_id,unit_identifier&id=eq.${input.unitId}&active=eq.1`
+    );
+    if (!unitRes.ok || !unitRes.data) {
+      return { ok: false as const, error: "Vehicle unit not found." };
+    }
+    const unit = unitRes.data;
+
+    const effDate = input.effectiveDate ? new Date(input.effectiveDate).toISOString() : nowIso();
+
+    // If branch changed
+    if (input.branchId !== undefined && input.branchId !== unit.current_branch_id) {
+      // Close previous allocation
+      await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${unit.id}&ends_at=is.null`, { ends_at: effDate });
+      if (input.branchId !== null) {
+        await sbInsert("branch_allocations", {
+          vehicle_unit_id: unit.id,
+          branch_id: input.branchId,
+          starts_at: effDate,
+          ends_at: null,
+          notes: input.notes || "Unit branch assignment edit",
+        });
+      }
+      await sbInsert("branch_transfers", {
+        vehicle_unit_id: unit.id,
+        from_branch_id: unit.current_branch_id,
+        to_branch_id: input.branchId,
+        effective_date: effDate,
+        reason: input.notes || "Unit edit",
+        performed_by: user.id,
+      });
+    }
+
+    const updates: Record<string, unknown> = {
+      updated_at: nowIso(),
+    };
+    if (input.registrationNo !== undefined) updates.registration_no = input.registrationNo.trim().toUpperCase() || null;
+    if (input.status !== undefined) updates.status = input.status;
+    if (input.branchId !== undefined) updates.current_branch_id = input.branchId;
+
+    const res = await sbUpdate("vehicle_units", `id=eq.${unit.id}`, updates);
+    if (!res.ok) return fail(res, "Updating vehicle unit");
+
+    // Sync parent vehicle status based on remaining available units
+    const allUnitsRes = await sbSelect<{ id: number; status: string }>(
+      "vehicle_units",
+      `select=id,status&vehicle_id=eq.${unit.vehicle_id}&active=eq.1`
+    );
+    if (allUnitsRes.ok && allUnitsRes.data) {
+      const anyAvailable = allUnitsRes.data.some((u) => u.status === "available");
+      const parentVehicleStatus = anyAvailable ? "available" : "unavailable";
+      await sbUpdate("vehicles", `id=eq.${unit.vehicle_id}`, {
+        status: parentVehicleStatus,
+        updated_at: effDate,
+      });
+    }
+
+    await logActivity(user.id, "unit_updated", "vehicle_unit", unit.id, updates);
+    await invalidateContentCaches();
+    revalidatePath("/dashboard/allocations");
+    revalidatePath("/dashboard/vehicles");
+    revalidatePath(`/dashboard/vehicles/${unit.vehicle_id}`);
+    revalidatePath("/dashboard/bookings");
+    revalidatePath("/dashboard");
+    revalidatePath("/vehicles");
+    revalidatePath("/");
+    return { ok: true as const };
+  });
 }
 
 export async function addVehiclePhoto(vehicleId: number, url: string, isPrimary = false) {
   const user = await staffUser();
-  assertCan(user, "manager");
+  assertCan(user, "staff");
 
   if (isPrimary) {
     const cleared = await sbUpdate("vehicle_photos", `vehicle_id=eq.${vehicleId}`, { is_primary: 0 });
@@ -372,16 +965,78 @@ export async function setBranchBlocked(branchId: number, blocked: boolean, reaso
   const user = await staffUser();
   assertCan(user, "admin");
 
+  const effDate = nowIso();
+
+  // 1. Update the branch blocked flag
   const res = await sbUpdate("branches", `id=eq.${branchId}`, {
     blocked: blocked ? 1 : 0,
-    blocked_at: blocked ? nowIso() : null,
+    blocked_at: blocked ? effDate : null,
     blocked_by: blocked ? user.id : null,
     blocked_reason: blocked ? (reason?.trim() || null) : null,
   });
   if (!res.ok) return fail(res, blocked ? "Blocking the branch" : "Unblocking the branch");
 
+  // 2. Fetch all active units allocated to this branch
+  const unitsRes = await sbSelect<{ id: number; vehicle_id: number; status: string }>(
+    "vehicle_units",
+    `select=id,vehicle_id,status&current_branch_id=eq.${branchId}&active=eq.1`
+  );
+
+  if (unitsRes.ok && unitsRes.data && unitsRes.data.length > 0) {
+    const parentVehicleIds = Array.from(new Set(unitsRes.data.map((u) => Number(u.vehicle_id))));
+
+    if (blocked) {
+      // Mark all available units at this branch as 'blocked'
+      await sbUpdate(
+        "vehicle_units",
+        `current_branch_id=eq.${branchId}&active=eq.1&status=eq.available`,
+        {
+          status: "blocked",
+          notes: reason ? `Branch blocked: ${reason.trim()}` : "Branch temporarily blocked by admin",
+          updated_at: effDate,
+        }
+      );
+    } else {
+      // Restore previously blocked units at this branch back to 'available'
+      await sbUpdate(
+        "vehicle_units",
+        `current_branch_id=eq.${branchId}&active=eq.1&status=eq.blocked`,
+        {
+          status: "available",
+          notes: "Branch unblocked by admin",
+          updated_at: effDate,
+        }
+      );
+    }
+
+    // Sync parent vehicles: if all units of a vehicle are unavailable/blocked, mark vehicle as unavailable
+    for (const vId of parentVehicleIds) {
+      const allUnitsRes = await sbSelect<{ id: number; status: string }>(
+        "vehicle_units",
+        `select=id,status&vehicle_id=eq.${vId}&active=eq.1`
+      );
+
+      if (allUnitsRes.ok && allUnitsRes.data) {
+        const anyAvailable = allUnitsRes.data.some((u) => u.status === "available");
+        const newVehicleStatus = anyAvailable ? "available" : "unavailable";
+
+        await sbUpdate("vehicles", `id=eq.${vId}`, {
+          status: newVehicleStatus,
+          updated_at: effDate,
+        });
+      }
+    }
+  }
+
   await logActivity(user.id, blocked ? "branch_blocked" : "branch_unblocked", "branch", branchId, { reason: reason ?? null });
-  refresh();
+  await invalidateContentCaches();
+  revalidatePath("/dashboard/vehicles");
+  revalidatePath("/dashboard/allocations");
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/bookings");
+  revalidatePath("/dashboard");
+  revalidatePath("/vehicles");
+  revalidatePath("/");
   return { ok: true as const };
 }
 
@@ -590,10 +1245,51 @@ export async function recordInspection(input: {
   const inspectionId = Number(inspection.data.id);
 
   if (input.photos.length > 0) {
-    const photos = await sbInsert(
-      "inspection_photos",
-      input.photos.map((p) => ({ inspection_id: inspectionId, side: p.side, url: p.url, notes: p.notes ?? null }))
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { getWritableUploadsDir } = await import("./uploads-dir");
+    const { supabaseAdmin } = await import("./supabase");
+
+    const processedPhotos = await Promise.all(
+      input.photos.map(async (p) => {
+        let finalUrl = p.url;
+        if (p.url && typeof p.url === "string" && p.url.startsWith("data:image/")) {
+          try {
+            const match = p.url.match(/^data:image\/([a-z0-9+]+);base64,(.+)$/i);
+            if (match && match[2]) {
+              const ext = match[1] === "jpeg" ? "jpg" : match[1];
+              const buf = Buffer.from(match[2], "base64");
+              const dateStr = new Date().toISOString().slice(0, 7);
+              const fileName = `inspection_${p.side}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+              const targetSubfolder = `inspections/${dateStr}`;
+              const baseUploadDir = getWritableUploadsDir();
+              const localTargetDir = path.join(baseUploadDir, targetSubfolder);
+              fs.mkdirSync(localTargetDir, { recursive: true });
+              fs.writeFileSync(path.join(localTargetDir, fileName), buf);
+
+              finalUrl = `/api/files/${targetSubfolder}/${fileName}`;
+
+              if (supabaseAdmin) {
+                try {
+                  const { data: uploadData } = await supabaseAdmin.storage
+                    .from("vehicle-photos")
+                    .upload(`${targetSubfolder}/${fileName}`, buf, { contentType: `image/${match[1]}`, upsert: true });
+                  if (uploadData) {
+                    const { data: pubUrl } = supabaseAdmin.storage.from("vehicle-photos").getPublicUrl(`${targetSubfolder}/${fileName}`);
+                    if (pubUrl?.publicUrl) finalUrl = pubUrl.publicUrl;
+                  }
+                } catch {}
+              }
+            }
+          } catch (e) {
+            console.error("Base64 photo persist error:", e);
+          }
+        }
+        return { inspection_id: inspectionId, side: p.side, url: finalUrl, notes: p.notes ?? null };
+      })
     );
+
+    const photos = await sbInsert("inspection_photos", processedPhotos);
     if (!photos.ok) return fail(photos, "Saving the inspection photos");
   }
 
@@ -1037,6 +1733,7 @@ export async function saveUser(input: {
   phone?: string;
   role: string;
   branch?: string;
+  permissions?: string[];
   password?: string;
   active?: boolean;
 }) {
@@ -1061,6 +1758,9 @@ export async function saveUser(input: {
     branch: input.branch ?? null,
     is_active: isActive,
   };
+  if (input.permissions) {
+    fields.permissions = JSON.stringify(input.permissions);
+  }
   if (input.password) fields.password_hash = hashPassword(input.password);
 
   if (targetId) {
@@ -1302,3 +2002,58 @@ export async function revertDocumentDecision(documentId: number) {
   refresh();
   return { ok: true as const };
 }
+
+export async function uploadSignedHandoverDocument(input: {
+  bookingId: number;
+  filePath: string;
+  docType?: "handover" | "return";
+  notes?: string;
+}) {
+  const staff = await staffUser();
+
+  const bookingRes = await sbSelectOne<{ customer_id: number; booking_no: string }>(
+    "bookings",
+    `select=customer_id,booking_no&id=eq.${input.bookingId}`
+  );
+  if (!bookingRes.ok || !bookingRes.data) {
+    return { ok: false as const, error: `Booking ${input.bookingId} not found.` };
+  }
+
+  const customerId = bookingRes.data.customer_id;
+  const isReturn = input.docType === "return";
+  const docPrefix = isReturn ? "SIGNED-RETURN" : "SIGNED-HANDOVER";
+  const actionName = isReturn ? "signed_return_uploaded" : "signed_handover_uploaded";
+  const defaultNote = isReturn
+    ? "Uploaded physically signed return & final settlement agreement scan/PDF"
+    : "Uploaded physically signed handover document scan/PDF";
+
+  const docRes = await sbInsert<{ id: number }>("customer_documents", {
+    customer_id: customerId,
+    booking_id: input.bookingId,
+    kind: "other",
+    number: `${docPrefix}-${bookingRes.data.booking_no}`,
+    file_path: input.filePath,
+    verified: 1,
+    verified_by: staff.id,
+  });
+
+  if (!docRes.ok) return fail(docRes, `Saving signed ${isReturn ? "return" : "handover"} document`);
+
+  const history = await sbInsert("booking_history", {
+    booking_id: input.bookingId,
+    user_id: staff.id,
+    action: actionName,
+    detail: JSON.stringify({
+      staff_name: staff.name,
+      file_path: input.filePath,
+      doc_type: isReturn ? "return" : "handover",
+      notes: input.notes ?? defaultNote,
+    }),
+  });
+  if (!history.ok) return fail(history, "Recording booking history");
+
+  await logActivity(staff.id, actionName, "booking", input.bookingId);
+  refresh();
+  return { ok: true as const, documentId: docRes.data?.id };
+}
+

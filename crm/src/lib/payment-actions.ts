@@ -215,6 +215,7 @@ export async function verifyBookingPayment(input: {
     paid_at: nowISO(),
     notes: `Razorpay payment ID: ${input.razorpayPaymentId}`,
     receipt_no: receiptNo,
+    gateway_ref: input.razorpayPaymentId,
     razorpay_order_id: input.razorpayOrderId,
     razorpay_payment_id: input.razorpayPaymentId,
     razorpay_signature: input.razorpaySignature,

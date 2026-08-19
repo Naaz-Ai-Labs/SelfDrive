@@ -31,7 +31,7 @@ export default async function ProblemTicketsPage({ searchParams }: { searchParam
       `select=*,bookings(booking_no),customers(name)${statusFilter}&order=created_at.desc`
     ),
     getStaff(),
-    getVehicles({}, false),
+    getVehicles({}, true),
   ]);
   if (!ticketsRes.ok) throw new Error(`Could not load problem tickets: ${ticketsRes.error}`);
 

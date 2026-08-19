@@ -11,9 +11,7 @@ const nextConfig = {
   // better-sqlite3 / node:sqlite were removed with the SQLite layer and are gone.
   serverExternalPackages: ["bcryptjs", "pdfkit"],
   outputFileTracingRoot: path.join(__dirname, ".."),
-  turbopack: {
-    root: __dirname,
-  },
+
   images: {
     remotePatterns: [{ protocol: "https", hostname: "**" }],
   },

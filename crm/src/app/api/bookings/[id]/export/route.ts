@@ -87,21 +87,27 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   const { id } = await params;
-  const bookingId = Number(id);
-  if (!Number.isInteger(bookingId) || bookingId <= 0) {
+  const rawRef = String(id).trim();
+  if (!rawRef) {
     return NextResponse.json({ error: "Invalid booking reference." }, { status: 400 });
   }
 
   // The booking is the document. If it cannot be read, fail rather than emit a
   // pack that looks complete but describes nothing.
+  // Support both numeric id and booking_no (e.g. 1786539630 or BK-1786539630)
+  const filter = /^\d+$/.test(rawRef)
+    ? `or=(id.eq.${rawRef},booking_no.eq.${rawRef},booking_no.eq.BK-${rawRef})`
+    : `or=(booking_no.eq.${encodeURIComponent(rawRef)},booking_no.eq.${encodeURIComponent(rawRef.replace(/^BK-/i, ""))})`;
+
   const bookingRes = await sbSelectOne<Row>(
     "bookings",
-    `select=*,customers(name,phone,email,address,city),vehicles(name,registration_no,brand,model)&id=eq.${bookingId}`
+    `select=*,customers(name,phone,email,address,city),vehicles(name,registration_no,brand,model)&${filter}`
   );
   if (!bookingRes.ok) return NextResponse.json({ error: "Could not read the booking." }, { status: 502 });
   if (!bookingRes.data) return NextResponse.json({ error: "Booking not found." }, { status: 404 });
 
   const booking = bookingRes.data;
+  const bookingId = Number(booking.id);
   const customerId = num(booking.customer_id);
 
   const [paymentsRes, refundsRes, docsRes, historyRes, inspectionsRes, business] = await Promise.all([

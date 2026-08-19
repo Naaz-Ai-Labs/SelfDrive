@@ -83,6 +83,8 @@ export function StatusBadge({ status }: { status: string }) {
     Resolved: "bg-emerald-50 text-emerald-700 ring-emerald-200",
     available: "bg-emerald-50 text-emerald-700 ring-emerald-200",
     booked: "bg-amber-50 text-amber-700 ring-amber-200",
+    unavailable: "bg-red-50 text-red-700 ring-red-200",
+    Unavailable: "bg-red-50 text-red-700 ring-red-200",
     maintenance: "bg-red-50 text-red-700 ring-red-200",
     archived: "bg-stone-100 text-stone-600 ring-stone-200",
   };

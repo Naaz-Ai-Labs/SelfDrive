@@ -9,17 +9,20 @@ import { sbSelect, sbSelectOne, num } from "@/lib/supabase-rest";
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ bookingNo: string }> }) {
   const { bookingNo } = await params;
-  if (!bookingNo) {
+  const rawRef = String(bookingNo).trim();
+  if (!rawRef) {
     return NextResponse.json({ ok: false, error: "Missing booking number." }, { status: 400 });
   }
 
-  // Match ONLY on booking_no. This previously also matched the numeric primary key,
-  // so /track/1, /track/2, /track/3 … walked the entire booking table in order and
-  // this route has no authentication — the booking number was never a barrier.
+  // Support matching booking_no verbatim or with/without BK- prefix or ID
+  const filter = /^\d+$/.test(rawRef)
+    ? `or=(booking_no.eq.${rawRef},booking_no.eq.BK-${rawRef},id.eq.${rawRef})`
+    : `or=(booking_no.eq.${encodeURIComponent(rawRef)},booking_no.eq.${encodeURIComponent(rawRef.replace(/^BK-/i, ""))})`;
+
   const bookingRes = await sbSelectOne<Record<string, any>>(
     "bookings",
     `select=*,customers(name,phone,email),vehicles(name,registration_no,brand,model),invoices(invoice_no,created_at)` +
-      `&booking_no=eq.${encodeURIComponent(bookingNo)}`
+      `&${filter}`
   );
   if (!bookingRes.ok) return NextResponse.json({ ok: false, error: bookingRes.error }, { status: 502 });
 

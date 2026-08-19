@@ -99,3 +99,21 @@ export async function cacheInvalidate(key: string): Promise<void> {
 
   memoryCache.delete(key);
 }
+
+/**
+ * Invalidates every cache entry whose key starts with `prefix`.
+ */
+export async function cacheInvalidatePrefix(prefix: string): Promise<void> {
+  const redis = await getRedis();
+
+  if (redis) {
+    try {
+      const keys = await redis.keys(`${prefix}*`);
+      if (Array.isArray(keys) && keys.length) await redis.del(...keys);
+    } catch {}
+  }
+
+  for (const key of Array.from(memoryCache.keys())) {
+    if (key.startsWith(prefix)) memoryCache.delete(key);
+  }
+}

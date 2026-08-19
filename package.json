@@ -7,14 +7,24 @@
     "web"
   ],
   "scripts": {
-    "build": "npm run build --prefix crm",
+    "dev": "concurrently -k --names \"CRM,WEB\" -c \"blue.bold,magenta.bold\" \"npm run dev:crm\" \"npm run dev:web\"",
+    "dev:crm": "npm run dev --prefix crm",
+    "dev:web": "npm run dev --prefix web",
+    "build": "npm run build:crm && npm run build:web",
     "build:crm": "npm run build --prefix crm",
-    "build:web": "npm run build --prefix web"
+    "build:web": "npm run build --prefix web",
+    "test": "npm run test --prefix crm",
+    "typecheck": "npm run typecheck --prefix crm && npm run typecheck --prefix web",
+    "kill:node": "powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force\""
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "dependencies": {
     "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0"
   }
 }

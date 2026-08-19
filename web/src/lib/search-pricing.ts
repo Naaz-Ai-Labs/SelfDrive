@@ -71,8 +71,8 @@ export async function getCachedVehicleSearchPrice(
 ): Promise<SearchQuoteResult | null> {
   if (!pickupDateStr || !returnDateStr) return null;
 
-  // Bumped to v2 so quotes cached under the old (wrong) maths are not served after deploy.
-  const cacheKey = `search_quote:v2:${vehicle.id}:${pickupDateStr}:${pickupTimeStr || "08:00"}:${returnDateStr}:${returnTimeStr || "08:00"}`;
+  // Bumped to v3 to ensure Saturday weekend package quotes (Sat + Sun) are freshly calculated
+  const cacheKey = `search_quote:v3:${vehicle.id}:${pickupDateStr}:${pickupTimeStr || "08:00"}:${returnDateStr}:${returnTimeStr || "08:00"}`;
 
   try {
     const cached = await cacheGet<SearchQuoteResult>(cacheKey);

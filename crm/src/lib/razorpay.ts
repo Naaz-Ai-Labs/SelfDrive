@@ -151,4 +151,31 @@ export async function fetchRazorpayPayment(paymentId: string): Promise<
   }
 }
 
+/** Fetches all payments associated with a Razorpay order ID. */
+export async function fetchRazorpayOrderPayments(orderId: string): Promise<
+  { ok: true; payments: RazorpayPaymentDetails[] } | { ok: false; error: string }
+> {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) {
+    return { ok: false, error: "Razorpay credentials not configured." };
+  }
+
+  const cleanOrderId = orderId.trim();
+  const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+  try {
+    const res = await fetch(`https://api.razorpay.com/v1/orders/${encodeURIComponent(cleanOrderId)}/payments`, {
+      headers: { Authorization: `Basic ${auth}` },
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: data?.error?.description ?? "Failed to fetch order payments from Razorpay" };
+    }
+    const items = Array.isArray(data.items) ? (data.items as RazorpayPaymentDetails[]) : [];
+    return { ok: true, payments: items };
+  } catch {
+    return { ok: false, error: "Network error communicating with Razorpay API." };
+  }
+}
+
 

@@ -11,12 +11,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ book
   if (!customer) return NextResponse.json({ error: "Please log in first." }, { status: 401 });
 
   const { bookingNo } = await params;
+  const rawRef = String(bookingNo).trim();
+
+  const filter = /^\d+$/.test(rawRef)
+    ? `or=(id.eq.${rawRef},booking_no.eq.${rawRef},booking_no.eq.BK-${rawRef})`
+    : `or=(booking_no.eq.${encodeURIComponent(rawRef)},booking_no.eq.${encodeURIComponent(rawRef.replace(/^BK-/i, ""))})`;
 
   // The customer/vehicle columns the invoice template prints used to come from a LEFT
   // JOIN; PostgREST returns them as embeds, flattened below to keep the response shape.
   const bookingRes = await sbSelectOne<Record<string, any>>(
     "bookings",
-    `select=*,customers(name,phone,email,address),vehicles(name,registration_no)&booking_no=eq.${encodeURIComponent(bookingNo)}`
+    `select=*,customers(name,phone,email,address),vehicles(name,registration_no)&${filter}`
   );
   if (!bookingRes.ok) return NextResponse.json({ error: bookingRes.error }, { status: 502 });
   const raw = bookingRes.data;
@@ -45,7 +50,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ book
   const photo = raw.vehicle_id
     ? await sbSelectOne<{ url: string }>(
         "vehicle_photos",
-        `select=url&vehicle_id=eq.${Number(raw.vehicle_id)}&order=is_primary.desc,sort.asc`
+        `select=url&vehicle_id=eq.${Number(raw.vehicle_id)}&order=is_primary.desc,id.asc`
       )
     : null;
 

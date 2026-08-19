@@ -28,6 +28,9 @@ export type BookingReviewData = {
   vehicle_id?: number | null;
   vehicle_name?: string | null;
   registration_no?: string | null;
+  branch_id?: number | null;
+  branch_name?: string | null;
+  pickup_location?: string | null;
   pickup_at: string;
   return_at: string;
   actual_pickup_at?: string | null;
@@ -147,9 +150,12 @@ export function BookingReviewModal({
               📋
             </span>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-lg font-bold">{booking.booking_no}</h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="font-display text-lg font-bold font-mono">{booking.booking_no}</h2>
                 <StatusBadge status={booking.status} />
+                <span suppressHydrationWarning className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-brand-300">
+                  🕒 Created: {formatDateTime(booking.created_at)}
+                </span>
               </div>
               <p className="text-xs text-ink-300">
                 Customer & Booking Verification Review

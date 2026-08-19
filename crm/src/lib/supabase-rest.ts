@@ -84,14 +84,57 @@ async function request<T>(path: string, init: RequestInit, label: string): Promi
     return { ok: false, error: message };
   }
 
-  try {
-    const res = await fetch(url, { ...init, headers: headers(init.headers as Record<string, string>), cache: "no-store" });
-    return await parse<T>(res, label);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[supabase] ${label}: network failure — ${message}`);
-    return { ok: false, error: `Could not reach the database: ${message}` };
+  const maxAttempts = 3;
+  let lastError = "Could not reach the database";
+  let lastStatus: number | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...init,
+        headers: headers(init.headers as Record<string, string>),
+        cache: "no-store",
+      });
+
+      const parsed = await parse<T>(res, label);
+      if (parsed.ok) {
+        return parsed;
+      }
+
+      lastError = parsed.error;
+      lastStatus = parsed.status;
+
+      const isTransient =
+        lastError.toLowerCase().includes("jwt issued at future") ||
+        lastError.toLowerCase().includes("jwt") ||
+        lastStatus === 401 ||
+        lastStatus === 429 ||
+        (lastStatus !== undefined && lastStatus >= 500);
+
+      if (isTransient && attempt < maxAttempts) {
+        console.warn(
+          `[supabase] ${label}: transient error on attempt ${attempt}/${maxAttempts} (${lastError}). Retrying in ${attempt * 150}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, attempt * 150));
+        continue;
+      }
+
+      return parsed;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      lastError = `Could not reach the database: ${message}`;
+      console.error(
+        `[supabase] ${label}: network failure on attempt ${attempt}/${maxAttempts} — ${message}`
+      );
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 150));
+        continue;
+      }
+      return { ok: false, error: lastError };
+    }
   }
+
+  return { ok: false, error: lastError, status: lastStatus };
 }
 
 /**

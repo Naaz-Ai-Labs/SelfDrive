@@ -1,3 +1,9 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 /** Pin the image optimizer to hosts we actually serve from — `hostname: "**"` turns
  * /_next/image into an open proxy for the whole internet. */
 const supabaseHost = (() => {
@@ -11,6 +17,8 @@ const supabaseHost = (() => {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  outputFileTracingRoot: path.join(__dirname, ".."),
+
   images: {
     remotePatterns: [
       { protocol: "https", hostname: supabaseHost },
@@ -21,3 +29,4 @@ const nextConfig = {
 };
 
 export default nextConfig;
+
