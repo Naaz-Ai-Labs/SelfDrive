@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS public.vehicle_units (
   vehicle_id BIGINT NOT NULL REFERENCES public.vehicles(id) ON DELETE CASCADE,
   unit_identifier TEXT NOT NULL,
   registration_no TEXT,
-  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'unavailable', 'booked', 'maintenance', 'blocked', 'transit', 'inactive')),
+  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'unavailable', 'booked', 'maintenance', 'blocked', 'transit', 'inactive', 'archived')),
   current_branch_id BIGINT REFERENCES public.branches(id) ON DELETE SET NULL,
   active INTEGER NOT NULL DEFAULT 1,
   notes TEXT,
@@ -137,6 +137,19 @@ ALTER TABLE public.availability_blocks
 
 CREATE INDEX IF NOT EXISTS idx_availability_blocks_vehicle_unit
   ON public.availability_blocks (vehicle_unit_id);
+
+-- ---------------------------------------------------------------------------
+-- 5b. Align Status Check Constraints (allow unavailable, blocked, transit, etc.)
+-- ---------------------------------------------------------------------------
+ALTER TABLE public.vehicles DROP CONSTRAINT IF EXISTS vehicles_status_check;
+ALTER TABLE public.vehicles
+  ADD CONSTRAINT vehicles_status_check
+  CHECK (status IN ('available', 'unavailable', 'booked', 'maintenance', 'blocked', 'transit', 'inactive', 'archived'));
+
+ALTER TABLE public.vehicle_units DROP CONSTRAINT IF EXISTS vehicle_units_status_check;
+ALTER TABLE public.vehicle_units
+  ADD CONSTRAINT vehicle_units_status_check
+  CHECK (status IN ('available', 'unavailable', 'booked', 'maintenance', 'blocked', 'transit', 'inactive', 'archived'));
 
 -- ---------------------------------------------------------------------------
 -- 6. Granular Staff Permissions Column
