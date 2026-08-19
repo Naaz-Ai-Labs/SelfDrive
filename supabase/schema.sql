@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS vehicles (
   total_units INTEGER NOT NULL DEFAULT 1,
   description TEXT,
   terms TEXT,
-  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','booked','maintenance','archived')),
+  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'unavailable', 'booked', 'maintenance', 'blocked', 'transit', 'inactive', 'archived')),
   active INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -568,7 +568,7 @@ CREATE TABLE IF NOT EXISTS vehicle_units (
   vehicle_id BIGINT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
   unit_identifier TEXT NOT NULL,
   registration_no TEXT,
-  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'booked', 'maintenance', 'blocked', 'transit', 'inactive')),
+  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'unavailable', 'booked', 'maintenance', 'blocked', 'transit', 'inactive', 'archived')),
   current_branch_id BIGINT REFERENCES branches(id) ON DELETE SET NULL,
   active INTEGER NOT NULL DEFAULT 1,
   notes TEXT,

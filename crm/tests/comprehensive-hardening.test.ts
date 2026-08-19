@@ -399,15 +399,34 @@ test("category-wise preset image resolution returns correct default vehicle imag
   assert.equal(getCategoryPresetPhoto({ kind: "van", name: "Tempo Traveller" }, "tempo-deluxe"), "/vehicles/tempo-traveller.jpg");
 });
 
-test("vehicle form status tags include unavailable and exclude maintenance", () => {
-  const allowedFormStatuses = ["available", "unavailable", "booked", "archived"];
-  assert.equal(allowedFormStatuses.includes("unavailable"), true);
-  assert.equal(allowedFormStatuses.includes("maintenance"), false);
+test("vehicle form and database status check constraint compatibility", () => {
+  const allowedDbStatuses = [
+    "available",
+    "unavailable",
+    "booked",
+    "maintenance",
+    "blocked",
+    "transit",
+    "inactive",
+    "archived",
+  ];
 
-  const allowedUnitStatuses = ["available", "unavailable", "booked", "blocked", "transit"];
-  assert.equal(allowedUnitStatuses.includes("unavailable"), true);
-  assert.equal(allowedUnitStatuses.includes("maintenance"), false);
+  const allowedFormStatuses = ["available", "unavailable", "booked", "archived"];
+  for (const s of allowedFormStatuses) {
+    assert.equal(allowedDbStatuses.includes(s), true, `Form status ${s} must be in allowed DB statuses`);
+  }
+
+  const allowedUnitStatuses = ["available", "unavailable", "booked", "blocked", "transit", "inactive"];
+  for (const s of allowedUnitStatuses) {
+    assert.equal(allowedDbStatuses.includes(s), true, `Unit status ${s} must be in allowed DB statuses`);
+  }
+
+  const actionBulkStatuses = ["available", "unavailable", "blocked"];
+  for (const s of actionBulkStatuses) {
+    assert.equal(allowedDbStatuses.includes(s), true, `Bulk status ${s} must be in allowed DB statuses`);
+  }
 });
+
 
 test("singular license plate vehicle blocking only affects that specific unit", () => {
   // A car model with 3 physical units
