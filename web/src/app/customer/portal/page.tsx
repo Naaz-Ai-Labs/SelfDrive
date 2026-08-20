@@ -80,7 +80,7 @@ export default async function CustomerPortalPage() {
                   <div><dt className="text-xs text-ink-400">Total</dt><dd className="font-medium text-ink-800">{formatINR(Number(b.total_amount))}</dd></div>
                   <div><dt className="text-xs text-ink-400">Paid</dt><dd className="font-medium text-emerald-700">{formatINR(Number(b.paid_amount))}</dd></div>
                   <div><dt className="text-xs text-ink-400">Deposit</dt><dd className="font-medium text-ink-800">{formatINR(Number(b.deposit_amount))}</dd></div>
-                  <div><dt className="text-xs text-ink-400">Balance</dt><dd className="font-medium text-amber-700">{formatINR(Number(b.total_amount) + Number(b.deposit_amount) - Number(b.paid_amount))}</dd></div>
+                  <div><dt className="text-xs text-ink-400">Balance</dt><dd className="font-medium text-amber-700">{formatINR(Math.max(0, Number(b.total_amount) - Number(b.paid_amount)))}</dd></div>
                 </dl>
 
                 {payments.filter((p) => Number(p.booking_id) === Number(b.id)).length > 0 && (

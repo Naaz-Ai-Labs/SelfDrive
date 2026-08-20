@@ -369,7 +369,7 @@ export function BookingStatusFlow({
               </div>
               <div className="flex justify-between border-t border-ink-100 pt-2 font-bold text-sm text-ink-900">
                 <span>Total Amount:</span>
-                <span>{formatINR(tracking.total_amount + tracking.deposit_amount)}</span>
+                <span>{formatINR(tracking.total_amount)}</span>
               </div>
               <div className="flex justify-between text-emerald-700 font-bold">
                 <span>Amount Paid:</span>
