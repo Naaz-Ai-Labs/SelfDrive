@@ -138,12 +138,18 @@ export default async function InvoicePage({ params }: { params: Promise<{ bookin
               </tr>
             )}
             <tr className="border-b border-ink-50">
-              <td className="py-2 font-semibold text-ink-900">Rental total</td>
-              <td className="py-2 text-right font-semibold text-ink-900">{formatINR(Number(booking.total_amount))}</td>
+              <td className="py-2 text-ink-700">Subtotal (excl. deposit)</td>
+              <td className="py-2 text-right text-ink-800">
+                {formatINR(Math.max(0, Number(booking.total_amount) - Number(booking.deposit_amount)))}
+              </td>
             </tr>
             <tr className="border-b border-ink-50">
               <td className="py-2 text-ink-700">Security deposit (refundable)</td>
               <td className="py-2 text-right text-ink-800">{formatINR(Number(booking.deposit_amount))}</td>
+            </tr>
+            <tr className="border-b border-ink-50">
+              <td className="py-2 font-semibold text-ink-900">Total</td>
+              <td className="py-2 text-right font-semibold text-ink-900">{formatINR(Number(booking.total_amount))}</td>
             </tr>
             <tr>
               <td className="py-3 text-base font-bold text-ink-900">Total paid</td>

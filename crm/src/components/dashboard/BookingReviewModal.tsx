@@ -93,7 +93,7 @@ export function BookingReviewModal({
 
   const docs = booking.documents ?? [];
   const verifiedDocsCount = docs.filter((d) => d.verified === 1).length;
-  const balanceDue = Math.max(0, (booking.total_amount || 0) + (booking.deposit_amount || 0) - (booking.paid_amount || 0));
+  const balanceDue = Math.max(0, (booking.total_amount || 0) - (booking.paid_amount || 0));
 
   function handleDocumentVerify(documentId: number, approve: boolean) {
     startTransition(async () => {
@@ -386,7 +386,7 @@ export function BookingReviewModal({
               </div>
               <div className="flex justify-between border-t border-ink-100 pt-2 font-bold text-sm text-ink-900">
                 <span>Total Amount Due:</span>
-                <span>{formatINR((booking.total_amount || 0) + (booking.deposit_amount || 0))}</span>
+                <span>{formatINR(booking.total_amount || 0)}</span>
               </div>
               <div className="flex justify-between text-emerald-700 font-semibold">
                 <span>Amount Paid:</span>

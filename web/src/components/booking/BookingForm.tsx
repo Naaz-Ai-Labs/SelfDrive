@@ -647,20 +647,16 @@ export function BookingForm({
                   This used to be a single checkbox that forced a Monday return, with no
                   way to drop on Saturday or Sunday. Day counts below are computed by the
                   same rental clock that prices the booking, so the badge can never
-                  disagree with what is actually charged. */}
+              {/* Friday pickup — customer chooses Saturday or Sunday drop-off */}
               {isFriday && (
                 <div className="sm:col-span-2 rounded-xl border border-brand-200 bg-brand-50/70 p-4 shadow-xs">
                   <span className="text-xs font-bold uppercase tracking-wider text-brand-900 block mb-2.5">
                     Select Drop-off Day:
                   </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {[
-                      { label: "Saturday Drop-off", date: addDaysISO(pickupDate, 1), accent: "brand" as const },
-                      { label: "Sunday Drop-off", date: addDaysISO(pickupDate, 2), accent: "amber" as const },
-                      // No Monday option: the weekend rental covers Friday, Saturday and
-                      // Sunday. Sunday returns are only accepted from 09:00, which is
-                      // past the 08:00 boundary, so a Sunday drop is already charged as
-                      // all three days. Monday would only ever add a fourth.
+                      { label: "Saturday Drop-off", date: addDaysISO(pickupDate, 1), accent: "brand" as const, desc: "Standard Drop (Weekend Package: Fri + Sat + Sun)" },
+                      { label: "Sunday Drop-off", date: addDaysISO(pickupDate, 2), accent: "amber" as const, desc: "Standard Drop (Weekend Package: Fri + Sat + Sun)" },
                     ].map((opt) => {
                       const selected = returnDate === opt.date;
                       const optDays = daysForReturn(opt.date);
@@ -688,7 +684,7 @@ export function BookingForm({
                             </span>
                           </div>
                           <span className="text-[11px] text-ink-600 mt-1">
-                            {formatDate(opt.date)} · Standard 8:00 AM Drop
+                            {formatDate(opt.date)} · {opt.desc}
                           </span>
                         </button>
                       );
@@ -701,32 +697,52 @@ export function BookingForm({
                 </div>
               )}
 
-              {/* Saturday Drop-off Options (Sunday in-between selectable) */}
+              {/* Saturday Drop-off Options (Same-day Saturday or Sunday) */}
               {isSaturday && (
                 <div className="sm:col-span-2 rounded-xl border border-brand-200 bg-brand-50/70 p-4 shadow-xs">
                   <span className="text-xs font-bold uppercase tracking-wider text-brand-900 block mb-2.5">
                     Select Drop-off Day:
                   </span>
-                  {/* Monday removed here too — the weekend rental ends on Sunday. */}
-                  <div className="grid grid-cols-1 gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => handleReturnDateChange(addDaysISO(pickupDate, 1))}
-                      className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer ${
-                        returnDate === addDaysISO(pickupDate, 1)
-                          ? "border-amber-500 bg-white ring-2 ring-amber-500 shadow-sm"
-                          : "border-ink-200 bg-white/70 hover:bg-white hover:border-amber-300"
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 w-full justify-between">
-                        <span className="text-xs font-bold text-ink-950">Sunday Drop-off</span>
-                        <span className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950">2 Days (Weekend)</span>
-                      </div>
-                      <span className="text-[11px] text-ink-600 mt-1">
-                        {formatDate(addDaysISO(pickupDate, 1))} · Standard 8:00 AM Drop (Weekend Package)
-                      </span>
-                    </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {[
+                      { label: "Saturday Drop-off (Same Day)", date: pickupDate, accent: "brand" as const, desc: "Standard Drop (Weekend Package: Sat + Sun)" },
+                      { label: "Sunday Drop-off", date: addDaysISO(pickupDate, 1), accent: "amber" as const, desc: "Standard Drop (Weekend Package: Sat + Sun)" },
+                    ].map((opt) => {
+                      const selected = returnDate === opt.date;
+                      const optDays = daysForReturn(opt.date);
+                      return (
+                        <button
+                          key={opt.label}
+                          type="button"
+                          onClick={() => handleReturnDateChange(opt.date)}
+                          className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer ${
+                            selected
+                              ? opt.accent === "amber"
+                                ? "border-amber-500 bg-white ring-2 ring-amber-500 shadow-sm"
+                                : "border-brand-600 bg-white ring-2 ring-brand-500 shadow-sm"
+                              : "border-ink-200 bg-white/70 hover:bg-white hover:border-amber-300"
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 w-full justify-between">
+                            <span className="text-xs font-bold text-ink-950">{opt.label}</span>
+                            <span
+                              className={`rounded px-2 py-0.5 text-[10px] font-extrabold uppercase text-ink-950 ${
+                                opt.accent === "amber" ? "bg-amber-500" : "bg-brand-500"
+                              }`}
+                            >
+                              {optDays} Days (Weekend)
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-ink-600 mt-1">
+                            {formatDate(opt.date)} · {opt.desc}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
+                  <p className="mt-2.5 text-[11px] text-ink-600">
+                    Saturday bookings lock the 2-day weekend package (Saturday + Sunday) at weekend rates.
+                  </p>
                 </div>
               )}
 
