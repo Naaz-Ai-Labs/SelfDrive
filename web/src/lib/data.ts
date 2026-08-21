@@ -17,7 +17,7 @@ export type Vehicle = {
   active: number; photos: string[]; primary_photo: string | null;
 };
 
-export type Branch = { id: number; name: string; city: string | null; address: string | null; phone: string | null; active: number };
+export type Branch = { id: number; name: string; city: string | null; address: string | null; phone: string | null; active: number; blocked?: number };
 
 type Content = {
   business: Record<string, unknown>;
@@ -299,7 +299,14 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
       const branchName = v.branches?.name || (v.branch_id ? branchNameMap.get(v.branch_id) : null) || null;
 
       // Compute branch distribution
-      const isVehicleUnavailable = v.status === "unavailable" || v.status === "blocked" || v.status === "maintenance";
+      const isVehicleUnavailable =
+        v.status === "unavailable" ||
+        v.status === "blocked" ||
+        v.status === "maintenance" ||
+        v.status === "inactive" ||
+        v.status === "archived" ||
+        Number(v.active) === 0;
+
       const vUnits = unitsByVehicle.get(v.id) || [];
       const branchDist: Array<{ branch_id: number; branch_name: string; total_units: number; available_units: number }> = [];
 
@@ -337,7 +344,7 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
         ? 0
         : (vUnits.length > 0
             ? Math.max(0, vUnits.filter((u) => u.status === "available" && !branchBlockedMap.get(u.current_branch_id || 0)).length)
-            : (v.available_units ?? v.total_units ?? 1));
+            : (branchBlockedMap.get(v.branch_id || 0) ? 0 : (v.available_units ?? v.total_units ?? 1)));
 
       return {
         ...v,
@@ -471,13 +478,21 @@ export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle
     if (filters.kind && v.category_kind !== filters.kind) continue;
     if (filters.categorySlug && v.category_slug !== filters.categorySlug) continue;
 
+    const isVehicleUnavailable =
+      v.status === "unavailable" ||
+      v.status === "blocked" ||
+      v.status === "maintenance" ||
+      v.status === "inactive" ||
+      v.status === "archived" ||
+      Number(v.active) === 0;
+
     if (targetBranchId) {
       const bName = targetBranchId === 1 ? "Sakleshpura Branch" : "Hassan Branch";
       const match = v.branch_distribution?.find((bd) => bd.branch_id === targetBranchId);
 
       if (match) {
         if (match.total_units > 0) {
-          const avail = isTargetBranchBlocked ? 0 : (match.available_units !== undefined ? match.available_units : match.total_units);
+          const avail = isTargetBranchBlocked || isVehicleUnavailable ? 0 : (match.available_units !== undefined ? match.available_units : match.total_units);
           matched.push({
             ...v,
             total_units: match.total_units,
@@ -490,14 +505,21 @@ export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle
         if (v.branch_id === targetBranchId || !v.branch_id) {
           matched.push({
             ...v,
-            available_units: isTargetBranchBlocked ? 0 : (v.available_units ?? v.total_units ?? 1),
+            available_units: isTargetBranchBlocked || isVehicleUnavailable ? 0 : (v.available_units ?? v.total_units ?? 1),
             branch_id: targetBranchId,
             branch_name: bName,
           });
         }
       }
     } else {
-      matched.push(v);
+      const allBranchesBlocked = v.branch_distribution && v.branch_distribution.length > 0
+        ? v.branch_distribution.every((bd) => Number(branches.find((b) => Number(b.id) === bd.branch_id)?.blocked) === 1)
+        : (v.branch_id ? Number(branches.find((b) => Number(b.id) === v.branch_id)?.blocked) === 1 : false);
+
+      matched.push({
+        ...v,
+        available_units: isVehicleUnavailable || allBranchesBlocked ? 0 : (v.available_units ?? v.total_units ?? 1),
+      });
     }
   }
 

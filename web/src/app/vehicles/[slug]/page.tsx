@@ -99,11 +99,23 @@ export default async function VehicleDetailPage(props: {
   const branchQuery = branchParam ? `&location=${encodeURIComponent(branchParam)}` : "";
   const bookingHref = `/booking?vehicle=${vehicle.id}${pickupDate ? `&pickup=${pickupDate}` : ""}${pickupTime ? `&pickupTime=${pickupTime}` : ""}${returnDate ? `&return=${returnDate}` : ""}${returnTime ? `&returnTime=${returnTime}` : ""}${branchQuery}${pickupDate && returnDate ? "&step=3" : ""}`;
 
-  const isOutOfStock =
-    isTargetBranchBlocked ||
-    (vehicle.available_units ?? vehicle.total_units ?? 0) <= 0 ||
+  const isVehicleUnavailable =
     vehicle.status === "unavailable" ||
-    vehicle.status === "blocked";
+    vehicle.status === "blocked" ||
+    vehicle.status === "maintenance" ||
+    vehicle.status === "inactive" ||
+    vehicle.status === "archived" ||
+    Number(vehicle.active) === 0 ||
+    (vehicle.status ? vehicle.status !== "available" && vehicle.status !== "active" : false);
+
+  const allVehicleBranchesBlocked = vehicle.branch_distribution && vehicle.branch_distribution.length > 0
+    ? vehicle.branch_distribution.every((bd: any) => Number((branches.find((b: Branch) => Number(b.id) === bd.branch_id) as any)?.blocked) === 1)
+    : (vehicle.branch_id ? Number((branches.find((b: Branch) => Number(b.id) === vehicle.branch_id) as any)?.blocked) === 1 : false);
+
+  const isOutOfStock =
+    isVehicleUnavailable ||
+    (selectedBranchId ? isTargetBranchBlocked : allVehicleBranchesBlocked) ||
+    (vehicle.available_units !== undefined && vehicle.available_units <= 0);
   const weekendActive = isWeekend();
 
   const specs: Array<[string, string | number, string]> = [
@@ -325,7 +337,7 @@ export default async function VehicleDetailPage(props: {
 
               {isOutOfStock ? (
                 <div className="mt-5 w-full rounded-full bg-rose-100 py-3.5 text-center text-xs font-bold uppercase tracking-wide text-rose-700">
-                  Currently Out of Stock
+                  {isTargetBranchBlocked || allVehicleBranchesBlocked ? "Branch Temporarily Blocked" : "Currently Out of Stock"}
                 </div>
               ) : (
                 <Link href={bookingHref} className="btn-shine mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3.5 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98]">

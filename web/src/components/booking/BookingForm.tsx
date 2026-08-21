@@ -133,11 +133,13 @@ export function BookingForm({
   businessWhatsapp,
   terms,
   initialVehicles = [],
+  branches = [],
 }: {
   categories: Category[];
   businessWhatsapp: string;
   terms: string[];
   initialVehicles?: Vehicle[];
+  branches?: Array<{ id: number; name: string; city?: string | null; address?: string | null; phone?: string | null; active?: number; blocked?: number }>;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -166,6 +168,18 @@ export function BookingForm({
   const branchParam = search.get("branch") || search.get("branchId") || search.get("location");
   const initialLoc = branchParam === "1" || (branchParam && branchParam.toUpperCase().includes("SAKLESH")) ? "SAKLESHPURA" : "HASSAN";
   const [location, setLocation] = useState(initialLoc);
+
+  const selectedBranchId = useMemo(() => {
+    return location.toUpperCase().includes("SAKLESH") ? 1 : 2;
+  }, [location]);
+
+  const activeBranch = useMemo(() => {
+    return branches.find((b) => Number(b.id) === selectedBranchId) ?? null;
+  }, [branches, selectedBranchId]);
+
+  const isSelectedBranchBlocked = useMemo(() => {
+    return activeBranch ? Number((activeBranch as any).blocked) === 1 : false;
+  }, [activeBranch]);
 
   const liveClock = useMemo(() => getLiveClockMinPickup(), []);
 
@@ -408,14 +422,69 @@ export function BookingForm({
     documents.driver_photo?.url
   );
 
+  // Guard against direct deep links or skipped steps when a vehicle is unavailable or branch is blocked
+  useEffect(() => {
+    if (step >= 3) {
+      if (isSelectedBranchBlocked) {
+        setStep(1);
+        setErrors((prev) => ({
+          ...prev,
+          location: `Bookings are temporarily suspended at ${activeBranch?.name || "this branch"}. Please choose another branch.`,
+        }));
+      } else if (selectedVehicle) {
+        const isVehicleUnavailable =
+          selectedVehicle.status === "unavailable" ||
+          selectedVehicle.status === "blocked" ||
+          selectedVehicle.status === "maintenance" ||
+          selectedVehicle.status === "inactive" ||
+          selectedVehicle.status === "archived" ||
+          Number(selectedVehicle.active) === 0;
+
+        if (
+          isVehicleUnavailable ||
+          (selectedVehicle.available_units !== undefined && selectedVehicle.available_units <= 0)
+        ) {
+          setStep(2);
+          setErrors((prev) => ({
+            ...prev,
+            vehicle: "The selected vehicle is currently unavailable. Please choose another vehicle.",
+          }));
+        }
+      }
+    }
+  }, [step, isSelectedBranchBlocked, selectedVehicle, activeBranch]);
+
   function validateStep(n: number): boolean {
     const e: Record<string, string> = {};
     if (n === 1) {
       if (!pickupDate) e.pickupDate = "Please select a pickup date.";
+      if (isSelectedBranchBlocked) e.location = `Bookings are temporarily suspended at ${activeBranch?.name || "this branch"}. Please choose another branch.`;
       if (days < 1) e.days = "Minimum 1 day.";
       if (activeQuote?.belowWeekendMinimum) e.days = `Weekend bookings need at least ${activeQuote.weekendMinDays} days.`;
     }
-    if (n === 2 && !vehicleId) e.vehicle = "Please select a vehicle.";
+    if (n === 2) {
+      if (!vehicleId) {
+        e.vehicle = "Please select a vehicle.";
+      } else {
+        const isVehicleUnavailable =
+          !selectedVehicle ||
+          selectedVehicle.status === "unavailable" ||
+          selectedVehicle.status === "blocked" ||
+          selectedVehicle.status === "maintenance" ||
+          selectedVehicle.status === "inactive" ||
+          selectedVehicle.status === "archived" ||
+          Number(selectedVehicle.active) === 0;
+
+        const isOutOfStock =
+          isSelectedBranchBlocked ||
+          isVehicleUnavailable ||
+          (selectedVehicle.available_units !== undefined && selectedVehicle.available_units <= 0);
+
+        if (isOutOfStock) {
+          e.vehicle = "The selected vehicle is currently unavailable or the branch is temporarily blocked. Please choose another vehicle or branch.";
+        }
+      }
+    }
     if (n === 3) {
       if (contact.name.trim().length < 2) e.name = "Enter your full name.";
       if (!/^[+\d][\d\s-]{8,15}$/.test(contact.phone.trim())) e.phone = "Enter a valid mobile number.";
@@ -476,6 +545,26 @@ export function BookingForm({
 
   async function submit() {
     if (!validateStep(5) || !vehicleId) return;
+
+    if (isSelectedBranchBlocked) {
+      setSubmitError(`Bookings are temporarily suspended at ${activeBranch?.name || "this branch"}. Please select another branch.`);
+      return;
+    }
+
+    if (
+      !selectedVehicle ||
+      selectedVehicle.status === "unavailable" ||
+      selectedVehicle.status === "blocked" ||
+      selectedVehicle.status === "maintenance" ||
+      selectedVehicle.status === "inactive" ||
+      selectedVehicle.status === "archived" ||
+      Number(selectedVehicle.active) === 0 ||
+      (selectedVehicle.available_units !== undefined && selectedVehicle.available_units <= 0)
+    ) {
+      setSubmitError("The selected vehicle is currently unavailable for booking. Please choose another vehicle.");
+      return;
+    }
+
     setSubmitting(true);
     setSubmitError("");
     const res = await submitBooking({
@@ -605,9 +694,22 @@ export function BookingForm({
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                 >
-                  <option value="HASSAN">📍 Hassan Branch (BM Road)</option>
-                  <option value="SAKLESHPURA">📍 Sakleshpura Branch (Main Road)</option>
+                  <option value="HASSAN">
+                    📍 Hassan Branch (BM Road){branches.find((b) => Number(b.id) === 2 && Number((b as any).blocked) === 1) ? " 🔒 (Temporarily Blocked)" : ""}
+                  </option>
+                  <option value="SAKLESHPURA">
+                    📍 Sakleshpura Branch (Main Road){branches.find((b) => Number(b.id) === 1 && Number((b as any).blocked) === 1) ? " 🔒 (Temporarily Blocked)" : ""}
+                  </option>
                 </select>
+                {isSelectedBranchBlocked && (
+                  <div className="mt-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 flex items-center gap-2">
+                    <span className="shrink-0 text-base">⚠️</span>
+                    <p className="font-semibold">
+                      {activeBranch?.name || "This branch"} is temporarily blocked for new bookings. Please select another branch.
+                    </p>
+                  </div>
+                )}
+                {errors.location && <p className="field-error">{errors.location}</p>}
               </div>
 
               <div>
@@ -858,7 +960,19 @@ export function BookingForm({
                   {vehiclesToDisplay.map((v) => {
                     const isSelected = Number(vehicleId) === Number(v.id);
                     const vQuote = computeClientQuote(v, pickupDate, pickupTime, returnDate, returnTime);
-                    const isOutOfStock = (v.available_units ?? v.total_units ?? 0) <= 0;
+                    const isVehicleUnavailable =
+                      v.status === "unavailable" ||
+                      v.status === "blocked" ||
+                      v.status === "maintenance" ||
+                      v.status === "inactive" ||
+                      v.status === "archived" ||
+                      Number(v.active) === 0;
+
+                    const isOutOfStock =
+                      isSelectedBranchBlocked ||
+                      isVehicleUnavailable ||
+                      (v.available_units !== undefined && v.available_units <= 0);
+
                     // The vehicle's own weekend rate — many vehicles genuinely charge the
                     // same on weekends, so this is often 0 and no badge is shown.
                     const weekendDiff = Number(v.weekend_rate_24h ?? v.rate_24h) - Number(v.rate_24h);
@@ -867,11 +981,16 @@ export function BookingForm({
                       <button
                         type="button"
                         key={v.id}
-                        onClick={() => setVehicleId(v.id)}
-                        className={`rounded-xl border p-4 text-left transition relative cursor-pointer ${
-                          isSelected
-                            ? "border-brand-600 bg-brand-50/80 ring-2 ring-brand-500 shadow-sm"
-                            : "border-ink-100 bg-white hover:border-ink-300"
+                        disabled={isOutOfStock}
+                        onClick={() => {
+                          if (!isOutOfStock) setVehicleId(v.id);
+                        }}
+                        className={`rounded-xl border p-4 text-left transition relative ${
+                          isOutOfStock
+                            ? "border-ink-100 bg-ink-50/70 opacity-60 cursor-not-allowed"
+                            : isSelected
+                            ? "border-brand-600 bg-brand-50/80 ring-2 ring-brand-500 shadow-sm cursor-pointer"
+                            : "border-ink-100 bg-white hover:border-ink-300 cursor-pointer"
                         }`}
                       >
                         <div className="flex items-center justify-between">
@@ -884,9 +1003,15 @@ export function BookingForm({
                               </span>
                             )}
                           </div>
-                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${isOutOfStock ? "bg-rose-100 text-rose-900 border border-rose-300" : (v.available_units ?? v.total_units) <= 1 ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-xs ${
+                            isOutOfStock
+                              ? "bg-rose-100 text-rose-900 border border-rose-300"
+                              : (v.available_units ?? v.total_units) <= 1
+                              ? "bg-amber-100 text-amber-900 border border-amber-300"
+                              : "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                          }`}>
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-                            {isOutOfStock ? "Out of Stock" : `${v.available_units ?? v.total_units} Left`}
+                            {isOutOfStock ? (isSelectedBranchBlocked ? "Branch Blocked" : "Unavailable") : `${v.available_units ?? v.total_units} Left`}
                           </span>
                         </div>
                         <div className="mt-1 flex items-center gap-1.5 flex-wrap">
