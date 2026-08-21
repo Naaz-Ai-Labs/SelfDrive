@@ -124,6 +124,39 @@ export async function submitBooking(input: {
     try {
       const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Validate vehicle status and branch status directly before slot reservation
+    const { getVehicleById, getBranches } = await import("./data");
+    const v = await getVehicleById(input.vehicleId);
+    if (
+      !v ||
+      v.status === "unavailable" ||
+      v.status === "blocked" ||
+      v.status === "maintenance" ||
+      v.status === "inactive" ||
+      v.status === "archived" ||
+      Number(v.active) === 0
+    ) {
+      return { ok: false, error: "This vehicle is currently unavailable for booking." };
+    }
+
+    let branchId: number | undefined;
+    if (input.location) {
+      const locUpper = input.location.toUpperCase();
+      if (locUpper.includes("SAKLESH")) branchId = 1;
+      else if (locUpper.includes("HASSAN")) branchId = 2;
+    }
+    if (!branchId) {
+      branchId = v.branch_id ?? undefined;
+    }
+
+    if (branchId) {
+      const branches = await getBranches();
+      const targetBranch = branches.find((b) => Number(b.id) === branchId);
+      if (targetBranch && Number((targetBranch as any).blocked) === 1) {
+        return { ok: false, error: `Bookings are temporarily suspended at ${targetBranch.name || "this branch"}.` };
+      }
+    }
+
     // Availability is claimed through the SAME database function the CRM uses. It
     // takes a per-vehicle lock, counts live holds against total_units and inserts the
     // hold in one transaction — so this path cannot double-book even while the CRM is
@@ -146,7 +179,7 @@ export async function submitBooking(input: {
     });
     const claimedBlockId = claimRes.ok ? ((await claimRes.json()) as number | null) : null;
     if (!claimedBlockId) {
-      return { ok: false, error: "This vehicle is no longer available for the selected dates." };
+      return { ok: false, error: "This vehicle is no longer available for the selected dates and branch." };
     }
 
     const bookingNo = `BK-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase().slice(-6)}${Math.floor(Math.random() * 46656).toString(36).toUpperCase().padStart(3, "0")}`;
@@ -316,7 +349,7 @@ export async function getAvailableVehicles(
     if (returnAt) qs.set("returnAt", returnAt);
     if (location) qs.set("location", location);
     const res = await gatewayGet<{ vehicles: Vehicle[] }>(`/api/gateway/v1/booking/available?${qs.toString()}`);
-    if (res && Array.isArray(res.vehicles) && res.vehicles.length > 0) {
+    if (res && !("error" in res) && Array.isArray(res.vehicles)) {
       return res.vehicles;
     }
   } catch (err) {

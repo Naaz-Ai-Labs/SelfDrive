@@ -126,12 +126,21 @@ export async function submitBooking(input: {
     : null;
   const existing = draft?.ok ? draft.data : null;
 
+  // Resolve branch ID from location string or explicit payload
+  let resolvedBranchId: number | undefined;
+  if (parsed.data.location) {
+    const locUpper = parsed.data.location.toUpperCase();
+    if (locUpper.includes("SAKLESH")) resolvedBranchId = 1;
+    else if (locUpper.includes("HASSAN")) resolvedBranchId = 2;
+  }
+
   try {
     const { bookingNo, bookingId, customerId } = await createBooking({
       vehicleId: parsed.data.vehicleId,
       pickupAt: parsed.data.pickupAt,
       returnAt: parsed.data.returnAt,
       location: parsed.data.location,
+      branchId: resolvedBranchId,
       passengers: parsed.data.passengers ?? undefined,
       customer: parsed.data.contact,
       enquiryId: existing ? Number(existing.id) : null,
@@ -175,8 +184,34 @@ export async function submitBooking(input: {
   }
 }
 
-export async function getAvailableVehicles(kind: string | null, pickupAt: string | null, returnAt: string | null) {
-  const vehicles = await getVehicles({ kind: kind || undefined, onlyAvailable: true });
+export async function getAvailableVehicles(
+  kind: string | null,
+  pickupAt: string | null,
+  returnAt: string | null,
+  branchId?: number | null,
+  location?: string | null
+) {
+  let targetBranchId: number | undefined = branchId ? Number(branchId) : undefined;
+  if (!targetBranchId && location) {
+    const locUpper = location.toUpperCase();
+    if (locUpper.includes("SAKLESH")) targetBranchId = 1;
+    else if (locUpper.includes("HASSAN")) targetBranchId = 2;
+  }
+
+  // If a specific branch is requested and is blocked, return no available vehicles for that branch
+  if (targetBranchId) {
+    const branchRes = await sbSelectOne<{ blocked: number }>("branches", `select=blocked&id=eq.${targetBranchId}`);
+    if (branchRes.ok && num(branchRes.data?.blocked) === 1) {
+      return [];
+    }
+  }
+
+  const vehicles = await getVehicles({
+    kind: kind || undefined,
+    branchId: targetBranchId,
+    onlyAvailable: true,
+  });
+
   if (!pickupAt || !returnAt) return vehicles;
 
   const ids = vehicles.map((v) => Number(v.id)).filter((n) => Number.isFinite(n));
@@ -186,7 +221,7 @@ export async function getAvailableVehicles(kind: string | null, pickupAt: string
   const clashes = await sbSelect<{ vehicle_id: number }>(
     "bookings",
     `select=vehicle_id&vehicle_id=in.(${ids.join(",")})` +
-      `&status=not.in.${encodeURIComponent('("Cancelled","Completed","Draft")')}` +
+      `&status=not.in.${encodeURIComponent('("Cancelled","Completed","Draft","Rejected")')}` +
       `&return_at=gt.${encodeURIComponent(pickupAt)}&pickup_at=lt.${encodeURIComponent(returnAt)}`
   );
   // A failed availability read must not read as "everything is free".
@@ -199,8 +234,8 @@ export async function getAvailableVehicles(kind: string | null, pickupAt: string
   }
 
   return vehicles
-    .map((v) => ({ ...v, available_units: Math.max(0, num(v.total_units, 1) - (taken.get(Number(v.id)) ?? 0)) }))
-    .filter((v) => v.available_units > 0);
+    .map((v) => ({ ...v, available_units: Math.max(0, num(v.available_units ?? v.total_units, 1) - (taken.get(Number(v.id)) ?? 0)) }))
+    .filter((v) => (v.available_units ?? 0) > 0 && v.status === "available" && num(v.active, 1) === 1);
 }
 
 export async function attachCustomerDocuments(customerId: number, bookingId: number, docs: Array<{ kind: string; url: string; number?: string; expiry?: string }>) {

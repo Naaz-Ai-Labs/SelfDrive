@@ -102,15 +102,51 @@ export async function checkVehicleAvailable(
   const pickup = encodeURIComponent(pickupAt);
   const ret = encodeURIComponent(returnAt);
 
-  // Check physical units first if available
-  const unitsRes = await sbSelect<{ id: number; current_branch_id: number | null }>(
-    "vehicle_units",
-    `select=id,current_branch_id&vehicle_id=eq.${vehicleId}&active=eq.1&status=eq.available`
+  // 1. Verify vehicle model exists and is available
+  const vehicleRes = await sbSelectOne<{ id: number; status: string; active: number; total_units: number; branch_id: number | null }>(
+    "vehicles",
+    `select=id,status,active,total_units,branch_id&id=eq.${vehicleId}`
+  );
+  if (!vehicleRes.ok || !vehicleRes.data) return false;
+  const vData = vehicleRes.data;
+  if (
+    num(vData.active, 1) === 0 ||
+    vData.status === "unavailable" ||
+    vData.status === "blocked" ||
+    vData.status === "maintenance" ||
+    vData.status === "inactive" ||
+    vData.status === "archived"
+  ) {
+    return false;
+  }
+
+  // 2. Check if branch is blocked
+  const targetBranchId = branchId ?? vData.branch_id ?? undefined;
+  if (targetBranchId) {
+    const targetBranchRes = await sbSelectOne<{ blocked: number }>("branches", `select=blocked&id=eq.${targetBranchId}`);
+    if (targetBranchRes.ok && num(targetBranchRes.data?.blocked) === 1) {
+      return false;
+    }
+  }
+
+  // 3. Check physical units first if available
+  const [unitsRes, blockedBranchesRes] = await Promise.all([
+    sbSelect<{ id: number; current_branch_id: number | null }>(
+      "vehicle_units",
+      `select=id,current_branch_id&vehicle_id=eq.${vehicleId}&active=eq.1&status=eq.available`
+    ),
+    sbSelect<{ id: number }>("branches", "select=id&blocked=eq.1"),
+  ]);
+
+  const blockedBranchIds = new Set<number>(
+    blockedBranchesRes.ok && blockedBranchesRes.data ? blockedBranchesRes.data.map((b) => Number(b.id)) : []
   );
 
   if (unitsRes.ok && Array.isArray(unitsRes.data) && unitsRes.data.length > 0) {
-    const units = unitsRes.data;
+    // Exclude units residing in blocked branches
+    const units = unitsRes.data.filter((u) => !u.current_branch_id || !blockedBranchIds.has(Number(u.current_branch_id)));
     const unitIds = units.map((u) => Number(u.id));
+    if (unitIds.length === 0) return false;
 
     // Check branch allocations for each unit
     const [allocsRes, blocksRes, bookingsRes] = await Promise.all([
@@ -161,10 +197,9 @@ export async function checkVehicleAvailable(
     return validUnits.length > 0;
   }
 
-  // Fallback to model-level total_units check
+  // 4. Fallback to model-level total_units check
   const overlap = `return_at=gt.${pickup}&pickup_at=lt.${ret}`;
-  const [vehicleRes, bookingsRes, blocksRes] = await Promise.all([
-    sbSelectOne<{ total_units: number }>("vehicles", `select=total_units&id=eq.${vehicleId}`),
+  const [bookingsRes, blocksRes] = await Promise.all([
     sbSelect<{ id: number }>(
       "bookings",
       `select=id&vehicle_id=eq.${vehicleId}&status=not.in.${encodeURIComponent(inList(BLOCKING_STATUSES))}` +
@@ -177,11 +212,11 @@ export async function checkVehicleAvailable(
     ),
   ]);
 
-  if (!vehicleRes.ok || !bookingsRes.ok || !blocksRes.ok) {
+  if (!bookingsRes.ok || !blocksRes.ok) {
     return false;
   }
 
-  const totalUnits = Math.max(1, num(vehicleRes.data?.total_units, 1));
+  const totalUnits = Math.max(1, num(vData.total_units, 1));
   const bookedIds = new Set(bookingsRes.data.map((b) => Number(b.id)));
   const extraBlocks = blocksRes.data.filter((b) => {
     const bookingId = Number(b.booking_id);
@@ -207,11 +242,43 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   const vehicle = await getVehicleById(payload.vehicleId);
   if (!vehicle) throw new Error("Vehicle not found");
 
+  // Enforce vehicle availability status invariant
+  if (
+    vehicle.status === "unavailable" ||
+    vehicle.status === "blocked" ||
+    vehicle.status === "maintenance" ||
+    vehicle.status === "inactive" ||
+    vehicle.status === "archived" ||
+    num(vehicle.active, 1) === 0
+  ) {
+    throw new Error("This vehicle is currently unavailable for booking.");
+  }
+
   const pickup = new Date(payload.pickupAt);
   const ret = new Date(payload.returnAt);
   if (!(pickup.getTime() < ret.getTime())) throw new Error("Return time must be after pickup time");
 
-  const branchId = payload.branchId ?? vehicle.branch_id;
+  // Resolve target branch ID: explicit branchId -> location string match -> vehicle.branch_id
+  let branchId = payload.branchId;
+  if (!branchId && payload.location) {
+    const locUpper = payload.location.toUpperCase();
+    if (locUpper.includes("SAKLESH")) branchId = 1;
+    else if (locUpper.includes("HASSAN")) branchId = 2;
+  }
+  if (!branchId) {
+    branchId = vehicle.branch_id ?? undefined;
+  }
+
+  // Enforce branch blocked invariant
+  if (branchId) {
+    const branchRes = await sbSelectOne<{ name: string; blocked: number }>(
+      "branches",
+      `select=name,blocked&id=eq.${branchId}`
+    );
+    if (branchRes.ok && num(branchRes.data?.blocked) === 1) {
+      throw new Error(`Bookings are temporarily suspended at ${branchRes.data?.name || "this branch"}.`);
+    }
+  }
 
   // 1. Try unit-level atomic reservation RPC
   let claimedBlockId: number | null = null;

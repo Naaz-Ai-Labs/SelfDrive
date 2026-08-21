@@ -9,7 +9,9 @@ export async function GET(req: NextRequest) {
   const vehicles = await getAvailableVehicles(
     searchParams.get("kind"),
     searchParams.get("pickupAt"),
-    searchParams.get("returnAt")
+    searchParams.get("returnAt"),
+    searchParams.get("branchId") ? Number(searchParams.get("branchId")) : null,
+    searchParams.get("location") || searchParams.get("branch")
   );
   return NextResponse.json({ vehicles });
 }

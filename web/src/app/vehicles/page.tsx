@@ -242,8 +242,17 @@ export default async function VehiclesPage(
             {vehicles.map((v, i) => {
               const isBranchBlocked = activeBranch ? Number((activeBranch as any).blocked) === 1 : false;
               const totalUnits = v.total_units ?? 1;
-              const availableUnits = isBranchBlocked ? 0 : (v.available_units ?? totalUnits);
-              const isOutOfStock = isBranchBlocked || availableUnits <= 0 || (v.status ? v.status !== "available" && v.status !== "active" : false);
+              const isVehicleUnavailable =
+                v.status === "unavailable" ||
+                v.status === "blocked" ||
+                v.status === "maintenance" ||
+                v.status === "inactive" ||
+                v.status === "archived" ||
+                Number(v.active) === 0 ||
+                (v.status ? v.status !== "available" && v.status !== "active" : false);
+
+              const availableUnits = isBranchBlocked || isVehicleUnavailable ? 0 : (v.available_units ?? totalUnits);
+              const isOutOfStock = isBranchBlocked || isVehicleUnavailable || availableUnits <= 0;
               const weekendActive = isWeekend();
               const quote = searchQuotes[i];
 
@@ -294,7 +303,7 @@ export default async function VehiclesPage(
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" aria-hidden>
                           <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                         </svg>
-                        {isOutOfStock ? "Out of Stock" : `${availableUnits}/${totalUnits} Left`}
+                        {isOutOfStock ? (isBranchBlocked ? "Branch Blocked" : "Out of Stock") : `${availableUnits}/${totalUnits} Left`}
                       </span>
                     </div>
 

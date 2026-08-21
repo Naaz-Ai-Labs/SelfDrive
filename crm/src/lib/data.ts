@@ -455,9 +455,19 @@ async function hydrateVehicles(rows: RawVehicle[]): Promise<Vehicle[]> {
     const vUnits = unitsByVehicle.get(id) ?? [];
     const totalUnits = vUnits.length > 0 ? vUnits.length : num(row.total_units, 1);
     const branchBlocked = num((row.branches as { blocked?: number } | null)?.blocked) === 1;
-    const activeUnits = vUnits.length > 0 ? vUnits.filter((u) => u.status === "available").length : totalUnits;
-    const isVehicleUnavailable = row.status === "unavailable" || row.status === "blocked" || row.status === "maintenance";
-    const availableUnits = branchBlocked || isVehicleUnavailable
+    const isVehicleUnavailable =
+      row.status === "unavailable" ||
+      row.status === "blocked" ||
+      row.status === "maintenance" ||
+      row.status === "inactive" ||
+      row.status === "archived" ||
+      num(row.active, 1) === 0;
+
+    const activeUnits = vUnits.length > 0
+      ? vUnits.filter((u) => u.status === "available" && !branchMap.get(u.current_branch_id || 0)?.blocked).length
+      : (branchBlocked ? 0 : totalUnits);
+
+    const availableUnits = branchBlocked || isVehicleUnavailable || activeUnits === 0
       ? 0
       : Math.max(0, activeUnits - (holdsByVehicle.get(id) ?? 0));
 
@@ -637,7 +647,7 @@ export async function getVehicles(
     vehicles = vehicles.filter((v) => v.rate_24h <= (filters.maxPrice || Infinity));
   }
   if (filters.onlyAvailable || filters.availableOnly) {
-    vehicles = vehicles.filter((v) => v.status === "available" && (v.available_units ?? v.total_units) > 0);
+    vehicles = vehicles.filter((v) => v.status === "available" && num(v.active, 1) === 1 && (v.available_units ?? 0) > 0);
   }
 
   if (filters.branchId) {
@@ -654,12 +664,21 @@ export async function getVehicles(
         const branchUnits = v.units?.filter((u) => u.current_branch_id === bId) || [];
         const dist = v.branch_distribution?.find((d) => d.branch_id === bId);
         const branchTotal = branchUnits.length > 0 ? branchUnits.length : (dist?.total_units ?? v.total_units);
-        const isVehicleUnavailable = v.status === "unavailable" || v.status === "blocked" || v.status === "maintenance";
+        const isVehicleUnavailable =
+          v.status === "unavailable" ||
+          v.status === "blocked" ||
+          v.status === "maintenance" ||
+          v.status === "inactive" ||
+          v.status === "archived" ||
+          num(v.active, 1) === 0;
+
         const branchAvailable = isVehicleUnavailable
           ? 0
-          : (branchUnits.length > 0
-            ? branchUnits.filter((u) => u.status === "available").length
-            : (dist?.available_units ?? v.available_units));
+          : (dist?.available_units !== undefined
+            ? dist.available_units
+            : (branchUnits.length > 0
+              ? branchUnits.filter((u) => u.status === "available").length
+              : v.available_units));
 
         return {
           ...v,
