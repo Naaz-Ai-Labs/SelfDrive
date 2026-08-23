@@ -218,26 +218,17 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
                 <td className="py-2 text-right text-emerald-700">-{formatINR(Number(booking.discount_amount))}</td>
               </tr>
             )}
-            {/* total_amount already INCLUDES the deposit (see crm/src/lib/pricing.ts).
-                Printing it as "Rental total" and then listing the deposit again made the
-                column read as if the deposit were charged twice. */}
             <tr className="border-b border-ink-50">
-              <td className="py-2 text-ink-700">Subtotal (excl. deposit)</td>
-              <td className="py-2 text-right text-ink-800">
-                {formatINR(Number(booking.total_amount) - Number(booking.deposit_amount))}
-              </td>
-            </tr>
-            <tr className="border-b border-ink-50">
-              <td className="py-2 text-ink-700">Security deposit (refundable)</td>
+              <td className="py-2 text-ink-700">Security deposit (cash at pickup, refundable)</td>
               <td className="py-2 text-right text-ink-800">{formatINR(Number(booking.deposit_amount))}</td>
             </tr>
             <tr className="border-b border-ink-50">
-              <td className="py-2 font-semibold text-ink-900">Total</td>
+              <td className="py-2 font-semibold text-ink-900">Total Invoice</td>
               <td className="py-2 text-right font-semibold text-ink-900">{formatINR(Number(booking.total_amount))}</td>
             </tr>
             <tr>
               <td className="py-3 text-base font-bold text-ink-900">Total paid</td>
-              <td className="py-3 text-right text-base font-bold text-ink-900">{formatINR(Number(booking.paid_amount))}</td>
+              <td className="py-3 text-right text-base font-bold text-emerald-700">{formatINR(Number(booking.paid_amount))}</td>
             </tr>
           </tbody>
         </table>

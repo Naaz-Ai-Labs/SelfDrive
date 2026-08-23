@@ -56,9 +56,9 @@ export async function createBookingPaymentOrder(
         if (b) {
           bookingNo = b.booking_no || bookingNo;
           if (finalAmount <= 0) {
-            // `bookings.total_amount` is the all-in column and INCLUDES the deposit, which
-            // is cash at pickup. Charging it online would collect the deposit twice.
-            finalAmount = Math.max(0, Number(b.total_amount || 0) - Number(b.deposit_amount || 0));
+            // `bookings.total_amount` is the rental total (matches payableNow).
+            // The refundable security deposit is cash at pickup and tracked in deposit_amount.
+            finalAmount = Number(b.total_amount || 0);
             if (finalAmount <= 0 && b.vehicles) {
               const base = Number(b.vehicles.rate_24h || 1000);
               const gst = Math.round(base * 0.06);
@@ -175,9 +175,7 @@ export async function verifyBookingPayment(input: {
         base_amount: 900,
         deposit_amount: 1000,
         gst_amount: 54,
-        // total_amount is the all-in column (deposit included); paid_amount is the
-        // online payment only, which excludes the cash-at-pickup deposit.
-        total_amount: 900 + 54 + 1000,
+        total_amount: 900 + 54,
         paid_amount: 900 + 54,
         status: "Confirmed",
         created_at: now,
@@ -185,11 +183,8 @@ export async function verifyBookingPayment(input: {
       });
     } else {
       bookingNo = b.booking_no || bookingNo;
-      // Online payments never include the deposit, so the amount recorded as paid is the
-      // all-in total minus the deposit that is still to be collected in cash at pickup.
       const allIn = Number(b.total_amount || 0);
-      const dep = Number(b.deposit_amount || 0);
-      paidAmount = allIn > 0 ? Math.max(0, allIn - dep) : Number(b.paid_amount || 0);
+      paidAmount = allIn > 0 ? allIn : Number(b.paid_amount || 0);
 
       // 1. Update Booking Status to Confirmed & Paid Amount
       await supabaseRestUpsert("bookings", {

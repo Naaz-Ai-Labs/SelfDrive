@@ -380,17 +380,17 @@ export function BookingReviewModal({
                 <span>GST (Tax):</span>
                 <span className="font-medium text-ink-900">{formatINR(booking.gst_amount ?? 0)}</span>
               </div>
-              <div className="flex justify-between text-ink-600">
-                <span>Refundable Security Deposit:</span>
-                <span className="font-medium text-ink-900">{formatINR(booking.deposit_amount ?? 0)}</span>
-              </div>
               <div className="flex justify-between border-t border-ink-100 pt-2 font-bold text-sm text-ink-900">
-                <span>Total Amount Due:</span>
+                <span>Total Rental Fare:</span>
                 <span>{formatINR(booking.total_amount || 0)}</span>
               </div>
               <div className="flex justify-between text-emerald-700 font-semibold">
                 <span>Amount Paid:</span>
                 <span>{formatINR(booking.paid_amount || 0)}</span>
+              </div>
+              <div className="flex justify-between border-t border-dashed border-ink-200 pt-2 text-ink-600">
+                <span>Refundable Security Deposit (Cash at Pickup):</span>
+                <span className="font-semibold text-ink-900">{formatINR(booking.deposit_amount ?? 0)}</span>
               </div>
             </div>
 

@@ -108,6 +108,14 @@ disagreed, so the site quoted one price and the CRM charged another.
 
 `supabase/migrations/`, dated, idempotent, re-runnable. Not dashboard edits.
 
+## 13. Refundable Security Deposit must NEVER be added into `total_amount`
+
+- `bookings.total_amount` is the **rental fare total** (Base rental + Surcharges + GST + Gateway fee - Discounts).
+- `bookings.deposit_amount` is the **refundable security deposit** (₹1,000 for two-wheelers, ₹2,000 for cars), collected in **cash at pickup** and refunded upon safe vehicle return.
+- Online payments (Razorpay) charge `total_amount`.
+- When a customer completes checkout, `paid_amount` equals `total_amount`, and remaining `balanceDue` is `0`.
+- **Do not bundle deposit into `total_amount`:** Doing so creates an artificial ₹1,000/₹2,000 "unpaid balance" on fully paid bookings, shows warnings in the CRM bookings table, and distorts company gross revenue calculations in reports.
+
 ## Deployment shape
 
 ```

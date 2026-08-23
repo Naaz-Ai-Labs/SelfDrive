@@ -93,7 +93,7 @@ export type RentalQuote = {
   earlyPickup: boolean;
   /** Drop after 08:00 — one extra full day is already included in `days`. */
   lateDrop: boolean;
-  /** ALL-IN disclosure figure, deposit INCLUDED. NEVER charge this at checkout. */
+  /** Total rental fare (base rental + surcharges/timing fee + GST + gateway fee). Matches payableNow. */
   totalAmount: number;
   /** What Razorpay charges: rental + surcharge + GST + gateway fee. Deposit EXCLUDED. */
   payableNow: number;
@@ -187,13 +187,10 @@ export function calculateRentalQuote(
   const gstAmount = Math.round(taxableAmount * (GST_PCT / 100));
   const gatewayFeeAmount = Math.round((taxableAmount + gstAmount) * (GATEWAY_FEE_PCT / 100));
 
-  // Two DIFFERENT numbers, deliberately:
-  //   payableNow  — charged online. Deposit EXCLUDED (it is cash at pickup).
-  //   totalAmount — all-in disclosure for the invoice. Deposit INCLUDED.
-  // Do not "simplify" one into the other; that is exactly how the deposit ended up
-  // being collected twice.
+  // Total rental amount equals payableNow.
+  // The refundable security deposit is kept separate in `depositAmount` / `depositPayableAtPickup`.
   const payableNow = taxableAmount + gstAmount + gatewayFeeAmount;
-  const totalAmount = payableNow + deposit;
+  const totalAmount = payableNow;
 
   return {
     days,
@@ -265,5 +262,30 @@ export function calculateLateFee(
     minutesLate,
     fee,
     breakdown: `Overdue by ${minutesLate} min — billed full extra day charge (₹${effectiveDailyRate}/day x ${extraDays} day${extraDays > 1 ? "s" : ""}).`,
+  };
+}
+
+/**
+ * Authoritative financial calculator for bookings.
+ * Enforces the invariant that refundable security deposit is strictly isolated
+ * from total rental fare and balance due.
+ */
+export function calculateBookingFinancials(booking: {
+  total_amount?: number | string | null;
+  paid_amount?: number | string | null;
+  deposit_amount?: number | string | null;
+}) {
+  const totalAmount = num(booking.total_amount);
+  const paidAmount = num(booking.paid_amount);
+  const depositAmount = num(booking.deposit_amount);
+  const balanceDue = Math.max(0, totalAmount - paidAmount);
+  const isFullyPaid = paidAmount >= totalAmount && totalAmount > 0;
+
+  return {
+    totalAmount,
+    paidAmount,
+    depositAmount,
+    balanceDue,
+    isFullyPaid,
   };
 }

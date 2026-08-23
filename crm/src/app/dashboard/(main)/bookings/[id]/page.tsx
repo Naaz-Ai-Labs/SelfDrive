@@ -241,25 +241,21 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
               ].filter(([, v]) => Number(v) !== 0).map(([label, v]) => (
                 <div key={String(label)} className="flex justify-between"><dt className="text-ink-500">{String(label)}</dt><dd className="font-medium text-ink-800">{formatINR(Number(v))}</dd></div>
               ))}
-              <div className="flex justify-between border-t border-ink-100 pt-2 text-sm text-ink-600">
-                <dt>Subtotal (excl. deposit)</dt>
-                <dd className="font-medium text-ink-800">{formatINR(Math.max(0, Number(booking.total_amount) - Number(booking.deposit_amount)))}</dd>
-              </div>
-              <div className="flex justify-between text-sm">
-                <dt className="text-ink-500">Security deposit (refundable)</dt>
-                <dd className="font-medium text-ink-800">{formatINR(Number(booking.deposit_amount))}</dd>
-              </div>
               <div className="flex justify-between border-t border-ink-100 pt-2 text-base font-semibold">
-                <dt>Total due (incl. deposit)</dt>
+                <dt>Total Rental Amount</dt>
                 <dd>{formatINR(Number(booking.total_amount))}</dd>
               </div>
-              <div className="flex justify-between text-emerald-700">
-                <dt>Paid</dt>
+              <div className="flex justify-between text-emerald-700 font-medium">
+                <dt>Paid (Online / Direct)</dt>
                 <dd>{formatINR(Number(booking.paid_amount))}</dd>
               </div>
               <div className="flex justify-between text-amber-700 font-semibold">
-                <dt>Balance</dt>
+                <dt>Rental Balance Due</dt>
                 <dd>{formatINR(Math.max(0, Number(booking.total_amount) - Number(booking.paid_amount)))}</dd>
+              </div>
+              <div className="flex justify-between border-t border-dashed border-ink-200 pt-2 text-xs text-ink-600">
+                <dt>Refundable Security Deposit (Cash at Pickup)</dt>
+                <dd className="font-semibold text-ink-900">{formatINR(Number(booking.deposit_amount))}</dd>
               </div>
             </dl>
             <div className="mt-4 border-t border-ink-100 pt-4">

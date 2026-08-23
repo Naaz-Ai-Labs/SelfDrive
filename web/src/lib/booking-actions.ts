@@ -238,8 +238,8 @@ export async function submitBooking(input: {
           baseAmount = quote.baseAmount + quote.offSchedulePickupFee;
           depositAmount = quote.depositPayableAtPickup;
           gstAmount = quote.gstAmount;
-          // `total_amount` is the CRM's all-in column (deposit included); the deposit is
-          // still cash at pickup and is never part of what Razorpay charges.
+          // `total_amount` is the rental total (matches payableNow); the refundable security deposit
+          // is kept in `deposit_amount` and collected in cash at pickup.
           totalAmount = quote.totalAmount;
         }
       }
