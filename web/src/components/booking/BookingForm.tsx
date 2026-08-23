@@ -10,7 +10,7 @@ import { RazorpayCheckout } from "./RazorpayCheckout";
 import { InlineInvoiceCard } from "./InlineInvoiceCard";
 import type { Vehicle } from "@/lib/data";
 import { calculateRentalQuoteFromStrings, istInstantFrom } from "@/lib/pricing";
-import { computeRentalDays } from "@/lib/rental-clock";
+import { computeRentalDays, toCanonicalIstIso } from "@/lib/rental-clock";
 import { compressImageFile } from "@/lib/image-compression";
 
 type Category = { id: number; name: string; kind: string; icon: string | null };
@@ -34,7 +34,7 @@ function todayISO() {
 }
 
 function combineIso(dateStr: string, timeStr: string) {
-  return `${dateStr}T${timeStr}`;
+  return toCanonicalIstIso(dateStr, timeStr) || `${dateStr}T${timeStr}:00+05:30`;
 }
 
 function parseDateParts(dateStr: string): { year: number; month: number; day: number; dateObj: Date } | null {

@@ -1,7 +1,7 @@
 import { sbSelect, num } from "./supabase-rest";
 import { getSetting } from "./settings";
 import type { Vehicle } from "./data";
-import { computeRentalDays, isWeekendIst, istDateKey } from "./rental-clock";
+import { computeRentalDays, isWeekendIst, istDateKey, parseIstInstant, toCanonicalIstIso } from "./rental-clock";
 
 export type PricingRuleRow = {
   id: number;
@@ -230,6 +230,20 @@ export async function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt:
     payableNow,
     depositPayableAtPickup: deposit,
   };
+}
+
+/** Convenience wrapper for callers that hold separate date and time strings. */
+export async function calculateQuoteFromStrings(
+  vehicle: Vehicle,
+  pickupDateStr: string | null | undefined,
+  pickupTimeStr: string | null | undefined,
+  returnDateStr: string | null | undefined,
+  returnTimeStr: string | null | undefined
+): Promise<Quote | null> {
+  const pickup = parseIstInstant(pickupDateStr, pickupTimeStr);
+  const ret = parseIstInstant(returnDateStr, returnTimeStr);
+  if (!pickup || !ret || ret.getTime() <= pickup.getTime()) return null;
+  return calculateQuote(vehicle, pickup, ret, pickupTimeStr || "08:00", returnTimeStr || "08:00");
 }
 
 export function calculateLateFee(

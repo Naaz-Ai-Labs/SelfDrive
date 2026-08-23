@@ -90,11 +90,13 @@ Always `Number()` / `num()` before arithmetic. `"100" + "50"` is `"10050"`.
 
 ## 10. Time is Asia/Kolkata, always
 
-Never use the runtime's local timezone for rental-day logic. Vercel runs UTC; the
-browser runs the visitor's zone. Use `lib/rental-clock.ts`.
+Never use the runtime's local timezone for rental-day logic or unadorned date strings.
+Vercel runs UTC; the browser runs the visitor's zone. Use `lib/rental-clock.ts` (`parseIstInstant`, `toCanonicalIstIso`, `computeRentalDays`).
 
-*Why:* the booking clock used `new Date().getHours()`, so server-rendered HTML and
-client hydration disagreed by 5.5 hours and time slots visibly reset on load.
+- Timestamp strings transmitted and stored in database MUST carry explicit `+05:30` offset (e.g. `2026-08-28T11:00:00+05:30`).
+- Never parse raw unadorned strings like `2026-08-28T11:00` with `new Date(str)` on the server — Node/Vercel will treat it as UTC, causing a +5.5 hour shift (11:00 AM becomes 4:30 PM, 11:00 PM becomes 4:30 AM next day).
+
+*Why:* unadorned ISO strings caused 11:00 PM same-day returns to roll over into 4:30 AM Saturday, erroneously triggering weekend minimum rules and tripling the bill.
 
 ## 11. One implementation per business rule
 

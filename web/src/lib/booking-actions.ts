@@ -162,7 +162,10 @@ export async function submitBooking(input: {
     // hold in one transaction — so this path cannot double-book even while the CRM is
     // down. Previously it performed no availability check at all and created no
     // availability_blocks row, meaning bookings made here were invisible to the
-    // primary path's count and silently overbooked the same unit.
+    const { toCanonicalIstIso } = await import("./rental-clock");
+    const canonicalPickupAt = toCanonicalIstIso(input.pickupAt) || input.pickupAt;
+    const canonicalReturnAt = toCanonicalIstIso(input.returnAt) || input.returnAt;
+
     const claimRes = await fetch(`${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/reserve_vehicle_slot`, {
       method: "POST",
       headers: {
@@ -172,8 +175,8 @@ export async function submitBooking(input: {
       },
       body: JSON.stringify({
         p_vehicle_id: input.vehicleId,
-        p_pickup_at: input.pickupAt,
-        p_return_at: input.returnAt,
+        p_pickup_at: canonicalPickupAt,
+        p_return_at: canonicalReturnAt,
       }),
       cache: "no-store",
     });
@@ -259,8 +262,8 @@ export async function submitBooking(input: {
       booking_no: bookingNo,
       customer_id: customerId,
       vehicle_id: input.vehicleId,
-      pickup_at: input.pickupAt,
-      return_at: input.returnAt,
+      pickup_at: canonicalPickupAt,
+      return_at: canonicalReturnAt,
       base_amount: baseAmount,
       deposit_amount: depositAmount,
       gst_amount: gstAmount,

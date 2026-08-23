@@ -64,7 +64,8 @@ export async function POST(req: NextRequest) {
     const result = await ownedBooking(customer.customerId, Number(body.bookingId));
     if ("error" in result) return NextResponse.json(result, { status: 403 });
     const now = new Date();
-    const pickupAt = new Date(result.booking.pickup_at);
+    const { parseIstInstant } = await import("@/lib/rental-clock");
+    const pickupAt = parseIstInstant(result.booking.pickup_at) || new Date(result.booking.pickup_at);
     const note = `Customer cancellation request: ${body.reason ?? ""}`;
 
     const cancelled = await sbUpdate("bookings", `id=eq.${result.booking.id}`, {

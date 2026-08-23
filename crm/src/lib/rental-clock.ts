@@ -99,6 +99,72 @@ function parseHM(hm?: string | null): number | null {
   return h * 60 + min;
 }
 
+/**
+ * Parses any date string or Date object into an exact, timezone-correct Date instant in Asia/Kolkata (IST).
+ * Handles:
+ * 1. ISO strings with timezone: '2026-08-28T05:30:00.000Z', '2026-08-28T11:00:00+05:30'
+ * 2. Unadorned local strings: '2026-08-28T11:00', '2026-08-28 11:00', '2026-08-28'
+ * 3. Separate date and time parts: '2026-08-28', '11:00'
+ */
+export function parseIstInstant(dateInput: string | Date | null | undefined, timeHM?: string | null): Date | null {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) {
+    return Number.isNaN(dateInput.getTime()) ? null : dateInput;
+  }
+  if (typeof dateInput !== "string") return null;
+
+  const trimmed = dateInput.trim();
+  if (!trimmed) return null;
+
+  // If string already includes an explicit timezone offset (+HH:MM, -HH:MM, or Z)
+  if (/[Zz]$|[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+    const d = new Date(trimmed);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  // Otherwise, treat as wall-clock IST date + time
+  const [datePart, rawTimePart] = trimmed.includes("T")
+    ? trimmed.split("T")
+    : trimmed.includes(" ")
+      ? trimmed.split(" ")
+      : [trimmed, ""];
+
+  const cleanDate = datePart.split(/[-/.]/).map(Number);
+  if (cleanDate.length !== 3 || cleanDate.some((n) => !Number.isFinite(n))) return null;
+
+  let y: number, m: number, d: number;
+  if (cleanDate[0] > 1000) {
+    [y, m, d] = cleanDate;
+  } else if (cleanDate[2] > 1000) {
+    [d, m, y] = cleanDate;
+  } else {
+    [y, m, d] = cleanDate;
+  }
+
+  const effectiveTime = (timeHM || rawTimePart || "08:00").trim();
+  const hmMatch = /^(\d{1,2}):(\d{2})/.exec(effectiveTime);
+  const hour = hmMatch ? Number(hmMatch[1]) : 8;
+  const minute = hmMatch ? Number(hmMatch[2]) : 0;
+
+  return istDate(y, m - 1, d, hour, minute);
+}
+
+/**
+ * Returns a canonical ISO 8601 string with explicit +05:30 offset representing an IST timestamp.
+ * Example: '2026-08-28T11:00:00+05:30'
+ */
+export function toCanonicalIstIso(dateInput: string | Date | null | undefined, timeHM?: string | null): string | null {
+  const instant = parseIstInstant(dateInput, timeHM);
+  if (!instant) return null;
+  const p = istParts(instant);
+  const y = p.year;
+  const m = String(p.month + 1).padStart(2, "0");
+  const d = String(p.day).padStart(2, "0");
+  const h = String(p.hour).padStart(2, "0");
+  const min = String(p.minute).padStart(2, "0");
+  return `${y}-${m}-${d}T${h}:${min}:00+05:30`;
+}
+
 export type RentalClockInput = {
   pickupAt: Date;
   returnAt: Date;

@@ -257,11 +257,13 @@ export async function attachCustomerDocuments(customerId: number, bookingId: num
 }
 
 
+import { parseIstInstant, toCanonicalIstIso } from "./rental-clock";
+
 export async function getQuoteEstimate(vehicleId: number, pickupAt: string, returnAt: string) {
   const vehicle = await getVehicleById(vehicleId);
   if (!vehicle) return null;
-  const pickup = new Date(pickupAt);
-  const ret = new Date(returnAt);
-  if (Number.isNaN(pickup.getTime()) || Number.isNaN(ret.getTime()) || ret.getTime() <= pickup.getTime()) return null;
+  const pickup = parseIstInstant(pickupAt);
+  const ret = parseIstInstant(returnAt);
+  if (!pickup || !ret || ret.getTime() <= pickup.getTime()) return null;
   return calculateQuote(vehicle, pickup, ret);
 }

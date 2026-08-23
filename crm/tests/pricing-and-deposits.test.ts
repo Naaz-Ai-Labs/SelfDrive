@@ -181,3 +181,22 @@ test("revenue aggregation invariant: summing total_amount accurately reflects re
   // Invariant: revenue + deposits should equal all cash flows, without deposit leaking into revenue
   assert.equal(totalRevenue + totalDeposits, 10572);
 });
+
+test("formatDateTime correctly displays IST times for both canonical and unadorned strings", () => {
+  const { formatDateTime, formatDate } = require("../src/lib/utils");
+
+  // Canonical IST string: 28 Aug 2026, 11:00 AM
+  const formattedCanonical1 = formatDateTime("2026-08-28T11:00:00+05:30");
+  assert.ok(formattedCanonical1.includes("28 Aug 2026"), "Date must be 28 Aug 2026");
+  assert.ok(formattedCanonical1.includes("11:00 am") || formattedCanonical1.includes("11:00 AM") || formattedCanonical1.includes("11:00"), "Time must be 11:00 am");
+
+  // Canonical IST string: 28 Aug 2026, 11:00 PM (23:00)
+  const formattedCanonical2 = formatDateTime("2026-08-28T23:00:00+05:30");
+  assert.ok(formattedCanonical2.includes("28 Aug 2026"));
+  assert.ok(formattedCanonical2.includes("11:00 pm") || formattedCanonical2.includes("11:00 PM") || formattedCanonical2.includes("23:00"), "Time must be 11:00 pm");
+
+  // Unadorned legacy string: '2026-08-28T11:00'
+  const formattedLegacy = formatDateTime("2026-08-28T11:00");
+  assert.ok(formattedLegacy.includes("28 Aug 2026"));
+  assert.ok(formattedLegacy.includes("11:00 am") || formattedLegacy.includes("11:00 AM") || formattedLegacy.includes("11:00"), "Legacy string must format as 11:00 am, not 4:30 pm");
+});

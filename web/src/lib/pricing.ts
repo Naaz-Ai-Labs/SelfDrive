@@ -113,35 +113,15 @@ export function depositForVehicle(vehicle: Pick<QuoteVehicle, "deposit" | "categ
   return isTwoWheeler(vehicle) ? DEPOSIT_TWO_WHEELER : DEPOSIT_FOUR_WHEELER;
 }
 
+import { parseIstInstant, toCanonicalIstIso } from "./rental-clock";
+export { parseIstInstant, toCanonicalIstIso };
+
 /**
  * Parses a date string (`YYYY-MM-DD` or `DD-MM-YYYY`) plus an `HH:MM` time into the
  * matching instant in IST. Returns null when the date is unusable.
- *
- * Building the Date through `new Date(y, m, d)` instead would read the *viewer's* zone,
- * so a customer browsing from outside India would be quoted a different number of days
- * than the CRM charges.
  */
 export function istInstantFrom(dateStr: string | null | undefined, timeHM?: string | null): Date | null {
-  if (!dateStr) return null;
-  const clean = dateStr.includes("T") ? dateStr.split("T")[0] : dateStr;
-  const parts = clean.split(/[-/.]/).map(Number);
-  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
-
-  let y: number, m: number, d: number;
-  if (parts[0] > 1000) {
-    [y, m, d] = parts;
-  } else if (parts[2] > 1000) {
-    y = parts[2];
-    m = parts[1];
-    d = parts[0];
-  } else {
-    [y, m, d] = parts;
-  }
-
-  const hm = /^(\d{1,2}):(\d{2})/.exec((timeHM ?? "08:00").trim());
-  const hour = hm ? Number(hm[1]) : 8;
-  const minute = hm ? Number(hm[2]) : 0;
-  return istDate(y, m - 1, d, hour, minute);
+  return parseIstInstant(dateStr, timeHM);
 }
 
 /**
