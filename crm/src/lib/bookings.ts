@@ -12,6 +12,7 @@ import { normalizePhone, nextNumber } from "./utils";
 import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { calculateQuote } from "./pricing";
+import { parseIstInstant, toCanonicalIstIso } from "./rental-clock";
 import { getVehicleById, getActiveTermsVersion } from "./data";
 import { sbSelect, sbSelectOne, sbInsert, sbUpdate, sbDelete, sbRpc, num } from "./supabase-rest";
 
@@ -254,9 +255,14 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
     throw new Error("This vehicle is currently unavailable for booking.");
   }
 
-  const pickup = new Date(payload.pickupAt);
-  const ret = new Date(payload.returnAt);
-  if (!(pickup.getTime() < ret.getTime())) throw new Error("Return time must be after pickup time");
+  const pickup = parseIstInstant(payload.pickupAt);
+  const ret = parseIstInstant(payload.returnAt);
+  if (!pickup || !ret || !(pickup.getTime() < ret.getTime())) {
+    throw new Error("Return time must be after pickup time");
+  }
+
+  const canonicalPickupAt = toCanonicalIstIso(payload.pickupAt) || payload.pickupAt;
+  const canonicalReturnAt = toCanonicalIstIso(payload.returnAt) || payload.returnAt;
 
   // Resolve target branch ID: explicit branchId -> location string match -> vehicle.branch_id
   let branchId = payload.branchId;
@@ -289,8 +295,8 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
       "reserve_vehicle_unit_slot",
       {
         p_vehicle_id: payload.vehicleId,
-        p_pickup_at: payload.pickupAt,
-        p_return_at: payload.returnAt,
+        p_pickup_at: canonicalPickupAt,
+        p_return_at: canonicalReturnAt,
         p_branch_id: branchId ?? null,
       }
     );
@@ -307,8 +313,8 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   if (!claimedBlockId) {
     const claim = await sbRpc<number | null>("reserve_vehicle_slot", {
       p_vehicle_id: payload.vehicleId,
-      p_pickup_at: payload.pickupAt,
-      p_return_at: payload.returnAt,
+      p_pickup_at: canonicalPickupAt,
+      p_return_at: canonicalReturnAt,
     });
     if (!claim.ok || !claim.data) {
       throw new Error("This vehicle is not available for the selected dates and branch.");
@@ -334,8 +340,8 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
     vehicle_id: vehicle.id,
     vehicle_unit_id: claimedUnitId,
     branch_id: branchId ?? null,
-    pickup_at: payload.pickupAt,
-    return_at: payload.returnAt,
+    pickup_at: canonicalPickupAt,
+    return_at: canonicalReturnAt,
     after_hours: quote.afterHours ? 1 : 0,
     status: "Pending verification",
     base_amount: num(quote.baseAmount),

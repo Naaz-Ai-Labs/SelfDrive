@@ -211,3 +211,51 @@ test("an invalid date is rejected rather than silently counted", () => {
     computeRentalDays({ pickupAt: new Date("nonsense"), returnAt: istDate(2026, AUG, 13, 8) })
   );
 });
+
+test("same-day Friday 11:00 AM to 11:00 PM charges exactly 1 weekday day, NOT 3 weekend days", () => {
+  // 28 Aug 2026 is a Friday.
+  const { parseIstInstant } = require("../src/lib/rental-clock");
+  const pickup = parseIstInstant("2026-08-28T11:00");
+  const ret = parseIstInstant("2026-08-28T23:00");
+  assert.ok(pickup);
+  assert.ok(ret);
+
+  const r = computeRentalDays({ pickupAt: pickup, returnAt: ret });
+  assert.equal(r.days, 1, "Same-day Friday rental (11:00 to 23:00) must charge exactly 1 day");
+  assert.equal(r.lateDrop, true, "23:00 drop is after 08:00 standard drop time");
+  assert.equal(r.earlyPickup, false, "11:00 pickup is after 08:00");
+  assert.equal(r.dayDates.length, 1);
+  assert.equal(istDateKey(r.dayDates[0]), "2026-08-28");
+  assert.equal(isWeekendIst(r.dayDates[0]), false, "Friday is a weekday");
+});
+
+test("parseIstInstant and toCanonicalIstIso prevent 5.5h UTC timezone shift", () => {
+  const { parseIstInstant, toCanonicalIstIso, istParts } = require("../src/lib/rental-clock");
+
+  // String without offset: '2026-08-28T11:00'
+  const p1 = parseIstInstant("2026-08-28T11:00");
+  assert.ok(p1);
+  const parts1 = istParts(p1);
+  assert.equal(parts1.year, 2026);
+  assert.equal(parts1.month, 7); // Aug
+  assert.equal(parts1.day, 28);
+  assert.equal(parts1.hour, 11, "Hour must remain 11:00 AM, never shifted to 4:30 PM");
+  assert.equal(parts1.minute, 0);
+
+  // Return string without offset: '2026-08-28T23:00' (11:00 PM)
+  const r1 = parseIstInstant("2026-08-28T23:00");
+  assert.ok(r1);
+  const partsR1 = istParts(r1);
+  assert.equal(partsR1.year, 2026);
+  assert.equal(partsR1.month, 7); // Aug
+  assert.equal(partsR1.day, 28);
+  assert.equal(partsR1.hour, 23, "Hour must remain 11:00 PM, never shifted to 4:30 AM next day");
+  assert.equal(partsR1.minute, 0);
+
+  // Canonical ISO string output
+  const iso1 = toCanonicalIstIso("2026-08-28T11:00");
+  assert.equal(iso1, "2026-08-28T11:00:00+05:30");
+
+  const isoR1 = toCanonicalIstIso("2026-08-28T23:00");
+  assert.equal(isoR1, "2026-08-28T23:00:00+05:30");
+});

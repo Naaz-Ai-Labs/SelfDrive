@@ -90,11 +90,13 @@ Always `Number()` / `num()` before arithmetic. `"100" + "50"` is `"10050"`.
 
 ## 10. Time is Asia/Kolkata, always
 
-Never use the runtime's local timezone for rental-day logic. Vercel runs UTC; the
-browser runs the visitor's zone. Use `lib/rental-clock.ts`.
+Never use the runtime's local timezone for rental-day logic or unadorned date strings.
+Vercel runs UTC; the browser runs the visitor's zone. Use `lib/rental-clock.ts` (`parseIstInstant`, `toCanonicalIstIso`, `computeRentalDays`).
 
-*Why:* the booking clock used `new Date().getHours()`, so server-rendered HTML and
-client hydration disagreed by 5.5 hours and time slots visibly reset on load.
+- Timestamp strings transmitted and stored in database MUST carry explicit `+05:30` offset (e.g. `2026-08-28T11:00:00+05:30`).
+- Never parse raw unadorned strings like `2026-08-28T11:00` with `new Date(str)` on the server — Node/Vercel will treat it as UTC, causing a +5.5 hour shift (11:00 AM becomes 4:30 PM, 11:00 PM becomes 4:30 AM next day).
+
+*Why:* unadorned ISO strings caused 11:00 PM same-day returns to roll over into 4:30 AM Saturday, erroneously triggering weekend minimum rules and tripling the bill.
 
 ## 11. One implementation per business rule
 
@@ -107,6 +109,14 @@ disagreed, so the site quoted one price and the CRM charged another.
 ## 12. Schema changes go through migrations
 
 `supabase/migrations/`, dated, idempotent, re-runnable. Not dashboard edits.
+
+## 13. Refundable Security Deposit must NEVER be added into `total_amount`
+
+- `bookings.total_amount` is the **rental fare total** (Base rental + Surcharges + GST + Gateway fee - Discounts).
+- `bookings.deposit_amount` is the **refundable security deposit** (₹1,000 for two-wheelers, ₹2,000 for cars), collected in **cash at pickup** and refunded upon safe vehicle return.
+- Online payments (Razorpay) charge `total_amount`.
+- When a customer completes checkout, `paid_amount` equals `total_amount`, and remaining `balanceDue` is `0`.
+- **Do not bundle deposit into `total_amount`:** Doing so creates an artificial ₹1,000/₹2,000 "unpaid balance" on fully paid bookings, shows warnings in the CRM bookings table, and distorts company gross revenue calculations in reports.
 
 ## Deployment shape
 

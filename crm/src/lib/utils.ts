@@ -9,9 +9,11 @@ export function formatINR(value: number | null | undefined): string {
   }).format(value);
 }
 
+import { parseIstInstant } from "./rental-clock";
+
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
-  const d = new Date(value);
+  const d = parseIstInstant(value) || new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
   return d.toLocaleDateString("en-IN", {
     day: "numeric",
@@ -23,7 +25,7 @@ export function formatDate(value: string | null | undefined): string {
 
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
-  const d = new Date(value);
+  const d = parseIstInstant(value) || new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
   return d.toLocaleString("en-IN", {
     day: "numeric",

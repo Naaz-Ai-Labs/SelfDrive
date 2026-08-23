@@ -73,11 +73,13 @@ async function ownedBooking(bookingId: number) {
 /** Cancels the booking and — if anything was paid — raises a refund pre-approved at the
  * published policy amount for the reviewer to see; staff still complete the actual bank
  * transfer, so no money moves without a recorded human step. */
+import { parseIstInstant } from "./rental-clock";
+
 export async function customerRequestCancellation(bookingId: number, reason: string) {
   const result = await ownedBooking(bookingId);
   if ("error" in result) return result;
   const now = new Date();
-  const pickupAt = new Date(result.booking.pickup_at);
+  const pickupAt = parseIstInstant(result.booking.pickup_at) || new Date(result.booking.pickup_at);
   const note = `Customer cancellation request: ${reason}`;
 
   const cancelled = await sbUpdate("bookings", `id=eq.${bookingId}`, {

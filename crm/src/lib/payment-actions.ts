@@ -68,18 +68,17 @@ export async function createBookingPaymentOrder(bookingId: number, overrideAmoun
   const paidAmount = num(booking.paid_amount);
   const depositAmount = num(booking.deposit_amount);
 
-  // The security deposit is collected in CASH at pickup and must never be charged
-  // through Razorpay. `total_amount` is the all-in figure (deposit included) so the
-  // invoice can still show the full picture; the amount taken online is that minus
-  // the deposit, minus anything already paid.
-  const onlinePayable = Math.max(0, totalAmount - depositAmount);
+  // The security deposit is collected in CASH at pickup and is kept separate in `deposit_amount`.
+  // `total_amount` is the rental total (base + surcharges + GST), so the amount taken online
+  // is that minus anything already paid.
+  const onlinePayable = totalAmount;
   const due = overrideAmount && overrideAmount > 0 ? overrideAmount : Math.max(1, onlinePayable - paidAmount);
   if (due <= 0) return { ok: false, error: "This booking is already fully paid." };
 
   const duePaise = Math.max(100, toPaise(due));
 
   const breakdownJson = JSON.stringify({
-    baseAmount: booking.base_amount != null ? num(booking.base_amount) : due - depositAmount,
+    baseAmount: booking.base_amount != null ? num(booking.base_amount) : Math.max(0, due - num(booking.gst_amount)),
     depositAmount,
     gstAmount: num(booking.gst_amount),
     totalAmount: due,

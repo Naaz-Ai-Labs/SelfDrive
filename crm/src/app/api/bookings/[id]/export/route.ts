@@ -274,11 +274,11 @@ function buildPdf(input: {
     field("GST", formatINR(num(booking.gst_amount)));
     doc.moveDown(0.2);
     doc.fontSize(9).font("Helvetica-Bold").fillColor(INK);
-    doc.text(`Total: ${formatINR(total)}`);
+    doc.text(`Total Rental: ${formatINR(total)}`);
     doc.text(`Paid: ${formatINR(paid)}`);
-    doc.text(`Outstanding: ${formatINR(Math.max(0, total - paid))}`);
+    doc.text(`Rental Balance: ${formatINR(Math.max(0, total - paid))}`);
     doc.font("Helvetica").fillColor(MUTED).fontSize(8);
-    doc.text(`Security deposit ${formatINR(deposit)} — collected in cash at pickup, refundable.`);
+    doc.text(`Refundable Security Deposit: ${formatINR(deposit)} (collected in cash at pickup, refundable).`);
     rule();
 
     // ---- 4. Payments ----

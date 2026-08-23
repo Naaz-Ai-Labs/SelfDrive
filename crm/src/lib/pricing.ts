@@ -1,7 +1,7 @@
 import { sbSelect, num } from "./supabase-rest";
 import { getSetting } from "./settings";
 import type { Vehicle } from "./data";
-import { computeRentalDays, isWeekendIst, istDateKey } from "./rental-clock";
+import { computeRentalDays, isWeekendIst, istDateKey, parseIstInstant, toCanonicalIstIso } from "./rental-clock";
 
 export type PricingRuleRow = {
   id: number;
@@ -44,14 +44,13 @@ export type Quote = {
   /** Drop was after 08:00 — one extra full day is already included in `days`. */
   lateDrop: boolean;
   /**
-   * ALL-IN figure, deposit INCLUDED. For invoices/disclosure only.
-   * NEVER charge this at checkout — see `payableNow`.
+   * Total rental fare (base rental + surcharges/timing fee + GST + gateway fee).
+   * Matches payableNow. The refundable security deposit is kept separate in `depositAmount`.
    */
   totalAmount: number;
   /**
    * What the customer actually pays online: rental + surcharge + GST + gateway fee.
-   * The deposit is EXCLUDED — it is collected in cash at pickup. Confusing these two
-   * is what double-counted the deposit on invoices, so they are kept separate on purpose.
+   * The refundable security deposit is separate and collected in cash at pickup.
    */
   payableNow: number;
   /** Cash deposit collected at pickup (₹1000 two-wheelers, ₹2000 cars/tempo). Not charged online. */
@@ -201,13 +200,11 @@ export async function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt:
   const gstAmount = Math.round(taxableAmount * (gstPct / 100));
   const gatewayFeeAmount = Math.round((taxableAmount + gstAmount) * (gatewayFeePct / 100));
 
-  // Two DIFFERENT numbers, deliberately:
-  //   payableNow  — charged online. Deposit EXCLUDED (it is cash at pickup).
-  //   totalAmount — all-in disclosure for the invoice. Deposit INCLUDED.
-  // Do not "simplify" one into the other; that is exactly how the deposit ended up
-  // being collected twice.
+  // The total rental amount equals payableNow (rental fare + timing fee + GST + gateway fee).
+  // The refundable security deposit is kept separate in `depositAmount` and `depositPayableAtPickup`
+  // and is collected in cash at pickup, never added into totalAmount.
   const payableNow = taxableAmount + gstAmount + gatewayFeeAmount;
-  const totalAmount = payableNow + deposit;
+  const totalAmount = payableNow;
 
   return {
     days,
@@ -233,6 +230,20 @@ export async function calculateQuote(vehicle: Vehicle, pickupAt: Date, returnAt:
     payableNow,
     depositPayableAtPickup: deposit,
   };
+}
+
+/** Convenience wrapper for callers that hold separate date and time strings. */
+export async function calculateQuoteFromStrings(
+  vehicle: Vehicle,
+  pickupDateStr: string | null | undefined,
+  pickupTimeStr: string | null | undefined,
+  returnDateStr: string | null | undefined,
+  returnTimeStr: string | null | undefined
+): Promise<Quote | null> {
+  const pickup = parseIstInstant(pickupDateStr, pickupTimeStr);
+  const ret = parseIstInstant(returnDateStr, returnTimeStr);
+  if (!pickup || !ret || ret.getTime() <= pickup.getTime()) return null;
+  return calculateQuote(vehicle, pickup, ret, pickupTimeStr || "08:00", returnTimeStr || "08:00");
 }
 
 export function calculateLateFee(
@@ -283,4 +294,29 @@ export async function calculateCancellationRefund(pickupAt: Date, requestedAt: D
     return { pct: partialRefundPct, amount: Math.round(paidAmount * (partialRefundPct / 100)), slab: `${partialRefundHours}–${fullRefundHours} hours before pickup — ${partialRefundPct}% refund.` };
   }
   return { pct: 0, amount: 0, slab: `Less than ${partialRefundHours} hours before pickup — no refund.` };
+}
+
+/**
+ * Authoritative financial calculator for bookings.
+ * Enforces the invariant that refundable security deposit is strictly isolated
+ * from total rental fare and balance due.
+ */
+export function calculateBookingFinancials(booking: {
+  total_amount?: number | string | null;
+  paid_amount?: number | string | null;
+  deposit_amount?: number | string | null;
+}) {
+  const totalAmount = num(booking.total_amount);
+  const paidAmount = num(booking.paid_amount);
+  const depositAmount = num(booking.deposit_amount);
+  const balanceDue = Math.max(0, totalAmount - paidAmount);
+  const isFullyPaid = paidAmount >= totalAmount && totalAmount > 0;
+
+  return {
+    totalAmount,
+    paidAmount,
+    depositAmount,
+    balanceDue,
+    isFullyPaid,
+  };
 }
