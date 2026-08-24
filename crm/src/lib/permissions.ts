@@ -42,6 +42,10 @@ export function pathToScope(path: string): ServiceScope | null {
   if (path.startsWith("/dashboard/enquiries")) return "enquiries";
   if (path.startsWith("/dashboard/vehicles")) return "vehicles";
   if (path.startsWith("/dashboard/allocations")) return "allocations";
+  // The fleet pages are the vehicle edit form's fleet sections split into their own
+  // routes, so they carry the same scope. Without this they would fall through to the
+  // `return null` below, which canAccessModule treats as "everyone may see it".
+  if (path.startsWith("/dashboard/fleet")) return "vehicles";
   if (path.startsWith("/dashboard/payments")) return "payments";
   if (path.startsWith("/dashboard/refunds")) return "refunds";
   if (path.startsWith("/dashboard/problem-tickets")) return "problem_tickets";
