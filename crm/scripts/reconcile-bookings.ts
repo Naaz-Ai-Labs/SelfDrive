@@ -1,9 +1,25 @@
-import "dotenv/config";
-import { config } from "dotenv";
+import fs from "fs";
 import path from "path";
 
-// Load .env.local
-config({ path: path.resolve(__dirname, "../.env.local") });
+// Load .env.local if present
+try {
+  const envPath = path.resolve(__dirname, "../.env.local");
+  if (fs.existsSync(envPath)) {
+    if (typeof process.loadEnvFile === "function") {
+      process.loadEnvFile(envPath);
+    } else {
+      const content = fs.readFileSync(envPath, "utf8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const [k, ...v] = trimmed.split("=");
+        if (k && v.length > 0 && !process.env[k.trim()]) {
+          process.env[k.trim()] = v.join("=").trim();
+        }
+      }
+    }
+  }
+} catch {}
 
 import { sbSelect, sbUpdate, num } from "../src/lib/supabase-rest";
 import { calculateRentalQuote, QuoteVehicle } from "../../web/src/lib/pricing";
