@@ -230,6 +230,8 @@ export function BookingForm({
 
   const [vehicleId, setVehicleId] = useState<number | null>(search.get("vehicle") ? Number(search.get("vehicle")) : null);
   const [availableVehicles, setAvailableVehicles] = useState<Vehicle[]>(initialVehicles);
+  /** Same search with no branch filter, used only to explain what the branch filter hid. */
+  const [allBranchVehicles, setAllBranchVehicles] = useState<Vehicle[]>([]);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
 
@@ -383,6 +385,18 @@ export function BookingForm({
         // ignored, which still preserves the last good list.
         .then((res) => { if (Array.isArray(res)) setAvailableVehicles(res); })
         .finally(() => setLoadingVehicles(false));
+
+      // A vehicle kept entirely at the other branch is silently absent from the list
+      // above, which reads as "the site did not update" rather than "you cannot collect
+      // that car from here". Fetching the unfiltered list lets the picker say so out
+      // loud. Purely informational — it never widens what can actually be booked.
+      if (location) {
+        getAvailableVehicles(null, pickupAt || null, returnAt || null, null)
+          .then((all) => { if (Array.isArray(all)) setAllBranchVehicles(all); })
+          .catch(() => setAllBranchVehicles([]));
+      } else {
+        setAllBranchVehicles([]);
+      }
     }
   }, [step, pickupAt, returnAt, vehicleId, location]);
 
@@ -950,6 +964,36 @@ export function BookingForm({
           <div className="space-y-4">
             <h2 className="font-display text-xl font-semibold text-ink-900">Choose your vehicle</h2>
             <p className="text-sm text-ink-500">{days} day{days > 1 ? "s" : ""}, from {formatDate(pickupAt)} to {formatDate(returnAt)}.</p>
+
+            {location && (() => {
+              // Vehicles this search would return if the branch filter were dropped.
+              // They exist and are free for these dates — they simply live at the other
+              // branch, so they cannot be collected from the chosen pickup point.
+              const shown = new Set(availableVehicles.map((v) => v.id));
+              const elsewhere = allBranchVehicles.filter((v) => !shown.has(v.id));
+              return (
+                <div className="rounded-lg border border-brand-200 bg-brand-50/70 px-3.5 py-2.5 text-xs text-ink-700">
+                  <span className="font-semibold text-ink-900">Pickup at {location}.</span>{" "}
+                  Showing vehicles kept at this branch.
+                  {elsewhere.length > 0 && (
+                    <>
+                      {" "}
+                      <span className="font-semibold text-ink-900">
+                        {elsewhere.length} more {elsewhere.length === 1 ? "vehicle is" : "vehicles are"} free on these dates
+                      </span>{" "}
+                      at another branch
+                      {" — "}
+                      {elsewhere
+                        .slice(0, 4)
+                        .map((v) => `${v.name}${v.branch_name ? ` (${v.branch_name})` : ""}`)
+                        .join(", ")}
+                      {elsewhere.length > 4 ? `, +${elsewhere.length - 4} more` : ""}.
+                      {" "}Change the pickup location in step 1 to book {elsewhere.length === 1 ? "it" : "them"}.
+                    </>
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="flex gap-2 border-b border-ink-100 pb-3 overflow-x-auto">
               <button
