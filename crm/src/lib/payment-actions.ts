@@ -241,12 +241,50 @@ export async function verifyBookingPayment(input: {
   skipSignatureCheck?: boolean;
   bookingPayload?: any;
 }): Promise<{ ok: true; bookingNo: string; bookingId?: number; alreadyProcessed?: boolean } | { ok: false; error: string }> {
+  // Attaching is guarded on the booking having no documents yet, so a Razorpay retry or
+  // a customer refreshing the confirmation page cannot produce duplicate rows.
+  async function attachDocumentsIfMissing(bookingId: number, payload: any): Promise<void> {
+    const docs = payload?.documents;
+    if (!Array.isArray(docs) || docs.length === 0) return;
+
+    const existing = await sbCount("customer_documents", `booking_id=eq.${bookingId}`);
+    if (!existing.ok || existing.data > 0) return;
+
+    const bookingRow = await sbSelectOne<{ customer_id: number | null }>(
+      "bookings",
+      `select=customer_id&id=eq.${bookingId}`
+    );
+    const customerId = bookingRow.ok && bookingRow.data ? bookingRow.data.customer_id : null;
+    if (!customerId) return;
+
+    try {
+      const { attachCustomerDocuments } = await import("./booking-actions");
+      const res = await attachCustomerDocuments(customerId, bookingId, docs);
+      if (!res.ok) {
+        console.error(`[payments] booking ${bookingId}: documents not attached — ${res.error}`);
+      }
+    } catch (err) {
+      // Never let document attachment fail a payment that is already settled.
+      console.error(`[payments] booking ${bookingId}: document attachment threw`, err);
+    }
+  }
+
   // 1. Idempotency check on Razorpay payment ID
   const priorRes = await sbSelectOne<{ id: number; status: string; booking_id: number | null }>(
     "payments",
     `select=id,status,booking_id&razorpay_payment_id=eq.${encodeURIComponent(input.razorpayPaymentId)}`
   );
   if (priorRes.ok && priorRes.data && priorRes.data.status === "Paid" && priorRes.data.booking_id) {
+    // The webhook usually settles the payment before the browser posts its verify call,
+    // and it builds the booking from the draft enquiry — which carries no documents.
+    // submitBooking() is the only writer of customer_documents, and it never runs
+    // because this early return fires first, so the uploaded files orphan in storage
+    // and the CRM shows "No Docs".
+    //
+    // The browser's call is the only one that carries bookingPayload.documents, so
+    // attach them to the booking that already exists before returning.
+    await attachDocumentsIfMissing(priorRes.data.booking_id, input.bookingPayload);
+
     const bNo = await lookupBookingNo(priorRes.data.booking_id);
     return { ok: true, bookingNo: bNo ?? `BK-${priorRes.data.booking_id}`, bookingId: priorRes.data.booking_id, alreadyProcessed: true };
   }
