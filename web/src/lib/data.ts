@@ -381,8 +381,13 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
         ? 0
         : Math.max(0, activeUnitsCount - (holdsByVehicle.get(v.id) ?? 0));
 
+      const effectiveStatus = isVehicleUnavailable
+        ? (v.status === "available" ? "unavailable" : (v.status || "unavailable"))
+        : (totalAvailable === 0 ? "unavailable" : (v.status || "available"));
+
       return {
         ...v,
+        status: effectiveStatus,
         branch_name: branchName,
         category_name: cat?.name || v.category_name || "Vehicle",
         category_kind: cat?.kind || v.category_kind || "car",
@@ -532,15 +537,18 @@ export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle
             ...v,
             total_units: match.total_units,
             available_units: avail,
+            status: isTargetBranchBlocked || isVehicleUnavailable || avail === 0 ? "unavailable" : v.status,
             branch_id: targetBranchId,
             branch_name: bName,
           });
         }
       } else if (!v.branch_distribution || v.branch_distribution.length === 0) {
         if (v.branch_id === targetBranchId || !v.branch_id) {
+          const avail = isTargetBranchBlocked || isVehicleUnavailable ? 0 : (v.available_units ?? v.total_units ?? 1);
           matched.push({
             ...v,
-            available_units: isTargetBranchBlocked || isVehicleUnavailable ? 0 : (v.available_units ?? v.total_units ?? 1),
+            available_units: avail,
+            status: isTargetBranchBlocked || isVehicleUnavailable || avail === 0 ? "unavailable" : v.status,
             branch_id: targetBranchId,
             branch_name: bName,
           });
@@ -551,9 +559,11 @@ export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle
         ? v.branch_distribution.every((bd) => Number(branches.find((b) => Number(b.id) === bd.branch_id)?.blocked) === 1)
         : (v.branch_id ? Number(branches.find((b) => Number(b.id) === v.branch_id)?.blocked) === 1 : false);
 
+      const avail = isVehicleUnavailable || allBranchesBlocked ? 0 : (v.available_units ?? v.total_units ?? 1);
       matched.push({
         ...v,
-        available_units: isVehicleUnavailable || allBranchesBlocked ? 0 : (v.available_units ?? v.total_units ?? 1),
+        available_units: avail,
+        status: isVehicleUnavailable || allBranchesBlocked || avail === 0 ? "unavailable" : v.status,
       });
     }
   }

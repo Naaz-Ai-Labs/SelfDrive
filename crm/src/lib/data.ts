@@ -560,6 +560,11 @@ async function hydrateVehicles(rows: RawVehicle[]): Promise<Vehicle[]> {
       late_fee_per_hour: num(row.late_fee_per_hour),
       total_units: totalUnits,
       available_units: availableUnits,
+      status: String(
+        isVehicleUnavailable
+          ? (row.status === "available" ? "unavailable" : (row.status || "unavailable"))
+          : (availableUnits === 0 ? "unavailable" : (row.status || "available"))
+      ),
       units: (vUnits.length > 0 ? vUnits : DEFAULT_VEHICLE_UNITS.filter((u: VehicleUnit) => u.vehicle_id === id)) as unknown as VehicleUnit[],
       branch_distribution: branchDist.length > 0 ? branchDist : undefined,
       active: num(row.active, 1),

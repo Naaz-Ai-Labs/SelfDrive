@@ -34,22 +34,22 @@ async function main() {
     existingMap.set(Number(u.id), u);
   }
 
-  // 2. Upsert / sync all canonical default units
+  // 2. Upsert / sync all canonical default units (preserving existing status)
   for (const u of DEFAULT_VEHICLE_UNITS) {
     const existing = existingMap.get(u.id);
     const unitPayload = {
       vehicle_id: u.vehicle_id,
       unit_identifier: u.unit_identifier,
-      registration_no: u.registration_no,
-      status: "available",
-      current_branch_id: u.current_branch_id,
-      active: 1,
-      notes: u.notes,
+      registration_no: existing?.registration_no || u.registration_no,
+      status: existing?.status || u.status || "available",
+      current_branch_id: existing?.current_branch_id || u.current_branch_id,
+      active: existing?.active !== undefined ? existing.active : 1,
+      notes: existing?.notes || u.notes,
       updated_at: new Date().toISOString(),
     };
 
     if (existing) {
-      console.log(`Updating unit ${u.id} (${u.unit_identifier}) -> Branch ${u.current_branch_id} available`);
+      console.log(`Updating unit ${u.id} (${u.unit_identifier}) -> Branch ${unitPayload.current_branch_id} status=${unitPayload.status}`);
       await sbUpdate("vehicle_units", `id=eq.${u.id}`, unitPayload);
     } else {
       console.log(`Inserting unit ${u.id} (${u.unit_identifier}) -> Branch ${u.current_branch_id}`);
@@ -57,11 +57,14 @@ async function main() {
     }
   }
 
-  // 3. Make sure vehicle master records are status: 'available' and active: 1
-  const masterVehicles = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 18, 78, 79, 80];
+  // 3. Make sure vehicle master records are active without overwriting manual block/unavailable status
+  const masterVehicles = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 18, 79, 80];
   for (const vId of masterVehicles) {
-    console.log(`Setting vehicle ${vId} status=available active=1`);
-    await sbUpdate("vehicles", `id=eq.${vId}`, { status: "available", active: 1, updated_at: new Date().toISOString() });
+    const { data: currentV } = await sbSelect<any>("vehicles", `select=id,status,active&id=eq.${vId}`);
+    const existingV = currentV && currentV[0];
+    const newStatus = existingV?.status || "available";
+    console.log(`Setting vehicle ${vId} status=${newStatus} active=1`);
+    await sbUpdate("vehicles", `id=eq.${vId}`, { status: newStatus, active: 1, updated_at: new Date().toISOString() });
   }
 
   // 4. Update the test bookings with zero payment to 'Pending payment'

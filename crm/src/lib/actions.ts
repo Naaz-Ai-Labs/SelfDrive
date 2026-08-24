@@ -1300,9 +1300,9 @@ export async function recordInspection(input: {
     if (!photos.ok) return fail(photos, "Saving the inspection photos");
   }
 
-  const booking = await sbSelectOne<{ vehicle_id: number | null; return_at: string; start_odometer: number | string | null; included_km: number }>(
+  const booking = await sbSelectOne<{ vehicle_id: number | null; vehicle_unit_id: number | null; return_at: string; start_odometer: number | string | null; included_km: number }>(
     "bookings",
-    `select=vehicle_id,return_at,start_odometer,included_km&id=eq.${input.bookingId}`
+    `select=vehicle_id,vehicle_unit_id,return_at,start_odometer,included_km&id=eq.${input.bookingId}`
   );
   if (!booking.ok) return fail(booking, "Reading the booking");
   if (!booking.data) return { ok: false as const, error: `Booking ${input.bookingId} no longer exists.` };
@@ -1318,8 +1318,14 @@ export async function recordInspection(input: {
     if (!updated.ok) return fail(updated, "Updating the booking");
 
     if (vehicleId) {
-      const vehicle = await sbUpdate("vehicles", `id=eq.${vehicleId}`, { status: "booked", updated_at: nowIso() });
-      if (!vehicle.ok) return fail(vehicle, "Updating the vehicle status");
+      if (booking.data.vehicle_unit_id) {
+        await sbUpdate("vehicle_units", `id=eq.${booking.data.vehicle_unit_id}`, { status: "booked", updated_at: nowIso() });
+      }
+      const allUnits = await sbSelect<{ id: number; status: string }>("vehicle_units", `select=id,status&vehicle_id=eq.${vehicleId}&active=eq.1`);
+      const anyAvailable = allUnits.ok && allUnits.data ? allUnits.data.some((u) => u.status === "available") : false;
+      if (!anyAvailable && allUnits.ok && allUnits.data && allUnits.data.length > 0) {
+        await sbUpdate("vehicles", `id=eq.${vehicleId}`, { status: "booked", updated_at: nowIso() });
+      }
     }
   } else {
     const vehicle = vehicleId
@@ -1351,8 +1357,17 @@ export async function recordInspection(input: {
     if (!total.ok) return fail(total, "Updating the booking total");
 
     if (vehicleId) {
-      const freed = await sbUpdate("vehicles", `id=eq.${vehicleId}`, { status: "available", updated_at: nowIso() });
-      if (!freed.ok) return fail(freed, "Updating the vehicle status");
+      if (booking.data.vehicle_unit_id) {
+        await sbUpdate("vehicle_units", `id=eq.${booking.data.vehicle_unit_id}`, { status: "available", updated_at: nowIso() });
+      }
+      const allUnits = await sbSelect<{ id: number; status: string }>("vehicle_units", `select=id,status&vehicle_id=eq.${vehicleId}&active=eq.1`);
+      const anyAvailable = allUnits.ok && allUnits.data ? allUnits.data.some((u) => u.status === "available") : true;
+      if (anyAvailable) {
+        const currentV = await sbSelectOne<{ status: string }>("vehicles", `select=status&id=eq.${vehicleId}`);
+        if (currentV.ok && currentV.data && currentV.data.status !== "archived" && currentV.data.status !== "blocked") {
+          await sbUpdate("vehicles", `id=eq.${vehicleId}`, { status: "available", updated_at: nowIso() });
+        }
+      }
     }
 
     const history = await sbInsert("booking_history", {
