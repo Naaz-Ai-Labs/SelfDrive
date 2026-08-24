@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   const denied = requireGatewayKey(req);
   if (denied) return denied;
   const body = await req.json().catch(() => null);
-  if (!body?.paymentId || !body?.razorpayOrderId || !body?.razorpayPaymentId || !body?.razorpaySignature) {
+  if (!body?.razorpayOrderId || !body?.razorpayPaymentId || !body?.razorpaySignature) {
     return NextResponse.json({ ok: false, error: "Missing payment verification fields." }, { status: 400 });
   }
   const res = await verifyBookingPayment(body);

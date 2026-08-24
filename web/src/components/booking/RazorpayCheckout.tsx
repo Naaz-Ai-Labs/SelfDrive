@@ -23,6 +23,7 @@ function loadRazorpayScript(): Promise<boolean> {
 
 export function RazorpayCheckout({
   bookingId,
+  bookingPayload,
   amountDue,
   customerName,
   customerPhone,
@@ -31,7 +32,8 @@ export function RazorpayCheckout({
   onPaid,
   onPayLater,
 }: {
-  bookingId: number;
+  bookingId?: number;
+  bookingPayload?: any;
   /** Deposit-EXCLUDED figure. This is what Razorpay charges — never the all-in total. */
   amountDue: number;
   customerName: string;
@@ -49,8 +51,8 @@ export function RazorpayCheckout({
     payableNow?: number;
     depositPayableAtPickup?: number;
   } | null;
-  onPaid: () => void;
-  onPayLater: () => void;
+  onPaid: (res: { bookingNo: string; bookingId: number }) => void;
+  onPayLater?: () => void;
 }) {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
@@ -59,7 +61,12 @@ export function RazorpayCheckout({
   async function payNow() {
     setStatus("loading");
     setError("");
-    const order = await createBookingPaymentOrder(bookingId, amountDue, quote);
+    const order = await createBookingPaymentOrder(
+      bookingId ?? null,
+      amountDue,
+      quote,
+      { name: customerName, phone: customerPhone, email: customerEmail }
+    );
     if (!order.ok) {
       setStatus("error");
       setError(order.error);
@@ -102,13 +109,14 @@ export function RazorpayCheckout({
           razorpayOrderId: response.razorpay_order_id,
           razorpayPaymentId: response.razorpay_payment_id,
           razorpaySignature: response.razorpay_signature,
+          bookingPayload: bookingPayload ? { ...bookingPayload, amount: amountDue } : undefined,
         });
         if (!verify.ok) {
           setStatus("error");
           setError(verify.error);
           return;
         }
-        onPaid();
+        onPaid({ bookingNo: verify.bookingNo, bookingId: verify.bookingId ?? order.paymentId });
       },
       modal: { ondismiss: () => setStatus("idle") },
     });

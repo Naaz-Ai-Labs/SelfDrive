@@ -6,7 +6,7 @@ import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
 export async function createBookingPaymentOrder(
-  bookingId: number,
+  bookingId?: number | null,
   amountDue?: number,
   quote?: {
     days?: number;
@@ -20,13 +20,14 @@ export async function createBookingPaymentOrder(
     /** Deposit-excluded figure — this is what may be charged online. */
     payableNow?: number;
     depositPayableAtPickup?: number;
-  } | null
+  } | null,
+  customer?: { name?: string; phone?: string; email?: string }
 ): Promise<
   { ok: true; orderId: string; amountPaise: number; keyId: string; paymentId: number; paymentNo: string; notes?: Record<string, string>; businessName: string } | { ok: false; error: string }
 > {
   // 1. Primary Attempt via CRM Gateway
   try {
-    const res = await gatewayPost<any>("/api/gateway/v1/payments/order", { bookingId, amountDue, quote });
+    const res = await gatewayPost<any>("/api/gateway/v1/payments/order", { bookingId, amountDue, quote, customer });
     if (res && res.ok && res.orderId) {
       return res;
     }
@@ -43,31 +44,8 @@ export async function createBookingPaymentOrder(
   }
 
   try {
-    let finalAmount = Number(amountDue) || 0;
-    let bookingNo = `BK-${bookingId}`;
-
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-    if (supabaseUrl && supabaseKey) {
-      try {
-        const supabase = createClient(supabaseUrl, supabaseKey);
-        const { data: b } = await supabase.from("bookings").select("*, vehicles(*)").eq("id", bookingId).single();
-        if (b) {
-          bookingNo = b.booking_no || bookingNo;
-          if (finalAmount <= 0) {
-            // `bookings.total_amount` is the rental total (matches payableNow).
-            // The refundable security deposit is cash at pickup and tracked in deposit_amount.
-            finalAmount = Number(b.total_amount || 0);
-            if (finalAmount <= 0 && b.vehicles) {
-              const base = Number(b.vehicles.rate_24h || 1000);
-              const gst = Math.round(base * 0.06);
-              finalAmount = base + gst;
-            }
-          }
-        }
-      } catch {}
-    }
+    let finalAmount = Number(amountDue) || (quote?.payableNow ?? quote?.totalAmount ?? 0);
+    let bookingNo = bookingId ? `BK-${bookingId}` : "BK-ONLINE";
 
     if (finalAmount <= 0) {
       finalAmount = 1;
@@ -82,10 +60,10 @@ export async function createBookingPaymentOrder(
     const gstAmt = quote?.gstAmount ?? 0;
 
     const notes: Record<string, string> = {
-      "Booking No": bookingNo,
+      "Customer": customer?.name ?? "Online Customer",
+      "Phone": customer?.phone ?? "",
       "Base Rental": `₹${baseAmt.toLocaleString("en-IN")}`,
       "GST (6%)": gstAmt > 0 ? `₹${gstAmt.toLocaleString("en-IN")}` : "Included",
-      // Disclosed on the receipt, deliberately excluded from the charged amount.
       "Deposit (cash at pickup)": depAmt > 0 ? `₹${depAmt.toLocaleString("en-IN")} — not charged online` : "Collected at pickup",
       "Paid Online Now": `₹${finalAmount.toLocaleString("en-IN")}`,
     };
@@ -116,7 +94,7 @@ export async function createBookingPaymentOrder(
       orderId: rzpOrder.id,
       amountPaise,
       keyId,
-      paymentId: bookingId,
+      paymentId: bookingId ?? 0,
       paymentNo,
       businessName: "Darshh Holiday",
       notes,
@@ -128,11 +106,12 @@ export async function createBookingPaymentOrder(
 }
 
 export async function verifyBookingPayment(input: {
-  paymentId: number;
+  paymentId?: number;
   razorpayOrderId: string;
   razorpayPaymentId: string;
   razorpaySignature: string;
-}): Promise<{ ok: true; bookingNo: string } | { ok: false; error: string }> {
+  bookingPayload?: any;
+}): Promise<{ ok: true; bookingNo: string; bookingId?: number } | { ok: false; error: string }> {
   // 1. Try CRM Gateway
   try {
     const res = await gatewayPost<any>("/api/gateway/v1/payments/verify", input);
@@ -154,87 +133,45 @@ export async function verifyBookingPayment(input: {
     return { ok: false, error: "Invalid payment signature." };
   }
 
-  let bookingNo = `BK-${input.paymentId}`;
-  let paidAmount = 1000;
+  // CASE A: Pre-booking online checkout — ONLY create the booking in CRM once payment is verified!
+  if (input.bookingPayload) {
+    try {
+      const { submitBooking } = await import("./booking-actions");
+      const subRes = await submitBooking(input.bookingPayload);
+      if (!subRes.ok || !subRes.bookingId) {
+        return { ok: false, error: subRes.error || "Payment was successful, but booking could not be saved. Contact support with your payment ID." };
+      }
 
-  // High-availability live update directly in Supabase PostgreSQL
-  try {
-    const rows = await supabaseRestSelect<any>("bookings", `id=eq.${input.paymentId}`);
-    let b = rows && rows.length > 0 ? rows[0] : null;
+      const bookingId = Number(subRes.bookingId);
+      const bookingNo = String(subRes.bookingNo);
+      const paidAmount = Number(input.bookingPayload.amount || 1000);
 
-    if (!b) {
-      paidAmount = 954; // rental + GST only; the ₹1000 deposit is cash at pickup
-      const now = new Date().toISOString();
-      const tomorrow = new Date(Date.now() + 86400000).toISOString();
-      await supabaseRestUpsert("bookings", {
-        id: input.paymentId,
-        booking_no: bookingNo,
-        vehicle_id: 1,
-        pickup_at: now,
-        return_at: tomorrow,
-        base_amount: 900,
-        deposit_amount: 1000,
-        gst_amount: 54,
-        total_amount: 900 + 54,
-        paid_amount: 900 + 54,
-        status: "Confirmed",
-        created_at: now,
-        updated_at: now,
+      // Record payment
+      const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
+      await supabaseRestInsert("payments", {
+        booking_id: bookingId,
+        payment_no: paymentNo,
+        kind: "online",
+        amount: paidAmount,
+        status: "Paid",
+        method: "UPI",
+        gateway_ref: input.razorpayPaymentId,
+        razorpay_order_id: input.razorpayOrderId,
+        razorpay_payment_id: input.razorpayPaymentId,
+        notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
+        created_at: new Date().toISOString(),
       });
-    } else {
-      bookingNo = b.booking_no || bookingNo;
-      const allIn = Number(b.total_amount || 0);
-      paidAmount = allIn > 0 ? allIn : Number(b.paid_amount || 0);
 
-      // 1. Update Booking Status to Confirmed & Paid Amount
+      // Update booking to Confirmed & record paid amount
       await supabaseRestUpsert("bookings", {
-        ...b,
+        id: bookingId,
         status: "Confirmed",
         paid_amount: paidAmount,
         updated_at: new Date().toISOString(),
       });
-    }
 
-    // 2. Record Payment Entry in CRM Payments Table
-    const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
-    await supabaseRestInsert("payments", {
-      booking_id: input.paymentId,
-      payment_no: paymentNo,
-      kind: "online",
-      amount: paidAmount,
-      status: "Paid",
-      method: "UPI",
-      gateway_ref: input.razorpayPaymentId,
-      razorpay_order_id: input.razorpayOrderId,
-      razorpay_payment_id: input.razorpayPaymentId,
-      notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
-      created_at: new Date().toISOString(),
-    });
-
-    // 3. Record Audit Log in Booking History
-    try {
-      await supabaseRestInsert("booking_history", {
-        booking_id: input.paymentId,
-        action: "Payment Verified",
-        detail: `Razorpay payment of ₹${paidAmount} verified successfully. Payment ID: ${input.razorpayPaymentId}. Status updated to Confirmed.`,
-        created_at: new Date().toISOString(),
-      });
-    } catch {}
-
-      // 4. Cache downloadable Invoice payload in Redis for this session
       try {
-        const { cacheSet, cacheInvalidatePrefix } = await import("./redis");
-        const invoicePayload = {
-          bookingNo,
-          paymentId: input.paymentId,
-          razorpayOrderId: input.razorpayOrderId,
-          razorpayPaymentId: input.razorpayPaymentId,
-          amount: paidAmount,
-          verifiedAt: new Date().toISOString(),
-          status: "Confirmed",
-        };
-        await cacheSet(`session:invoice:${input.paymentId}`, invoicePayload, 86400);
-        await cacheSet(`session:invoice:${bookingNo}`, invoicePayload, 86400);
+        const { cacheInvalidatePrefix } = await import("./redis");
         await cacheInvalidatePrefix("web:gateway:");
         await cacheInvalidatePrefix("vehicles:");
         await cacheInvalidatePrefix("fleet:");
@@ -247,9 +184,67 @@ export async function verifyBookingPayment(input: {
         revalidatePath("/booking", "page");
       } catch {}
 
+      return { ok: true, bookingNo, bookingId };
     } catch (err: any) {
-      console.error("Supabase payment verification update error:", err?.message || err);
+      console.error("Direct booking submission after payment error:", err?.message || err);
+      return { ok: false, error: "Payment was captured, but booking could not be finalized. Please contact support." };
     }
+  }
+
+  // CASE B: Existing booking payment update
+  let bookingNo = input.paymentId ? `BK-${input.paymentId}` : "";
+  let paidAmount = 1000;
+
+  try {
+    const rows = input.paymentId ? await supabaseRestSelect<any>("bookings", `id=eq.${input.paymentId}`) : [];
+    let b = rows && rows.length > 0 ? rows[0] : null;
+
+    if (b) {
+      bookingNo = b.booking_no || bookingNo;
+      const allIn = Number(b.total_amount || 0);
+      paidAmount = allIn > 0 ? allIn : Number(b.paid_amount || 0);
+
+      await supabaseRestUpsert("bookings", {
+        ...b,
+        status: "Confirmed",
+        paid_amount: paidAmount,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    if (input.paymentId) {
+      const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
+      await supabaseRestInsert("payments", {
+        booking_id: input.paymentId,
+        payment_no: paymentNo,
+        kind: "online",
+        amount: paidAmount,
+        status: "Paid",
+        method: "UPI",
+        gateway_ref: input.razorpayPaymentId,
+        razorpay_order_id: input.razorpayOrderId,
+        razorpay_payment_id: input.razorpayPaymentId,
+        notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    try {
+      const { cacheInvalidatePrefix } = await import("./redis");
+      await cacheInvalidatePrefix("web:gateway:");
+      await cacheInvalidatePrefix("vehicles:");
+      await cacheInvalidatePrefix("fleet:");
+    } catch {}
+
+    try {
+      const { revalidatePath } = await import("next/cache");
+      revalidatePath("/", "layout");
+      revalidatePath("/vehicles", "page");
+      revalidatePath("/booking", "page");
+    } catch {}
+  } catch (err: any) {
+    console.error("Supabase payment verification update error:", err?.message || err);
+  }
 
   return { ok: true, bookingNo };
 }

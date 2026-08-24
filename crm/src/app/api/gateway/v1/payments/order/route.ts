@@ -6,7 +6,11 @@ export async function POST(req: NextRequest) {
   const denied = requireGatewayKey(req);
   if (denied) return denied;
   const body = await req.json().catch(() => null);
-  if (!body?.bookingId) return NextResponse.json({ ok: false, error: "Missing bookingId." }, { status: 400 });
-  const res = await createBookingPaymentOrder(Number(body.bookingId), body.amountDue ? Number(body.amountDue) : undefined);
+  const res = await createBookingPaymentOrder(
+    body?.bookingId ? Number(body.bookingId) : null,
+    body?.amountDue ? Number(body.amountDue) : undefined,
+    body?.quote ?? null,
+    body?.customer ?? null
+  );
   return NextResponse.json(res);
 }

@@ -542,7 +542,19 @@ export function BookingForm({
     }
   }
 
-  async function submit() {
+  const currentBookingPayload = useMemo(() => ({
+    token: token ?? "",
+    vehicleId: Number(vehicleId),
+    pickupAt,
+    returnAt,
+    location,
+    passengers: passengers ? Number(passengers) : null,
+    contact,
+    termsAccepted,
+    documents: Object.entries(documents).filter(([, v]) => v.url).map(([kind, v]) => ({ kind, url: v.url, number: v.number, expiry: v.expiry })),
+  }), [token, vehicleId, pickupAt, returnAt, location, passengers, contact, termsAccepted, documents]);
+
+  function submit() {
     if (!validateStep(5) || !vehicleId) return;
 
     if (isSelectedBranchBlocked) {
@@ -564,44 +576,47 @@ export function BookingForm({
       return;
     }
 
-    setSubmitting(true);
     setSubmitError("");
-    const res = await submitBooking({
-      token: token ?? "",
-      vehicleId, pickupAt, returnAt, location, passengers: passengers ? Number(passengers) : null,
-      contact, termsAccepted,
-      documents: Object.entries(documents).filter(([, v]) => v.url).map(([kind, v]) => ({ kind, url: v.url, number: v.number, expiry: v.expiry })),
-    });
-    setSubmitting(false);
-    if (!res.ok || !res.bookingId) { setSubmitError(res.error ?? "Something went wrong."); return; }
-    localStorage.removeItem("darshh_booking_draft");
-    setResult({ bookingId: res.bookingId, bookingNo: res.bookingNo! });
     setStep(6);
   }
 
   const resumeLink = token ? `${typeof window !== "undefined" ? window.location.origin : ""}/booking?resume=${token}` : "";
 
-  if (step === 6 && result) {
+  if (step === 6) {
     return (
       <div className="mx-auto max-w-xl">
         {!paid ? (
           <div className="card p-6 sm:p-8">
-            <h2 className="font-display text-2xl font-semibold text-ink-900">Booking received — {result.bookingNo}</h2>
+            <h2 className="font-display text-2xl font-semibold text-ink-900">Final Step — Secure Online Payment</h2>
             <p className="mt-2 text-sm text-ink-600">Complete your online payment now to confirm your vehicle reservation instantly.</p>
             <p className="mt-1 text-sm text-ink-600">
               Pay now online: <strong>{formatINR(payNowAmount)}</strong> · Security deposit (cash at pickup, refundable): <strong>{formatINR(depositAtPickup)}</strong>
             </p>
             <div className="mt-6">
               <RazorpayCheckout
-                bookingId={result.bookingId}
+                bookingId={result?.bookingId}
+                bookingPayload={currentBookingPayload}
                 amountDue={payNowAmount}
                 customerName={contact.name}
                 customerPhone={contact.phone}
                 customerEmail={contact.email}
                 quote={activeQuote}
-                onPaid={() => setPaid(true)}
+                onPaid={(res) => {
+                  localStorage.removeItem("darshh_booking_draft");
+                  setResult({ bookingId: res.bookingId, bookingNo: res.bookingNo });
+                  setPaid(true);
+                }}
                 onPayLater={() => setPaid(true)}
               />
+            </div>
+            <div className="mt-6 pt-4 border-t border-ink-100 flex justify-between">
+              <button
+                type="button"
+                onClick={() => setStep(5)}
+                className="text-xs font-semibold text-ink-600 hover:text-ink-900"
+              >
+                ← Back to Review
+              </button>
             </div>
           </div>
         ) : (
@@ -609,26 +624,28 @@ export function BookingForm({
             <div className="text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl text-emerald-700">✓</div>
               <h2 className="mt-4 font-display text-2xl font-semibold text-ink-900">You&apos;re all set!</h2>
-              <p className="mt-1.5 text-xs text-ink-600">Your booking number is <strong>{result.bookingNo}</strong>. Here is your official payment tax invoice.</p>
+              <p className="mt-1.5 text-xs text-ink-600">Your booking number is <strong>{result?.bookingNo}</strong>. Here is your official payment tax invoice.</p>
               <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
-                <Link href={`/track/${result.bookingNo}`} className="btn-primary py-2 px-4 text-xs font-bold bg-brand-500 text-ink-950 shadow-sm">
+                <Link href={`/track/${result?.bookingNo}`} className="btn-primary py-2 px-4 text-xs font-bold bg-brand-500 text-ink-950 shadow-sm">
                   Track Booking Status 📍
                 </Link>
-                <a href={waLink(businessWhatsapp, `Hi, this is regarding my booking ${result.bookingNo}`)} target="_blank" rel="noopener noreferrer" className="btn-secondary py-2 text-xs">Message us on WhatsApp 💬</a>
+                <a href={waLink(businessWhatsapp, `Hi, this is regarding my booking ${result?.bookingNo}`)} target="_blank" rel="noopener noreferrer" className="btn-secondary py-2 text-xs">Message us on WhatsApp 💬</a>
                 <Link href="/customer/portal" className="btn-secondary py-2 text-xs">Customer Portal ↗</Link>
               </div>
             </div>
 
             {/* Official Itemized Tax Invoice Card with Download / Save PDF Option */}
-            <InlineInvoiceCard
-              bookingNo={result.bookingNo}
-              bookingId={result.bookingId}
-              customerName={contact.name}
-              customerPhone={contact.phone}
-              customerEmail={contact.email}
-              quote={activeQuote}
-              amountPaid={payNowAmount}
-            />
+            {result && (
+              <InlineInvoiceCard
+                bookingNo={result.bookingNo}
+                bookingId={result.bookingId}
+                customerName={contact.name}
+                customerPhone={contact.phone}
+                customerEmail={contact.email}
+                quote={activeQuote}
+                amountPaid={payNowAmount}
+              />
+            )}
           </div>
         )}
       </div>
@@ -1377,7 +1394,7 @@ export function BookingForm({
         <div className="mt-8 flex justify-between">
           {step > 1 ? <button type="button" onClick={back} className="btn-secondary">Back</button> : <span />}
           {step < 5 && <button type="button" onClick={next} className="btn-primary">Continue</button>}
-          {step === 5 && <button type="button" onClick={submit} disabled={submitting} className="btn-primary">{submitting ? "Submitting…" : "Confirm booking"}</button>}
+          {step === 5 && <button type="button" onClick={submit} className="btn-primary">Proceed to Payment →</button>}
         </div>
       </div>
     </div>
