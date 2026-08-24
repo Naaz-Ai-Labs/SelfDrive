@@ -505,11 +505,32 @@ async function hydrateVehicles(
       row.status === "archived" ||
       num(row.active, 1) === 0;
 
-    const activeUnits = vUnits.length > 0
-      ? vUnits.filter((u) => u.status === "available" && !bookedUnitIds.has(Number(u.id)) && !branchMap.get(u.current_branch_id || 0)?.blocked).length
-      : (branchBlocked ? 0 : totalUnits);
+    // A vehicle row is a GROUP (a model), not a bookable thing. What can actually be
+    // rented are its physical units, each with its own plate, branch and status.
+    //
+    // Only retirement is genuinely vehicle-wide. The soft statuses — unavailable,
+    // blocked, maintenance — describe a CONDITION that belongs to individual units, so
+    // they must not be applied to the group: marking one of five units as being in
+    // maintenance has to leave four bookable, not zero.
+    const isVehicleRetired = row.status === "archived" || num(row.active, 1) === 0;
+    const hasUnits = vUnits.length > 0;
 
-    const availableUnits = branchBlocked || isVehicleUnavailable || activeUnits === 0
+    // Per-unit filtering already handles both concerns correctly: a unit is counted only
+    // if its own status is available, it is not already booked, and the branch HOLDING
+    // THAT UNIT is not blocked. Blocking Hassan therefore removes Hassan's units and
+    // leaves Sakleshpura's untouched.
+    //
+    // With no units at all there is nothing to derive from, so the vehicle-level status
+    // and its primary branch remain the only available signal.
+    const activeUnits = hasUnits
+      ? vUnits.filter((u) => u.status === "available" && !bookedUnitIds.has(Number(u.id)) && !branchMap.get(u.current_branch_id || 0)?.blocked).length
+      : (branchBlocked || isVehicleUnavailable ? 0 : totalUnits);
+
+    // Previously read `branchBlocked || isVehicleUnavailable || activeUnits === 0`.
+    // `branchBlocked` is the vehicle's PRIMARY branch, so blocking one branch zeroed
+    // units parked at the other one; and `isVehicleUnavailable` let the group's status
+    // override the units it is supposed to merely summarise.
+    const availableUnits = isVehicleRetired || activeUnits === 0
       ? 0
       : Math.max(0, activeUnits - (holdsByVehicle.get(id) ?? 0));
 
@@ -545,7 +566,10 @@ async function hydrateVehicles(
           );
           const unassignedModelHolds = Math.max(0, (holdsByVehicle.get(id) ?? 0) - bookedUnitIds.size);
           const effectiveHolds = branchHoldsWithoutUnit + (countsByBranch.size === 1 ? unassignedModelHolds : 0);
-          const branchAvailable = isVehicleUnavailable || bInfo.blocked ? 0 : Math.max(0, stats.available - effectiveHolds);
+          // bInfo.blocked is THIS branch, which is correct and stays. isVehicleUnavailable
+          // was the group's own status overriding its units, and is gone for the same
+          // reason as above — only retirement zeroes a branch that still holds free units.
+          const branchAvailable = isVehicleRetired || bInfo.blocked ? 0 : Math.max(0, stats.available - effectiveHolds);
           branchDist.push({
             branch_id: bId,
             branch_name: bInfo.name,
@@ -590,10 +614,15 @@ async function hydrateVehicles(
       late_fee_per_hour: num(row.late_fee_per_hour),
       total_units: totalUnits,
       available_units: availableUnits,
+      // The group's status is a SUMMARY of its units, never an override of them.
+      // getAvailableVehicles filters on `status === "available"`, so deriving this from
+      // the stored row status meant a model marked unavailable stayed excluded from the
+      // booking picker even once its units were free again — the capacity fix above
+      // would have been invisible without this.
       status: String(
-        isVehicleUnavailable
-          ? (row.status === "available" ? "unavailable" : (row.status || "unavailable"))
-          : (availableUnits === 0 ? "unavailable" : (row.status || "available"))
+        isVehicleRetired
+          ? (row.status || "archived")
+          : (availableUnits > 0 ? "available" : "unavailable")
       ),
       units: (vUnits.length > 0 ? vUnits : DEFAULT_VEHICLE_UNITS.filter((u: VehicleUnit) => u.vehicle_id === id)) as unknown as VehicleUnit[],
       branch_distribution: branchDist.length > 0 ? branchDist : undefined,
