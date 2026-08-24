@@ -413,14 +413,26 @@ async function hydrateVehicles(rows: RawVehicle[]): Promise<Vehicle[]> {
   if (holdsRes.ok && holdsRes.data) {
     for (const hold of holdsRes.data) {
       const vKey = Number(hold.vehicle_id);
-      holdsByVehicle.set(vKey, (holdsByVehicle.get(vKey) ?? 0) + 1);
 
+      if (hold.vehicle_unit_id) {
+        // Unit-scoped hold: it names the exact unit, so removing that unit from the
+        // active count below is the whole subtraction. Counting it in holdsByVehicle
+        // as well subtracted it a SECOND time, because availableUnits is computed as
+        // activeUnits - holdsByVehicle and activeUnits has already dropped the unit.
+        //
+        // Mercedes W140 (2 units, one block on one unit) came out as 1 - 1 = 0 and
+        // vanished from the booking picker while the database, and the vehicle's own
+        // branch_distribution, both correctly showed one unit free.
+        bookedUnitIds.add(Number(hold.vehicle_unit_id));
+        continue;
+      }
+
+      // Vehicle-scoped hold with no unit named: nothing has been removed from the
+      // active count, so it must be subtracted generically here.
+      holdsByVehicle.set(vKey, (holdsByVehicle.get(vKey) ?? 0) + 1);
       if (hold.branch_id) {
         const vbKey = `${vKey}_${hold.branch_id}`;
         holdsByVehicleAndBranch.set(vbKey, (holdsByVehicleAndBranch.get(vbKey) ?? 0) + 1);
-      }
-      if (hold.vehicle_unit_id) {
-        bookedUnitIds.add(Number(hold.vehicle_unit_id));
       }
     }
   }
