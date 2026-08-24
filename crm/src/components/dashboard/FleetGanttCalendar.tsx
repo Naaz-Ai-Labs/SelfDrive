@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatINR } from "@/lib/utils";
-import { blockVehicleDates } from "@/lib/actions";
+import { blockVehicleDates, unblockVehicleDates } from "@/lib/actions";
 
 type VehicleItem = {
   id: number;
@@ -24,6 +24,17 @@ type BookingBlock = {
   pickupAt: string;
   returnAt: string;
   status: string;
+};
+
+/** A staff-created hold (not a customer booking) — the thing blockVehicleDates writes. */
+type StaffBlock = {
+  id: number;
+  vehicleId: number;
+  vehicleUnitId: number | null;
+  startsAt: string;
+  endsAt: string;
+  reason: string;
+  notes: string | null;
 };
 
 /**
@@ -49,9 +60,12 @@ const WINDOW_OPTIONS = [7, 14, 30] as const;
 export function FleetGanttCalendar({
   vehicles = [],
   bookings = [],
+  blocks = [],
 }: {
   vehicles?: VehicleItem[];
   bookings?: BookingBlock[];
+  /** Optional and defaulted so any existing caller that doesn't pass it is unaffected. */
+  blocks?: StaffBlock[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -123,6 +137,18 @@ export function FleetGanttCalendar({
         return;
       }
       setActionCell(null);
+      router.refresh();
+    });
+  }
+
+  function handleUnblock(blockId: number) {
+    setError("");
+    startTransition(async () => {
+      const res = await unblockVehicleDates(blockId);
+      if (!res.ok) {
+        setError(res.error || "Could not lift that block.");
+        return;
+      }
       router.refresh();
     });
   }
@@ -264,6 +290,7 @@ export function FleetGanttCalendar({
           <div className="divide-y divide-ink-100">
             {filteredVehicles.map((v) => {
               const vBookings = bookings.filter((b) => b.vehicleId === v.id);
+              const vBlocks = blocks.filter((b) => b.vehicleId === v.id);
 
               return (
                 <div key={v.id} className="grid items-center py-2.5 hover:bg-ink-50/40" style={gridStyle}>
@@ -286,6 +313,12 @@ export function FleetGanttCalendar({
                     const matchingBooking = vBookings.find(
                       (b) => dayKey >= b.pickupAt.slice(0, 10) && dayKey <= b.returnAt.slice(0, 10)
                     );
+                    // A booking on this vehicle always wins the cell over a block: it is
+                    // real revenue, and blockVehicleDates only ever writes a row with no
+                    // booking_id, so the two can never actually describe the same hold.
+                    const matchingBlock = !matchingBooking
+                      ? vBlocks.find((b) => dayKey >= b.startsAt.slice(0, 10) && dayKey <= b.endsAt.slice(0, 10))
+                      : undefined;
                     const isOpen = actionCell?.vehicle.id === v.id && actionCell?.dayKey === dayKey;
 
                     return (
@@ -302,6 +335,19 @@ export function FleetGanttCalendar({
                           >
                             {matchingBooking.customerName.split(" ")[0]}
                           </Link>
+                        ) : matchingBlock ? (
+                          // A staff block. Its own cell, distinct from a paid booking, so
+                          // "block a day" is visible on the very screen that created it —
+                          // previously the write succeeded but nothing rendered it here.
+                          <button
+                            type="button"
+                            disabled={isPending}
+                            title={matchingBlock.notes || matchingBlock.reason}
+                            onClick={() => handleUnblock(matchingBlock.id)}
+                            className="block h-6 w-full rounded-lg border border-rose-300 bg-rose-100 px-1.5 text-[10px] font-bold text-rose-800 truncate transition hover:bg-rose-200 disabled:opacity-50"
+                          >
+                            {isPending ? "…" : matchingBlock.reason === "maintenance" ? "🔧 Blocked" : "🚫 Blocked"}
+                          </button>
                         ) : (
                           <>
                             <button

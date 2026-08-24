@@ -386,7 +386,20 @@ async function hydrateVehicles(
       `&pickup_at=lt.${encodeURIComponent(availabilityWindow.returnAt)}`
     : `&return_at=gte.${encodeURIComponent(nowIso)}`;
 
-  const [photosRes, holdsRes, unitsRes, branchesRes] = await Promise.all([
+  // Same question, asked of availability_blocks instead of bookings: is this unit/vehicle
+  // taken off sale during the window. Column names differ (starts_at/ends_at rather than
+  // pickup_at/return_at) but the overlap logic is identical.
+  //
+  // booking_id=is.null is deliberate: a real reservation writes BOTH a bookings row and a
+  // linked availability_blocks row (see lib/bookings.ts), and that occupancy is already
+  // counted via holdsRes above. Folding in blocks with a booking_id here would subtract
+  // the same hold twice. Only staff-created blocks (no booking_id) are new information.
+  const blocksFilter = availabilityWindow
+    ? `&ends_at=gt.${encodeURIComponent(availabilityWindow.pickupAt)}` +
+      `&starts_at=lt.${encodeURIComponent(availabilityWindow.returnAt)}`
+    : `&ends_at=gte.${encodeURIComponent(nowIso)}`;
+
+  const [photosRes, holdsRes, unitsRes, branchesRes, blocksRes] = await Promise.all([
     sbSelect<{ vehicle_id: number; url: string }>(
       "vehicle_photos",
       `select=vehicle_id,url&vehicle_id=${idPredicate}&order=is_primary.desc,id.asc`
@@ -400,10 +413,15 @@ async function hydrateVehicles(
       `select=id,vehicle_id,current_branch_id,status,registration_no,unit_identifier&vehicle_id=${idPredicate}&active=eq.1`
     ),
     sbSelect<{ id: number; name: string; blocked?: number }>("branches", "select=id,name,blocked&active=eq.1"),
+    sbSelect<{ vehicle_id: number; vehicle_unit_id: number | null }>(
+      "availability_blocks",
+      `select=vehicle_id,vehicle_unit_id&vehicle_id=${idPredicate}&booking_id=is.null${blocksFilter}`
+    ),
   ]);
 
   if (!photosRes.ok) console.warn(`Could not load vehicle photos: ${photosRes.error}`);
   if (!holdsRes.ok) console.warn(`Could not load vehicle availability: ${holdsRes.error}`);
+  if (!blocksRes.ok) console.warn(`Could not load vehicle blocks: ${blocksRes.error}`);
 
   const branchMap = new Map<number, { id: number; name: string; blocked: boolean }>();
   if (branchesRes.ok && branchesRes.data && branchesRes.data.length > 0) {
@@ -452,6 +470,23 @@ async function hydrateVehicles(
         const vbKey = `${vKey}_${hold.branch_id}`;
         holdsByVehicleAndBranch.set(vbKey, (holdsByVehicleAndBranch.get(vbKey) ?? 0) + 1);
       }
+    }
+  }
+
+  // Staff blocks fold into the exact same structures a booking hold would populate, so
+  // every downstream computation (activeUnits, branch_distribution, the reported status)
+  // treats "blocked by staff" and "booked by a customer" as the same kind of occupancy
+  // without needing its own parallel logic. availability_blocks carries no branch_id
+  // column, so a vehicle-scoped block (no unit named) only ever lands in holdsByVehicle,
+  // never holdsByVehicleAndBranch — it reduces the vehicle's total, not one branch's.
+  if (blocksRes.ok && blocksRes.data) {
+    for (const block of blocksRes.data) {
+      if (block.vehicle_unit_id) {
+        bookedUnitIds.add(Number(block.vehicle_unit_id));
+        continue;
+      }
+      const vKey = Number(block.vehicle_id);
+      holdsByVehicle.set(vKey, (holdsByVehicle.get(vKey) ?? 0) + 1);
     }
   }
 

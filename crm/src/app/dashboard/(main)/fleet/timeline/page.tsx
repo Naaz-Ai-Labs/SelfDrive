@@ -1,12 +1,16 @@
 import type { Metadata } from "next";
 import { FleetGanttCalendar } from "@/components/dashboard/FleetGanttCalendar";
-import { loadFleetVehicles, loadFleetBookings, toGanttVehicles } from "@/lib/fleet-page-data";
+import { loadFleetVehicles, loadFleetBookings, loadFleetBlocks, toGanttVehicles } from "@/lib/fleet-page-data";
 
 export const metadata: Metadata = { title: "Fleet Timeline", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
 export default async function FleetTimelinePage() {
-  const [vehicles, bookings] = await Promise.all([loadFleetVehicles(), loadFleetBookings()]);
+  const [vehicles, bookings, blocks] = await Promise.all([
+    loadFleetVehicles(),
+    loadFleetBookings(),
+    loadFleetBlocks(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -19,7 +23,7 @@ export default async function FleetTimelinePage() {
         </div>
       </div>
 
-      <FleetGanttCalendar vehicles={toGanttVehicles(vehicles)} bookings={bookings} />
+      <FleetGanttCalendar vehicles={toGanttVehicles(vehicles)} bookings={bookings} blocks={blocks} />
     </div>
   );
 }

@@ -70,6 +70,44 @@ export async function loadFleetBookings(): Promise<FleetBooking[]> {
   }));
 }
 
+export type FleetBlock = {
+  id: number;
+  vehicleId: number;
+  vehicleUnitId: number | null;
+  startsAt: string;
+  endsAt: string;
+  reason: string;
+  notes: string | null;
+};
+
+/**
+ * Staff-created blocks that are still in effect (booking_id is null, so a real
+ * reservation's own linked block is excluded — that occupancy already arrives through
+ * loadFleetBookings via the `bookings` table, and folding it in again here would count
+ * the same hold twice).
+ */
+export async function loadFleetBlocks(): Promise<FleetBlock[]> {
+  const res = await sbSelect<Record<string, unknown>>(
+    "availability_blocks",
+    `select=id,vehicle_id,vehicle_unit_id,starts_at,ends_at,reason,notes&booking_id=is.null&ends_at=gte.${encodeURIComponent(
+      new Date().toISOString()
+    )}`
+  );
+  if (!res.ok) {
+    console.error("[fleet] availability_blocks query failed:", res.error);
+    return [];
+  }
+  return res.data.map((r) => ({
+    id: Number(r.id),
+    vehicleId: Number(r.vehicle_id),
+    vehicleUnitId: r.vehicle_unit_id == null ? null : Number(r.vehicle_unit_id),
+    startsAt: String(r.starts_at),
+    endsAt: String(r.ends_at),
+    reason: String(r.reason),
+    notes: r.notes == null ? null : String(r.notes),
+  }));
+}
+
 /** Shape FleetGanttCalendar expects. */
 export function toGanttVehicles(vehicles: Awaited<ReturnType<typeof loadFleetVehicles>>) {
   return vehicles.map((v) => ({
