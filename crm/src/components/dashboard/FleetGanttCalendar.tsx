@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatINR } from "@/lib/utils";
 import { blockVehicleDates, unblockVehicleDates } from "@/lib/actions";
+import { istDateKey } from "@/lib/rental-clock";
 
 type VehicleItem = {
   id: number;
@@ -310,14 +311,28 @@ export function FleetGanttCalendar({
 
                   {days.map((d) => {
                     const dayKey = localDayKey(d);
-                    const matchingBooking = vBookings.find(
-                      (b) => dayKey >= b.pickupAt.slice(0, 10) && dayKey <= b.returnAt.slice(0, 10)
-                    );
+                    // b.pickupAt / b.startsAt arrive from PostgREST as UTC ("...+00:00"),
+                    // never IST. .slice(0,10) on that string reads the UTC calendar date,
+                    // which is a day EARLIER than the intended IST day for any time before
+                    // 05:30 IST — every 24h IST-anchored block (00:00-23:59:59 IST) starts
+                    // at 18:30 UTC the day before, so it always spanned two date-string
+                    // days instead of one. Blocking the 28th visibly "spilled" onto the
+                    // 27th too. istDateKey() reads the instant's true IST calendar day
+                    // regardless of which UTC date the server happened to serialize.
+                    const matchingBooking = vBookings.find((b) => {
+                      const pickupDay = istDateKey(new Date(b.pickupAt));
+                      const returnDay = istDateKey(new Date(b.returnAt));
+                      return dayKey >= pickupDay && dayKey <= returnDay;
+                    });
                     // A booking on this vehicle always wins the cell over a block: it is
                     // real revenue, and blockVehicleDates only ever writes a row with no
                     // booking_id, so the two can never actually describe the same hold.
                     const matchingBlock = !matchingBooking
-                      ? vBlocks.find((b) => dayKey >= b.startsAt.slice(0, 10) && dayKey <= b.endsAt.slice(0, 10))
+                      ? vBlocks.find((b) => {
+                          const startDay = istDateKey(new Date(b.startsAt));
+                          const endDay = istDateKey(new Date(b.endsAt));
+                          return dayKey >= startDay && dayKey <= endDay;
+                        })
                       : undefined;
                     const isOpen = actionCell?.vehicle.id === v.id && actionCell?.dayKey === dayKey;
 
