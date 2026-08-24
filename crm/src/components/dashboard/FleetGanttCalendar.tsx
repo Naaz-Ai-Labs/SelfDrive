@@ -113,7 +113,10 @@ export function FleetGanttCalendar({
         vehicleId: vehicle.id,
         startsAt,
         endsAt,
-        reason: "Blocked from fleet timeline",
+        // Must be one of the three values the DB check constraint allows; the
+        // descriptive text goes in notes, which is unconstrained.
+        reason: "manual_block",
+        notes: `Blocked from fleet timeline on ${dayKey}`,
       });
       if (!res.ok) {
         setError(res.error || "Could not block that date.");

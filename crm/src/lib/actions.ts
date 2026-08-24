@@ -2119,7 +2119,15 @@ export async function blockVehicleDates(input: {
   vehicleUnitId?: number | null;
   startsAt: string;
   endsAt: string;
-  reason: string;
+  /**
+   * Constrained by availability_blocks_reason_check, which permits exactly
+   * 'booked' | 'maintenance' | 'manual_block'. Free text here fails the insert.
+   *
+   * 'booked' is intentionally not offered: those rows belong to real reservations and
+   * are created alongside a booking_id, so a staff block must never claim to be one.
+   * Human wording belongs in `notes`, which carries no constraint.
+   */
+  reason?: "maintenance" | "manual_block";
   notes?: string;
 }) {
   const user = await staffUser();
@@ -2136,8 +2144,9 @@ export async function blockVehicleDates(input: {
     vehicle_unit_id: input.vehicleUnitId ?? null,
     starts_at: input.startsAt,
     ends_at: input.endsAt,
-    // NOT NULL in the schema, so never allow an empty string through.
-    reason: input.reason?.trim() || "Blocked by staff",
+    // NOT NULL, and additionally restricted to the three values allowed by
+    // availability_blocks_reason_check.
+    reason: input.reason === "maintenance" ? "maintenance" : "manual_block",
     notes: input.notes?.trim() || null,
     booking_id: null,
     created_at: nowIso(),
