@@ -38,13 +38,19 @@ export function BookingsTableWithTabs({
     });
   }, [initialBookings, selectedBranch, branches]);
 
+  const isPaidOrStaff = (b: BookingReviewData) => (b.paid_amount || 0) > 0 || Boolean(b.manager_id);
+  const isPendingVerification = (b: BookingReviewData) =>
+    (["Pending verification", "Payment received"].includes(b.status) && isPaidOrStaff(b)) ||
+    (b.status === "Pending verification" && isPaidOrStaff(b));
+  const isUnpaid = (b: BookingReviewData) =>
+    (b.status === "Pending payment" || b.status === "Draft" || b.status === "Pending verification") && !isPaidOrStaff(b);
+
   const allCount = branchFilteredList.length;
   const activeCount = branchFilteredList.filter((b) =>
     ["Confirmed", "Ready for pickup", "Vehicle handed over", "Active rental", "Return pending"].includes(b.status)
   ).length;
-  const pendingCount = branchFilteredList.filter((b) =>
-    ["Pending verification", "Payment received", "Draft", "Pending payment"].includes(b.status)
-  ).length;
+  const pendingCount = branchFilteredList.filter(isPendingVerification).length;
+  const unpaidCount = branchFilteredList.filter(isUnpaid).length;
   const rejectedCount = branchFilteredList.filter((b) =>
     ["Rejected", "Cancelled"].includes(b.status)
   ).length;
@@ -57,9 +63,9 @@ export function BookingsTableWithTabs({
         ["Confirmed", "Ready for pickup", "Vehicle handed over", "Active rental", "Return pending"].includes(b.status)
       );
     } else if (activeTab === "pending") {
-      list = list.filter((b) =>
-        ["Pending verification", "Payment received", "Draft", "Pending payment"].includes(b.status)
-      );
+      list = list.filter(isPendingVerification);
+    } else if ((activeTab as string) === "unpaid") {
+      list = list.filter(isUnpaid);
     } else if (activeTab === "rejected") {
       list = list.filter((b) => ["Rejected", "Cancelled"].includes(b.status));
     }
@@ -90,7 +96,7 @@ export function BookingsTableWithTabs({
           <button
             type="button"
             onClick={() => setActiveTab("all")}
-            className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${
               activeTab === "all"
                 ? "bg-ink-950 text-white shadow-xs"
                 : "text-ink-600 hover:bg-ink-50"
@@ -102,7 +108,7 @@ export function BookingsTableWithTabs({
           <button
             type="button"
             onClick={() => setActiveTab("active")}
-            className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${
               activeTab === "active"
                 ? "bg-emerald-600 text-white shadow-xs"
                 : "text-ink-600 hover:bg-ink-50"
@@ -114,7 +120,7 @@ export function BookingsTableWithTabs({
           <button
             type="button"
             onClick={() => setActiveTab("pending")}
-            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${
               activeTab === "pending"
                 ? "bg-amber-500 text-white shadow-xs"
                 : "text-ink-600 hover:bg-ink-50"
@@ -130,8 +136,25 @@ export function BookingsTableWithTabs({
 
           <button
             type="button"
+            onClick={() => setActiveTab("unpaid" as any)}
+            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${
+              (activeTab as string) === "unpaid"
+                ? "bg-slate-700 text-white shadow-xs"
+                : "text-ink-600 hover:bg-ink-50"
+            }`}
+          >
+            <span>Unpaid / Incomplete</span>
+            <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+              (activeTab as string) === "unpaid" ? "bg-white text-slate-900" : "bg-ink-100 text-ink-800"
+            }`}>
+              {unpaidCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab("rejected")}
-            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${
               activeTab === "rejected"
                 ? "bg-red-600 text-white shadow-xs"
                 : "text-ink-600 hover:bg-ink-50"

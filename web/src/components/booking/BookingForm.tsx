@@ -374,11 +374,11 @@ export function BookingForm({
     if (step === 2 || (!vehiclesFetchedRef.current && vehicleId)) {
       vehiclesFetchedRef.current = true;
       setLoadingVehicles(true);
-      getAvailableVehicles(categoryKind || null, pickupAt || null, returnAt || null, location || null)
+      getAvailableVehicles(null, pickupAt || null, returnAt || null, location || null)
         .then((res) => { if (res && res.length > 0) setAvailableVehicles(res); })
         .finally(() => setLoadingVehicles(false));
     }
-  }, [step, categoryKind, pickupAt, returnAt, vehicleId, location]);
+  }, [step, pickupAt, returnAt, vehicleId, location]);
 
   // Live quote when vehicle + dates are known.
   useEffect(() => {
@@ -934,30 +934,58 @@ export function BookingForm({
               <button
                 type="button"
                 onClick={() => setCategoryKind("")}
-                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${!categoryKind ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer ${!categoryKind ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
               >
                 All Vehicles ({availableVehicles.length})
               </button>
-              {categories.map((c) => (
-                <button
-                  type="button"
-                  key={c.id}
-                  onClick={() => setCategoryKind(c.kind)}
-                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${categoryKind === c.kind ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
-                >
-                  {c.name}
-                </button>
-              ))}
+              {categories.map((c) => {
+                const count = availableVehicles.filter((v) => {
+                  const vKind = (v.category_kind || "").toLowerCase().trim();
+                  const vSlug = (v.category_slug || "").toLowerCase().trim();
+                  const target = c.kind.toLowerCase().trim();
+                  if (target === "scooter" || target === "scooters") return vKind === "scooter" || vSlug === "scooters";
+                  if (target === "bike" || target === "bikes") return vKind === "bike" || vSlug === "bikes";
+                  if (target === "car" || target === "cars") return vKind === "car" || vSlug === "cars";
+                  if (target === "van" || target === "tempo-traveller") return vKind === "van" || vSlug === "tempo-traveller";
+                  return vKind === target || vSlug === target;
+                }).length;
+                return (
+                  <button
+                    type="button"
+                    key={c.id}
+                    onClick={() => setCategoryKind(c.kind)}
+                    className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer ${categoryKind === c.kind ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
+                  >
+                    {c.name} ({count})
+                  </button>
+                );
+              })}
             </div>
 
             {loadingVehicles && <p className="text-sm text-ink-400">Checking availability…</p>}
             {!loadingVehicles && availableVehicles.length === 0 && <p className="text-sm text-ink-400">No vehicles available for this period. Try different dates.</p>}
             {(() => {
-              const vehiclesToDisplay = availableVehicles;
+              const vehiclesToDisplay = categoryKind
+                ? availableVehicles.filter((v) => {
+                    const vKind = (v.category_kind || "").toLowerCase().trim();
+                    const vSlug = (v.category_slug || "").toLowerCase().trim();
+                    const target = categoryKind.toLowerCase().trim();
+                    if (target === "scooter" || target === "scooters") return vKind === "scooter" || vSlug === "scooters";
+                    if (target === "bike" || target === "bikes") return vKind === "bike" || vSlug === "bikes";
+                    if (target === "car" || target === "cars") return vKind === "car" || vSlug === "cars";
+                    if (target === "van" || target === "tempo-traveller") return vKind === "van" || vSlug === "tempo-traveller";
+                    return vKind === target || vSlug === target;
+                  })
+                : availableVehicles;
 
               return (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {vehiclesToDisplay.map((v) => {
+                  {vehiclesToDisplay.length === 0 ? (
+                    <p className="sm:col-span-2 text-sm text-ink-400 py-6 text-center">
+                      No vehicles found in this category for {location === "SAKLESHPURA" ? "Sakleshpura Branch" : "Hassan Branch"}.
+                    </p>
+                  ) : (
+                    vehiclesToDisplay.map((v) => {
                     const isSelected = Number(vehicleId) === Number(v.id);
                     const vQuote = computeClientQuote(v, pickupDate, pickupTime, returnDate, returnTime);
                     const isVehicleUnavailable =

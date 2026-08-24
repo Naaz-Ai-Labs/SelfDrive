@@ -268,10 +268,8 @@ export async function submitBooking(input: {
       deposit_amount: depositAmount,
       gst_amount: gstAmount,
       total_amount: totalAmount,
-      // Must match the status the CRM itself creates (crm/src/lib/bookings.ts).
-      // "Pending" is a value the CRM never produces, so bookings written by this
-      // fallback did not appear in the dashboard's status-filtered views.
-      status: "Pending verification",
+      // Marked as "Pending payment" until Razorpay payment is verified or manager assigns
+      status: "Pending payment",
       created_at: new Date().toISOString(),
     });
 
