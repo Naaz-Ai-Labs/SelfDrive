@@ -621,6 +621,12 @@ export async function getVehicles(
   includeInactive = false
 ): Promise<Vehicle[]> {
   let vehicles: Vehicle[] = [];
+  // Distinguishes "the query ran and legitimately matched nothing" from "the query
+  // could not run". Only the latter justifies seed data. Previously both produced an
+  // empty array, so a filter that genuinely matched no vehicles — or any transient
+  // Supabase error, since a non-ok result does not throw — silently replaced the real
+  // fleet with DEFAULT_VEHICLES_ROSTER and the site showed cars that do not exist.
+  let querySucceeded = false;
 
   try {
     const needsCategoryJoin = Boolean(filters.categorySlug || filters.kind);
@@ -640,14 +646,17 @@ export async function getVehicles(
     parts.push("order=id.asc,name.asc");
 
     const res = await sbSelect<RawVehicle>("vehicles", parts.join("&"));
-    if (res.ok && Array.isArray(res.data) && res.data.length > 0) {
-      vehicles = await hydrateVehicles(res.data);
+    if (res.ok && Array.isArray(res.data)) {
+      querySucceeded = true;
+      if (res.data.length > 0) vehicles = await hydrateVehicles(res.data);
+    } else {
+      console.error("[getVehicles] Supabase query failed:", res.ok ? "unexpected shape" : res.error);
     }
   } catch (err) {
     console.warn("getVehicles fallback to DEFAULT_VEHICLES_ROSTER:", err);
   }
 
-  if (vehicles.length === 0) {
+  if (!querySucceeded && vehicles.length === 0) {
     vehicles = DEFAULT_VEHICLES_ROSTER.map((v) => ({
       ...v,
       units: DEFAULT_VEHICLE_UNITS.filter((u: VehicleUnit) => u.vehicle_id === v.id),

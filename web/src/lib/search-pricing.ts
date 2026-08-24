@@ -62,6 +62,25 @@ export function calculateVehicleSearchPrice(
 /**
  * Cached fetch with Redis to retrieve/store search quote
  */
+/**
+ * Quote cache TTL, in seconds. Zero disables the cache entirely.
+ *
+ * Disabled deliberately. Nothing in the codebase ever invalidates the `search_quote:`
+ * prefix — not invalidateContentCaches(), not /api/revalidate — so a staff price change
+ * stayed invisible on the vehicles listing and in the booking quote for a full 10
+ * minutes while the vehicle row itself updated instantly. (The `v4` in the key below is
+ * a hand-rolled cache bust, evidence this had already been worked around once.)
+ *
+ * It is also currently pointless: UPSTASH_REDIS_REST_URL/_TOKEN are not set on either
+ * Vercel project, so redis.ts degrades to a per-process in-memory Map. Each lambda then
+ * holds its own copy that no other process — least of all the separately deployed CRM —
+ * can invalidate.
+ *
+ * Set this back to 600 once Upstash is provisioned on BOTH projects; the invalidation
+ * hooks for `search_quote:` are already wired up on the CRM and /api/revalidate sides.
+ */
+const SEARCH_QUOTE_CACHE_TTL_SECONDS = 0;
+
 export async function getCachedVehicleSearchPrice(
   vehicle: Vehicle,
   pickupDateStr?: string | null,
@@ -74,20 +93,21 @@ export async function getCachedVehicleSearchPrice(
   // Bumped to v4 to ensure Saturday weekend package quotes (Sat + Sun) are freshly calculated
   const cacheKey = `search_quote:v4:${vehicle.id}:${pickupDateStr}:${pickupTimeStr || "08:00"}:${returnDateStr}:${returnTimeStr || "08:00"}`;
 
-  try {
-    const cached = await cacheGet<SearchQuoteResult>(cacheKey);
-    if (cached && typeof cached === "object" && typeof cached.baseAmount === "number" && typeof cached.payableNow === "number") {
-      return cached;
+  if (SEARCH_QUOTE_CACHE_TTL_SECONDS > 0) {
+    try {
+      const cached = await cacheGet<SearchQuoteResult>(cacheKey);
+      if (cached && typeof cached === "object" && typeof cached.baseAmount === "number" && typeof cached.payableNow === "number") {
+        return cached;
+      }
+    } catch (err) {
+      console.warn("Redis search quote cache lookup error:", err);
     }
-  } catch (err) {
-    console.warn("Redis search quote cache lookup error:", err);
   }
 
   const computed = calculateVehicleSearchPrice(vehicle, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr);
-  if (computed) {
+  if (computed && SEARCH_QUOTE_CACHE_TTL_SECONDS > 0) {
     try {
-      // Cache in Redis for 10 minutes (600s)
-      await cacheSet(cacheKey, computed, 600);
+      await cacheSet(cacheKey, computed, SEARCH_QUOTE_CACHE_TTL_SECONDS);
     } catch (err) {
       console.warn("Redis search quote cache set error:", err);
     }

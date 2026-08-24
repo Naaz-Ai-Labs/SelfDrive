@@ -24,6 +24,10 @@ export async function invalidateContentCaches(): Promise<void> {
     cacheInvalidatePrefix("web:gateway:"),
     cacheInvalidatePrefix("testimonials:"),
     cacheInvalidatePrefix("faqs:"),
+    // Per-vehicle computed quotes written by web/src/lib/search-pricing.ts. Nothing
+    // cleared this prefix, so a rate change stayed invisible in search results and the
+    // booking quote for the full 10 minute TTL while the vehicle row updated instantly.
+    cacheInvalidatePrefix("search_quote:"),
   ]).catch(() => {});
 
   // 2. Trigger instant On-Demand Revalidation on the Web frontend (< 200ms)

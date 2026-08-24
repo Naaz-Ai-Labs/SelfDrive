@@ -14,6 +14,9 @@ export async function POST(req: NextRequest) {
 
   try {
     await cacheInvalidatePrefix("web:gateway:").catch(() => {});
+    // Quote cache lives in this process, so the CRM's own invalidation cannot reach it
+    // while Redis is unconfigured. Clearing it here covers the in-memory case too.
+    await cacheInvalidatePrefix("search_quote:").catch(() => {});
 
     const body = await req.json().catch(() => ({}));
     const paths: string[] = Array.isArray(body?.paths) && body.paths.length > 0

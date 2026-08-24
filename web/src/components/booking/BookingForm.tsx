@@ -376,7 +376,12 @@ export function BookingForm({
       vehiclesFetchedRef.current = true;
       setLoadingVehicles(true);
       getAvailableVehicles(null, pickupAt || null, returnAt || null, location || null)
-        .then((res) => { if (res && res.length > 0) setAvailableVehicles(res); })
+        // Accept any array, including an empty one. Requiring length > 0 meant a
+        // refresh that legitimately returned nothing left the PREVIOUS list on screen,
+        // so the picker kept offering vehicles that were no longer available for the
+        // newly chosen dates or branch. A genuine failure returns a non-array and is
+        // ignored, which still preserves the last good list.
+        .then((res) => { if (Array.isArray(res)) setAvailableVehicles(res); })
         .finally(() => setLoadingVehicles(false));
     }
   }, [step, pickupAt, returnAt, vehicleId, location]);
