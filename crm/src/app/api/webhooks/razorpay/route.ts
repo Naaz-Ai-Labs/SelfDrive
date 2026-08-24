@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { verifyRazorpayWebhookSignature } from "@/lib/razorpay";
 import { verifyBookingPayment } from "@/lib/payment-actions";
 import { logActivity } from "@/lib/activity";
@@ -82,6 +82,12 @@ async function findPaymentByOrder(orderId: string): Promise<{ id: number } | nul
   return res.ok ? res.data : null;
 }
 
+/**
+ * after() runs within the route's max duration, so the budget has to cover the whole
+ * booking/invoice/WhatsApp chain rather than just the acknowledgement.
+ */
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const signature = req.headers.get("x-razorpay-signature");
   if (!signature) {
@@ -140,6 +146,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Could not record webhook event." }, { status: 500 });
   }
 
+  // Razorpay waits 5 seconds for a response and retries on timeout. The work below —
+  // a Razorpay API fetch, submitBooking, invoice generation, three WhatsApp sends and a
+  // Redis invalidation — does not fit in 5 seconds. Doing it before responding meant
+  // Razorpay timed out and retried while the first attempt was still running; because
+  // `duplicate` only returns true once processed=1 has been committed, the retry sailed
+  // past the idempotency gate and processed the same payment twice.
+  //
+  // The event row is already committed at this point, which is the real idempotency
+  // gate, so acknowledge now and finish the work in after(). Razorpay stops retrying
+  // once it has a 2xx, so a failure here no longer earns a redelivery — the /api/sync
+  // sweep is the recovery path, and it reports anything left unreconciled as an orphan.
+  after(async () => {
+    let processingError: string | null = null;
+    try {
+      processingError = await processEvent(eventType, payload, signature);
+    } catch (err) {
+      processingError = err instanceof Error ? err.message : String(err);
+      console.error("[razorpay-webhook] processing threw", err);
+    }
+    await markPaymentEventProcessed(eventDbId, processingError);
+    if (processingError) {
+      console.error(`[razorpay-webhook] ${eventType} failed to process:`, processingError);
+    }
+  });
+
+  return NextResponse.json({ status: "ok" });
+}
+
+/** Applies a verified event. Returns an error string, or null on success. */
+async function processEvent(
+  eventType: string,
+  payload: Record<string, any>,
+  signature: string
+): Promise<string | null> {
   let processingError: string | null = null;
 
   if (eventType === "payment.captured" || eventType === "order.paid") {
@@ -187,11 +227,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  await markPaymentEventProcessed(eventDbId, processingError);
-
-  // Razorpay retries on a non-2xx, which is what we want when processing failed.
-  if (processingError) {
-    return NextResponse.json({ ok: false, error: processingError }, { status: 500 });
-  }
-  return NextResponse.json({ status: "ok" });
+  return processingError;
 }
