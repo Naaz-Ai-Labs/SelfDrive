@@ -43,6 +43,7 @@ export type BookingReviewData = {
   deposit_amount?: number;
   total_amount: number;
   paid_amount: number;
+  manager_id?: number | null;
   notes?: string | null;
   created_at?: string;
   documents?: CustomerDocument[];

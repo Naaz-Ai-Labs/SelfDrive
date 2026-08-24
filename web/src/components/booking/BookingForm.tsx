@@ -1085,7 +1085,7 @@ export function BookingForm({
                         </div>
                       </button>
                     );
-                  })}
+                  }))}
                 </div>
               );
             })()}
