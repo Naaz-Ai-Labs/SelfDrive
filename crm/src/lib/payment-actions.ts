@@ -6,6 +6,7 @@ import { sendTemplate } from "./messaging";
 import { createRazorpayOrder, verifyRazorpaySignature, fetchRazorpayPayment, razorpayConfigured, razorpayKeyId } from "./razorpay";
 import { generateInvoiceForBooking } from "./invoices";
 import { toPaise } from "./utils";
+import { calculateBookingFinancials } from "./pricing";
 import { sbSelectOne, sbSelect, sbInsert, sbUpdate, sbCount, sbRpc, num } from "./supabase-rest";
 
 /**
@@ -63,10 +64,11 @@ export async function createBookingPaymentOrder(bookingId: number, overrideAmoun
   const booking = bookingRes.data;
   if (!booking) return { ok: false, error: "Booking not found." };
 
-  // PostgREST returns NUMERIC as strings — coerce before any arithmetic.
-  const totalAmount = num(booking.total_amount);
-  const paidAmount = num(booking.paid_amount);
-  const depositAmount = num(booking.deposit_amount);
+  // Calculate clean financial figures, ensuring deposit is strictly isolated
+  const fin = calculateBookingFinancials(booking);
+  const totalAmount = fin.totalAmount;
+  const paidAmount = fin.paidAmount;
+  const depositAmount = fin.depositAmount;
 
   // The security deposit is collected in CASH at pickup and is kept separate in `deposit_amount`.
   // `total_amount` is the rental total (base + surcharges + GST), so the amount taken online
@@ -107,7 +109,7 @@ export async function createBookingPaymentOrder(bookingId: number, overrideAmoun
       currency: "INR",
       kind: "full",
       status: "Pending",
-      notes: "Rental total + deposit",
+      notes: "Rental fare payment",
       breakdown_json: breakdownJson,
       created_at: nowISO(),
     });

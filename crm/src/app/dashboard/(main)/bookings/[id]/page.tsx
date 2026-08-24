@@ -6,6 +6,7 @@ import { getSetting } from "@/lib/settings";
 import { getStaff } from "@/lib/data";
 import { formatDateTime, formatINR, waLink } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
+import { calculateBookingFinancials } from "@/lib/pricing";
 import {
   BookingStatusSelect, BookingManagerSelect, AfterHoursApproval, InspectionForm,
   ManualAdjustmentForm, DamageReportForm, PaymentForm, MarkPaidButton,
@@ -241,22 +242,43 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
               ].filter(([, v]) => Number(v) !== 0).map(([label, v]) => (
                 <div key={String(label)} className="flex justify-between"><dt className="text-ink-500">{String(label)}</dt><dd className="font-medium text-ink-800">{formatINR(Number(v))}</dd></div>
               ))}
-              <div className="flex justify-between border-t border-ink-100 pt-2 text-base font-semibold">
-                <dt>Total Rental Amount</dt>
-                <dd>{formatINR(Number(booking.total_amount))}</dd>
-              </div>
-              <div className="flex justify-between text-emerald-700 font-medium">
-                <dt>Paid (Online / Direct)</dt>
-                <dd>{formatINR(Number(booking.paid_amount))}</dd>
-              </div>
-              <div className="flex justify-between text-amber-700 font-semibold">
-                <dt>Rental Balance Due</dt>
-                <dd>{formatINR(Math.max(0, Number(booking.total_amount) - Number(booking.paid_amount)))}</dd>
-              </div>
-              <div className="flex justify-between border-t border-dashed border-ink-200 pt-2 text-xs text-ink-600">
-                <dt>Refundable Security Deposit (Cash at Pickup)</dt>
-                <dd className="font-semibold text-ink-900">{formatINR(Number(booking.deposit_amount))}</dd>
-              </div>
+              {(() => {
+                const fin = calculateBookingFinancials({
+                  total_amount: booking.total_amount as any,
+                  paid_amount: booking.paid_amount as any,
+                  deposit_amount: booking.deposit_amount as any,
+                  base_amount: booking.base_amount as any,
+                  gst_amount: booking.gst_amount as any,
+                  surcharge_amount: booking.surcharge_amount as any,
+                  other_fees_amount: booking.other_fees_amount as any,
+                  extra_hours_amount: booking.extra_hours_amount as any,
+                  extra_km_amount: booking.extra_km_amount as any,
+                  late_fee_amount: booking.late_fee_amount as any,
+                  damage_amount: booking.damage_amount as any,
+                  discount_amount: booking.discount_amount as any,
+                });
+
+                return (
+                  <>
+                    <div className="flex justify-between border-t border-ink-100 pt-2 text-base font-semibold">
+                      <dt>Total Rental Amount</dt>
+                      <dd>{formatINR(fin.totalAmount)}</dd>
+                    </div>
+                    <div className="flex justify-between text-emerald-700 font-medium">
+                      <dt>Paid (Online / Direct)</dt>
+                      <dd>{formatINR(fin.paidAmount)}</dd>
+                    </div>
+                    <div className="flex justify-between text-amber-700 font-semibold">
+                      <dt>Rental Balance Due</dt>
+                      <dd>{formatINR(fin.balanceDue)}</dd>
+                    </div>
+                    <div className="flex justify-between border-t border-dashed border-ink-200 pt-2 text-xs text-ink-600">
+                      <dt>Refundable Security Deposit (Cash at Pickup)</dt>
+                      <dd className="font-semibold text-ink-900">{formatINR(fin.depositAmount)}</dd>
+                    </div>
+                  </>
+                );
+              })()}
             </dl>
             <div className="mt-4 border-t border-ink-100 pt-4">
               <p className="label mb-2">Manual adjustment / late fee override</p>

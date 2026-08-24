@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { formatINR, formatDateTime, formatDate, waLink } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
 import { quickApproveBooking, rejectBooking, reopenBooking, verifyCustomerDocument } from "@/lib/actions";
+import { calculateBookingFinancials } from "@/lib/pricing";
 import { PaymentDetailModal, type PaymentTransactionData } from "./PaymentDetailModal";
 
 export type CustomerDocument = {
@@ -93,7 +94,8 @@ export function BookingReviewModal({
 
   const docs = booking.documents ?? [];
   const verifiedDocsCount = docs.filter((d) => d.verified === 1).length;
-  const balanceDue = Math.max(0, (booking.total_amount || 0) - (booking.paid_amount || 0));
+  const financials = calculateBookingFinancials(booking);
+  const balanceDue = financials.balanceDue;
 
   function handleDocumentVerify(documentId: number, approve: boolean) {
     startTransition(async () => {
@@ -376,21 +378,27 @@ export function BookingReviewModal({
                 <span>Base Rental Fare:</span>
                 <span className="font-medium text-ink-900">{formatINR(booking.base_amount ?? 0)}</span>
               </div>
+              {booking.surcharge_amount ? (
+                <div className="flex justify-between text-ink-600">
+                  <span>Day-type Surcharge:</span>
+                  <span className="font-medium text-ink-900">{formatINR(booking.surcharge_amount)}</span>
+                </div>
+              ) : null}
               <div className="flex justify-between text-ink-600">
                 <span>GST (Tax):</span>
                 <span className="font-medium text-ink-900">{formatINR(booking.gst_amount ?? 0)}</span>
               </div>
               <div className="flex justify-between border-t border-ink-100 pt-2 font-bold text-sm text-ink-900">
                 <span>Total Rental Fare:</span>
-                <span>{formatINR(booking.total_amount || 0)}</span>
+                <span>{formatINR(financials.totalAmount)}</span>
               </div>
               <div className="flex justify-between text-emerald-700 font-semibold">
                 <span>Amount Paid:</span>
-                <span>{formatINR(booking.paid_amount || 0)}</span>
+                <span>{formatINR(financials.paidAmount)}</span>
               </div>
               <div className="flex justify-between border-t border-dashed border-ink-200 pt-2 text-ink-600">
                 <span>Refundable Security Deposit (Cash at Pickup):</span>
-                <span className="font-semibold text-ink-900">{formatINR(booking.deposit_amount ?? 0)}</span>
+                <span className="font-semibold text-ink-900">{formatINR(financials.depositAmount)}</span>
               </div>
             </div>
 

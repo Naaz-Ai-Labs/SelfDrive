@@ -109,17 +109,16 @@ test("month boundary rolls over correctly", () => {
   assert.equal(istDateKey(r.dayDates[1]), "2026-09-01");
 });
 
-test("year boundary rolls over correctly (Saturday drop-off locks through Sunday)", () => {
+test("year boundary rolls over correctly (31 Dec to 2 Jan)", () => {
   // 31 Dec 2026 is Thursday, 2 Jan 2027 is Saturday.
   const r = computeRentalDays({
     pickupAt: istDate(2026, 11, 31, 8), // 31 Dec
     returnAt: istDate(2027, 0, 2, 9), // 2 Jan (Saturday), late drop
   });
-  assert.equal(r.days, 4, "Saturday drop-off locks full weekend (Thu + Fri + Sat + Sun = 4 days)");
+  assert.equal(r.days, 3, "31 Dec to 2 Jan with late drop is 3 days (Thu, Fri, Sat)");
   assert.equal(istDateKey(r.dayDates[0]), "2026-12-31");
   assert.equal(istDateKey(r.dayDates[1]), "2027-01-01");
   assert.equal(istDateKey(r.dayDates[2]), "2027-01-02");
-  assert.equal(istDateKey(r.dayDates[3]), "2027-01-03");
 });
 
 test("IST is used regardless of the runtime timezone", () => {
@@ -140,70 +139,67 @@ test("Saturday and Sunday are the weekend, Monday to Friday are not", () => {
   assert.equal(isWeekendIst(istDate(2026, AUG, 14, 12)), false, "Friday");
 });
 
-test("Saturday pickup with same-day Saturday return charges for Saturday + Sunday (2 days)", () => {
+test("Saturday pickup with same-day Saturday return charges for 1 day", () => {
   // 15 Aug 2026 is a Saturday.
   const r = computeRentalDays({
     pickupAt: istDate(2026, AUG, 15, 8),
     returnAt: istDate(2026, AUG, 15, 20),
   });
-  assert.equal(r.days, 2, "Saturday pickup must charge for full weekend package (Sat + Sun)");
-  assert.equal(r.dayDates.length, 2);
+  assert.equal(r.days, 1, "Saturday same-day rental is 1 day");
+  assert.equal(r.dayDates.length, 1);
   assert.equal(istDateKey(r.dayDates[0]), "2026-08-15");
-  assert.equal(istDateKey(r.dayDates[1]), "2026-08-16");
-  assert.deepEqual(r.dayDates.map(isWeekendIst), [true, true]);
+  assert.deepEqual(r.dayDates.map(isWeekendIst), [true]);
 });
 
-test("Saturday pickup to Sunday morning return charges for Saturday + Sunday (2 days)", () => {
+test("Saturday pickup to Sunday morning return charges for 1 day", () => {
   const r = computeRentalDays({
     pickupAt: istDate(2026, AUG, 15, 8),
     returnAt: istDate(2026, AUG, 16, 8),
   });
-  assert.equal(r.days, 2);
-  assert.equal(r.dayDates.length, 2);
+  assert.equal(r.days, 1, "Sat 08:00 to Sun 08:00 is exactly 1 day");
+  assert.equal(r.dayDates.length, 1);
 });
 
-test("Saturday pickup to Monday morning return charges for Saturday + Sunday (2 days)", () => {
+test("Saturday pickup to Monday morning return charges for 2 days", () => {
   const r = computeRentalDays({
     pickupAt: istDate(2026, AUG, 15, 8),
     returnAt: istDate(2026, AUG, 17, 8),
   });
-  assert.equal(r.days, 2);
+  assert.equal(r.days, 2, "Sat 08:00 to Mon 08:00 is 2 days");
   assert.equal(r.dayDates.length, 2);
 });
 
-test("Friday pickup to Saturday drop-off charges for Friday + Saturday + Sunday (3 days)", () => {
+test("Friday pickup to Saturday drop-off charges for 1 day", () => {
   // 14 Aug 2026 is a Friday, 15 Aug 2026 is a Saturday.
   const r = computeRentalDays({
     pickupAt: istDate(2026, AUG, 14, 8),
     returnAt: istDate(2026, AUG, 15, 8),
   });
-  assert.equal(r.days, 3, "Friday pickup with Saturday drop-off must charge through Sunday (Fri + Sat + Sun)");
-  assert.equal(r.dayDates.length, 3);
+  assert.equal(r.days, 1, "Fri 08:00 to Sat 08:00 is 1 day");
+  assert.equal(r.dayDates.length, 1);
   assert.equal(istDateKey(r.dayDates[0]), "2026-08-14");
-  assert.equal(istDateKey(r.dayDates[1]), "2026-08-15");
-  assert.equal(istDateKey(r.dayDates[2]), "2026-08-16");
-  assert.deepEqual(r.dayDates.map(isWeekendIst), [false, true, true]);
+  assert.deepEqual(r.dayDates.map(isWeekendIst), [false]);
 });
 
-test("Friday pickup (afternoon) to Saturday afternoon drop-off charges for Friday + Saturday + Sunday (3 days)", () => {
+test("Friday pickup (afternoon) to Saturday afternoon drop-off charges for 2 days", () => {
   const r = computeRentalDays({
     pickupAt: istDate(2026, AUG, 14, 12),
     returnAt: istDate(2026, AUG, 15, 13),
   });
-  assert.equal(r.days, 3);
-  assert.equal(r.dayDates.length, 3);
-  assert.deepEqual(r.dayDates.map(isWeekendIst), [false, true, true]);
+  assert.equal(r.days, 2, "Fri afternoon to Sat afternoon (late drop) is 2 days");
+  assert.equal(r.dayDates.length, 2);
+  assert.deepEqual(r.dayDates.map(isWeekendIst), [false, true]);
 });
 
-test("Thursday pickup to Saturday drop-off charges for Thu + Fri + Sat + Sun (4 days)", () => {
+test("Thursday pickup to Saturday drop-off charges for 2 days", () => {
   // 13 Aug 2026 is a Thursday.
   const r = computeRentalDays({
     pickupAt: istDate(2026, AUG, 13, 8),
     returnAt: istDate(2026, AUG, 15, 8),
   });
-  assert.equal(r.days, 4, "Thursday pickup with Saturday drop-off must charge through Sunday (4 days)");
-  assert.equal(r.dayDates.length, 4);
-  assert.deepEqual(r.dayDates.map(isWeekendIst), [false, false, true, true]);
+  assert.equal(r.days, 2, "Thu 08:00 to Sat 08:00 is 2 days");
+  assert.equal(r.dayDates.length, 2);
+  assert.deepEqual(r.dayDates.map(isWeekendIst), [false, false]);
 });
 
 test("an invalid date is rejected rather than silently counted", () => {

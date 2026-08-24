@@ -28,7 +28,7 @@ const DIO_SCOOTER = {
   name: "Honda Dio",
   category_kind: "scooter",
   rate_24h: 900,
-  weekend_rate_24h: 950,
+  weekend_rate_24h: 900,
   deposit: 1000,
   included_km: 100,
   extra_km_rate: 4,
@@ -39,7 +39,7 @@ const BALENO_CAR = {
   name: "Maruti Suzuki Baleno",
   category_kind: "car",
   rate_24h: 3500,
-  weekend_rate_24h: 3550,
+  weekend_rate_24h: 3500,
   deposit: 2000,
   included_km: 300,
   extra_km_rate: 8,
@@ -131,24 +131,22 @@ test("Logic Check 4: Same-day Friday rental (Fri 11:00 AM -> Fri 11:00 PM)", () 
 test("Logic Check 5: Friday pickup with Saturday return (Fri 08:00 -> Sat 08:00)", () => {
   const quote = calculateRentalQuoteFromStrings(DIO_SCOOTER, "2026-08-28", "08:00", "2026-08-29", "08:00");
   assert.ok(quote);
-  assert.equal(quote.days, 3, "Friday to Saturday drops require full weekend lock (Fri + Sat + Sun = 3 days)");
-  // 1 weekday (900) + 2 weekend days (2 * 950 = 1900) = 2800
-  assert.equal(quote.baseAmount, 2800);
-  assert.equal(quote.gstAmount, 168); // 6% of 2800
-  assert.equal(quote.payableNow, 2968);
-  assert.equal(quote.totalAmount, 2968);
+  assert.equal(quote.days, 1, "Friday to Saturday drops are exactly 1 day");
+  assert.equal(quote.baseAmount, 900);
+  assert.equal(quote.gstAmount, 54); // 6% of 900
+  assert.equal(quote.payableNow, 954);
+  assert.equal(quote.totalAmount, 954);
   assert.equal(quote.depositAmount, 1000);
 });
 
 test("Logic Check 6: Saturday pickup (Sat 08:00 -> Sun 08:00)", () => {
   const quote = calculateRentalQuoteFromStrings(DIO_SCOOTER, "2026-08-29", "08:00", "2026-08-30", "08:00");
   assert.ok(quote);
-  assert.equal(quote.days, 2, "Saturday pickup requires 2 days minimum (Sat + Sun)");
-  // 2 weekend days = 2 * 950 = 1900
-  assert.equal(quote.baseAmount, 1900);
-  assert.equal(quote.gstAmount, 114); // 6% of 1900
-  assert.equal(quote.payableNow, 2014);
-  assert.equal(quote.totalAmount, 2014);
+  assert.equal(quote.days, 1, "Saturday to Sunday 24h drop is exactly 1 day");
+  assert.equal(quote.baseAmount, 900);
+  assert.equal(quote.gstAmount, 54); // 6% of 900
+  assert.equal(quote.payableNow, 954);
+  assert.equal(quote.totalAmount, 954);
 });
 
 test("Logic Check 7: Early pickup surcharge (Wed 06:00 -> Thu 08:00)", () => {

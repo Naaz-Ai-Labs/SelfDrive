@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sbSelect, sbSelectOne, num } from "@/lib/supabase-rest";
+import { calculateBookingFinancials } from "@/lib/pricing";
 
 /**
  * Public booking tracker. Everything here comes from Supabase in one pass — the previous
@@ -94,9 +95,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ boo
       photo_url: photoUrl,
       base_amount: num(booking.base_amount),
       gst_amount: num(booking.gst_amount),
-      deposit_amount: num(booking.deposit_amount),
-      total_amount: num(booking.total_amount),
-      paid_amount: num(booking.paid_amount),
+      deposit_amount: calculateBookingFinancials(booking).depositAmount,
+      total_amount: calculateBookingFinancials(booking).totalAmount,
+      paid_amount: calculateBookingFinancials(booking).paidAmount,
+      balance_due: calculateBookingFinancials(booking).balanceDue,
       documents: docs.map((d) => ({
         kind: String(d.kind),
         verified: num(d.verified) === 1,

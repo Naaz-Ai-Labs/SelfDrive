@@ -222,20 +222,8 @@ export function computeRentalDays(input: RentalClockInput): RentalClockResult {
   const earlyPickup = pickupMinutes < RENTAL_DAY_START_MINUTES;
   const lateDrop = returnMinutes > RENTAL_DAY_START_MINUTES;
 
-  const isSaturdayPickup = istParts(pickupAt).weekday === 6;
-  const isSaturdayReturn = istParts(returnAt).weekday === 6;
   const spanDays = calendarDaysBetween(pickupAt, returnAt);
-  const rawDays = Math.max(1, spanDays + (lateDrop ? 1 : 0));
-  // A rental starting on Saturday or dropping off on Saturday locks the vehicle for the full weekend package:
-  // - Pickup on Saturday: Saturday + Sunday (2 days minimum)
-  // - Drop-off on Saturday (from Friday or any other weekday): must include through Sunday (spanDays + 2 days)
-  let days = rawDays;
-  if (isSaturdayPickup) {
-    days = Math.max(2, days);
-  }
-  if (isSaturdayReturn) {
-    days = Math.max(spanDays + 2, days);
-  }
+  const days = Math.max(1, spanDays + (lateDrop ? 1 : 0));
 
   const p = istParts(pickupAt);
   const dayDates: Date[] = [];
