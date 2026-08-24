@@ -491,8 +491,36 @@ export async function verifyBookingPayment(input: {
   }
   if (realBankRef) patch.bank_ref_no = realBankRef;
 
+  // Razorpay fires order.paid AND payment.captured for the same payment, milliseconds
+  // apart, and they arrive as two separate lambda invocations. Both used to read the row
+  // as Pending, both fell through to the auto-link branch below, and both created a
+  // booking from the same draft enquiry — two identical bookings ~400ms apart, and
+  // increment_booking_paid applied twice.
+  //
+  // `status=neq.Paid` makes this update an atomic compare-and-swap: exactly one caller
+  // can flip Pending -> Paid. The loser gets zero affected rows, which is the signal that
+  // another invocation owns this payment.
+  const wasAlreadyPaid = payment.status === "Paid";
   const paidUpdate = await sbUpdate<PaymentRow>("payments", `id=eq.${payment.id}&status=neq.Paid`, patch);
   if (!paidUpdate.ok) return { ok: false, error: `Could not record the payment: ${paidUpdate.error}` };
+
+  if (paidUpdate.data.length === 0 && !wasAlreadyPaid) {
+    // We read it as Pending but someone else flipped it first. Stop here: continuing
+    // would double-create the booking and double-increment the balance.
+    //
+    // Note the `!wasAlreadyPaid` guard. A row that was ALREADY Paid when we read it also
+    // yields zero rows, but that is the orphan-recovery case (paid, never linked to a
+    // booking) which must still fall through to the auto-link below.
+    const settled = await sbSelectOne<PaymentRow>("payments", `select=booking_id&id=eq.${payment.id}`);
+    const settledBookingId = settled.ok && settled.data ? settled.data.booking_id : null;
+    const settledBookingNo = settledBookingId ? await lookupBookingNo(settledBookingId) : null;
+    return {
+      ok: true,
+      bookingNo: settledBookingNo ?? "",
+      bookingId: settledBookingId ?? undefined,
+      alreadyProcessed: true,
+    };
+  }
 
   let bookingId = payment.booking_id;
 
@@ -523,7 +551,10 @@ export async function verifyBookingPayment(input: {
           return_at: enq.return_date,
           status: "Confirmed",
           total_amount: effectivePaid,
-          paid_amount: effectivePaid,
+          // Starts at zero on purpose. increment_booking_paid() below is the single
+          // writer of this column; seeding it with the payment amount here made every
+          // auto-linked booking record twice what was actually paid.
+          paid_amount: 0,
           deposit_amount: 1000,
           created_at: nowISO(),
         });
