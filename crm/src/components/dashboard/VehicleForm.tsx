@@ -6,6 +6,17 @@ import { saveVehicle, addVehiclePhoto, deleteVehicle } from "@/lib/actions";
 import { type Vehicle, type VehicleUnit, getCategoryPresetPhoto } from "@/lib/data";
 import { compressImageFile } from "@/lib/image-compression";
 
+/**
+ * Sentinel for the "don't touch the units" choice in Overall Fleet Status.
+ *
+ * Picking any real status here rewrites EVERY unit's status, so setting a vehicle to
+ * Unavailable wiped the individual Booked / In Transit / Available values that had just
+ * been set per unit below. This value is never persisted: on save the vehicle's own
+ * status is derived from the units instead, so the public site still reflects reality
+ * (any unit available => the vehicle is bookable).
+ */
+const KEEP_UNIT_STATUS = "__keep_unit_status";
+
 function getUpperSlug(name: string): string {
   const clean = name.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
   return clean.slice(0, 6) || "UNIT";
@@ -116,6 +127,11 @@ export function VehicleForm({
   function handleOverallStatusChange(newStatus: string) {
     setForm((prev) => ({ ...prev, status: newStatus }));
 
+    // KEEP_UNIT_STATUS means "leave every unit exactly as it is". Each unit's status is
+    // then managed only in the Physical Fleet Units rows below, so one unit going to
+    // Booked or In Transit no longer drags the other four with it.
+    if (newStatus === KEEP_UNIT_STATUS) return;
+
     if (newStatus === "unavailable" || newStatus === "blocked") {
       setUnitsList((prev) =>
         prev.map((u) => ({ ...u, status: newStatus }))
@@ -172,6 +188,14 @@ export function VehicleForm({
 
     const isEntireVehicleUnavailable = form.status === "unavailable" || form.status === "blocked";
 
+    // With "No change" selected the vehicle's own status is derived from its units, so a
+    // fleet with one free unit stays bookable on the public site instead of being pinned
+    // to whatever the dropdown happened to show.
+    const effectiveStatus =
+      form.status === KEEP_UNIT_STATUS
+        ? (unitsList.some((u) => (u.status || "available") === "available") ? "available" : "unavailable")
+        : form.status;
+
     startTransition(async () => {
       try {
         const res = await saveVehicle({
@@ -197,7 +221,8 @@ export function VehicleForm({
           lateFeePerHour: Number(form.lateFeePerHour) || 0,
           totalUnits: totalUnitsNum,
           description: form.description || undefined,
-          status: form.status,
+          status: effectiveStatus,
+          cascadeUnitStatus: form.status !== KEEP_UNIT_STATUS,
           active: true,
           photoUrl: photoUrl.trim() || undefined,
           physicalUnits: unitsList.map((u) => ({
@@ -532,6 +557,7 @@ export function VehicleForm({
           <div>
             <label className="label font-semibold text-ink-900">Overall Fleet Status</label>
             <select className="input font-medium" value={form.status} onChange={(e) => handleOverallStatusChange(e.target.value)}>
+              <option value={KEEP_UNIT_STATUS}>No change — manage each unit below</option>
               <option value="available">Available (Active Fleet)</option>
               <option value="unavailable">Unavailable (All Units Blocked)</option>
               <option value="booked">Booked (On Rental)</option>

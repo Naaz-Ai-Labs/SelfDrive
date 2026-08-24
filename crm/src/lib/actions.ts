@@ -226,6 +226,13 @@ export async function saveVehicle(input: {
   description?: string;
   terms?: string;
   status?: string;
+  /**
+   * Whether Overall Fleet Status should be pushed down onto every unit. False when the
+   * form's "No change" option is selected, leaving each unit's status to be managed
+   * individually. Omitted means the previous cascading behaviour, so existing callers
+   * are unaffected.
+   */
+  cascadeUnitStatus?: boolean;
   active?: boolean;
   photoUrl?: string;
   branchAllocations?: Array<{ branchId: number; quantity: number }>;
@@ -396,6 +403,11 @@ export async function saveVehicle(input: {
             await sbUpdate("vehicle_units", `id=eq.${excess.id}`, { active: 0, updated_at: nowIso() });
           }
         }
+      } else if (input.cascadeUnitStatus === false) {
+        // "No change" was chosen in Overall Fleet Status: unit statuses are managed
+        // individually in the Physical Fleet Units rows, so nothing here may rewrite
+        // them. Without this branch, saving the form flattened every unit back to the
+        // dropdown's value and discarded per-unit Booked / In Transit states.
       } else {
         // Fallback: sync existing unit statuses if overall vehicle status changed
         if (existingUnits.length > 0 && isVehicleUnavailableInput) {
