@@ -189,6 +189,49 @@ export function NotificationBell({ initialItems, initialUnread }: { initialItems
   );
 }
 
+export function LiveIstClock() {
+  const [timeStr, setTimeStr] = useState<string>("");
+
+  useEffect(() => {
+    function update() {
+      const now = new Date();
+      const formatted = now.toLocaleTimeString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      });
+      const datePart = now.toLocaleDateString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "numeric",
+        month: "short",
+      });
+      setTimeStr(`${datePart}, ${formatted} IST`);
+    }
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!timeStr) return null;
+
+  return (
+    <div
+      title="Live Indian Standard Time (Asia/Kolkata UTC+05:30)"
+      className="hidden md:inline-flex items-center gap-2 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-xs backdrop-blur-md select-none"
+    >
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+      </span>
+      <span className="font-mono text-[11px] font-bold tracking-tight text-emerald-950">
+        {timeStr}
+      </span>
+    </div>
+  );
+}
+
 export function LogoutButton({ compact = false }: { compact?: boolean }) {
   return (
     <form action="/api/auth/logout" method="post">

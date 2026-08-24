@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { getCurrentUser, canAccessModule } from "@/lib/auth";
 import { Avatar } from "@/components/ui";
 import { SidebarNav, MobileNav } from "@/components/dashboard/NavLinks";
-import { SearchBox, NotificationBell, LogoutButton } from "@/components/dashboard/TopBar";
+import { SearchBox, NotificationBell, LogoutButton, LiveIstClock } from "@/components/dashboard/TopBar";
 import { CommandBar } from "@/components/dashboard/CommandBar";
 import { getNotifications } from "@/lib/topbar-actions";
 
@@ -83,6 +83,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <CommandBar />
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
+            <LiveIstClock />
             <NotificationBell initialItems={plainNotifications} initialUnread={unread} />
             <div className="hidden sm:block">
               <LogoutButton />

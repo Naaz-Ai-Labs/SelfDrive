@@ -52,7 +52,8 @@ export function formatTimeLabel(timeStr?: string | null): string {
 
 export function timeAgo(value: string | null | undefined): string {
   if (!value) return "—";
-  const d = new Date(value).getTime();
+  const instant = parseIstInstant(value) || new Date(value);
+  const d = instant.getTime();
   if (Number.isNaN(d)) return value;
   const diff = Date.now() - d;
   const mins = Math.floor(diff / 60000);

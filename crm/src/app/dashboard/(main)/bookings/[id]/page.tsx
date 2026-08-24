@@ -4,7 +4,7 @@ import Link from "next/link";
 import { sbSelect, num } from "@/lib/supabase-rest";
 import { getSetting } from "@/lib/settings";
 import { getStaff } from "@/lib/data";
-import { formatDateTime, formatINR, waLink } from "@/lib/utils";
+import { formatDateTime, formatINR, waLink, timeAgo } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
 import { calculateBookingFinancials } from "@/lib/pricing";
 import {
@@ -414,8 +414,11 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
               {history.length === 0 && <p className="text-sm text-ink-400">No activity yet.</p>}
               {history.map((h) => (
                 <div key={Number(h.id)} className="border-b border-ink-50 pb-2 text-sm last:border-0">
-                  <p className="text-ink-700">{String(h.action)}</p>
-                  <p className="text-xs text-ink-400">{String(h.user_name ?? "System")} · {formatDateTime(String(h.created_at))}</p>
+                  <p className="text-ink-700 font-medium">{String(h.action)}</p>
+                  <p className="text-xs text-ink-500">
+                    <span className="font-semibold text-ink-700">{String(h.user_name ?? "System")}</span> · {formatDateTime(String(h.created_at))} IST{" "}
+                    <span className="text-brand-700 font-medium">({timeAgo(String(h.created_at))})</span>
+                  </p>
                 </div>
               ))}
             </div>
