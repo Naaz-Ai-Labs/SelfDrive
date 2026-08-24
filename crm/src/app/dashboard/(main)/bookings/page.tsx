@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { sbSelect, num } from "@/lib/supabase-rest";
 import { getBranches } from "@/lib/data";
+import { calculateBookingFinancials } from "@/lib/pricing";
 import { BookingsTableWithTabs } from "@/components/dashboard/BookingsTableWithTabs";
 import type { BookingReviewData, CustomerDocument } from "@/components/dashboard/BookingReviewModal";
 import { AfterHoursPanel, type AfterHoursRequest } from "@/components/dashboard/AfterHoursPanel";
@@ -83,55 +84,72 @@ export default async function BookingsPage() {
     paymentsByBookingId.get(bId)!.push(pay);
   }
 
-  const bookings: BookingReviewData[] = rawRows.map((r) => ({
-    id: Number(r.id),
-    booking_no: r.booking_no ? String(r.booking_no) : `BK-${r.id}`,
-    customer_id: r.customer_id ? Number(r.customer_id) : null,
-    customer_name: (r.customer_name as string) ?? null,
-    customer_phone: (r.customer_phone as string) ?? null,
-    customer_email: (r.customer_email as string) ?? null,
-    vehicle_id: r.vehicle_id ? Number(r.vehicle_id) : null,
-    vehicle_name: (r.vehicle_name as string) ?? null,
-    registration_no: (r.registration_no as string) ?? null,
-    branch_id: r.branch_id ? Number(r.branch_id) : null,
-    branch_name: (r.branch_name as string) ?? null,
-    pickup_location: (r.pickup_location as string) ?? null,
-    pickup_at: (r.pickup_at as string) ?? "2026-08-12T00:00:00.000Z",
-    return_at: (r.return_at as string) ?? "2026-08-13T00:00:00.000Z",
-    status: (r.status as string) ?? "Pending",
-    // PostgREST returns NUMERIC as a string; num() keeps these additive.
-    base_amount: num(r.base_amount),
-    surcharge_amount: num(r.surcharge_amount),
-    gst_amount: num(r.gst_amount),
-    deposit_amount: num(r.deposit_amount),
-    total_amount: num(r.total_amount),
-    paid_amount: num(r.paid_amount),
-    notes: (r.notes as string) ?? null,
-    created_at: (r.created_at as string) ?? "2026-08-12T00:00:00.000Z",
-    documents: (docsByBookingId.get(Number(r.id)) ?? []).map((d: any) => ({
-      id: Number(d.id),
-      kind: String(d.kind || "other"),
-      number: d.number ? String(d.number) : null,
-      expiry_date: d.expiry_date ? String(d.expiry_date) : null,
-      file_path: String(d.file_path || ""),
-      verified: Number(d.verified || 0),
-      created_at: d.created_at ? String(d.created_at) : undefined,
-    })),
-    payments: (paymentsByBookingId.get(Number(r.id)) ?? []).map((p: any) => ({
-      id: Number(p.id),
-      booking_id: Number(p.booking_id || r.id),
+  const bookings: BookingReviewData[] = rawRows.map((r) => {
+    const fin = calculateBookingFinancials({
+      total_amount: r.total_amount as any,
+      paid_amount: r.paid_amount as any,
+      deposit_amount: r.deposit_amount as any,
+      base_amount: r.base_amount as any,
+      gst_amount: r.gst_amount as any,
+      surcharge_amount: r.surcharge_amount as any,
+      other_fees_amount: r.other_fees_amount as any,
+      extra_hours_amount: r.extra_hours_amount as any,
+      extra_km_amount: r.extra_km_amount as any,
+      late_fee_amount: r.late_fee_amount as any,
+      damage_amount: r.damage_amount as any,
+      discount_amount: r.discount_amount as any,
+    });
+
+    return {
+      id: Number(r.id),
       booking_no: r.booking_no ? String(r.booking_no) : `BK-${r.id}`,
+      customer_id: r.customer_id ? Number(r.customer_id) : null,
       customer_name: (r.customer_name as string) ?? null,
       customer_phone: (r.customer_phone as string) ?? null,
-      payment_no: String(p.payment_no || `PY-${p.id}`),
-      amount: num(p.amount),
-      status: String(p.status || "Pending"),
-      method: String(p.method || "online"),
-      kind: String(p.kind || "full"),
-      notes: (p.notes as string) ?? null,
-      created_at: (p.created_at as string) ?? "2026-08-12T00:00:00.000Z",
-    })),
-  }));
+      customer_email: (r.customer_email as string) ?? null,
+      vehicle_id: r.vehicle_id ? Number(r.vehicle_id) : null,
+      vehicle_name: (r.vehicle_name as string) ?? null,
+      registration_no: (r.registration_no as string) ?? null,
+      branch_id: r.branch_id ? Number(r.branch_id) : null,
+      branch_name: (r.branch_name as string) ?? null,
+      pickup_location: (r.pickup_location as string) ?? null,
+      pickup_at: (r.pickup_at as string) ?? "2026-08-12T00:00:00.000Z",
+      return_at: (r.return_at as string) ?? "2026-08-13T00:00:00.000Z",
+      status: (r.status as string) ?? "Pending",
+      // PostgREST returns NUMERIC as a string; num() keeps these additive.
+      base_amount: num(r.base_amount),
+      surcharge_amount: num(r.surcharge_amount),
+      gst_amount: num(r.gst_amount),
+      deposit_amount: fin.depositAmount,
+      total_amount: fin.totalAmount,
+      paid_amount: fin.paidAmount,
+      notes: (r.notes as string) ?? null,
+      created_at: (r.created_at as string) ?? "2026-08-12T00:00:00.000Z",
+      documents: (docsByBookingId.get(Number(r.id)) ?? []).map((d: any) => ({
+        id: Number(d.id),
+        kind: String(d.kind || "other"),
+        number: d.number ? String(d.number) : null,
+        expiry_date: d.expiry_date ? String(d.expiry_date) : null,
+        file_path: String(d.file_path || ""),
+        verified: Number(d.verified || 0),
+        created_at: d.created_at ? String(d.created_at) : undefined,
+      })),
+      payments: (paymentsByBookingId.get(Number(r.id)) ?? []).map((p: any) => ({
+        id: Number(p.id),
+        booking_id: Number(p.booking_id || r.id),
+        booking_no: r.booking_no ? String(r.booking_no) : `BK-${r.id}`,
+        customer_name: (r.customer_name as string) ?? null,
+        customer_phone: (r.customer_phone as string) ?? null,
+        payment_no: String(p.payment_no || `PY-${p.id}`),
+        amount: num(p.amount),
+        status: String(p.status || "Pending"),
+        method: String(p.method || "online"),
+        kind: String(p.kind || "full"),
+        notes: (p.notes as string) ?? null,
+        created_at: (p.created_at as string) ?? "2026-08-12T00:00:00.000Z",
+      })),
+    };
+  });
 
   return (
     <div className="space-y-6">

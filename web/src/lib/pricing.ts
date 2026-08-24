@@ -254,10 +254,39 @@ export function calculateBookingFinancials(booking: {
   total_amount?: number | string | null;
   paid_amount?: number | string | null;
   deposit_amount?: number | string | null;
+  base_amount?: number | string | null;
+  gst_amount?: number | string | null;
+  surcharge_amount?: number | string | null;
+  other_fees_amount?: number | string | null;
+  extra_hours_amount?: number | string | null;
+  extra_km_amount?: number | string | null;
+  late_fee_amount?: number | string | null;
+  damage_amount?: number | string | null;
+  discount_amount?: number | string | null;
 }) {
-  const totalAmount = num(booking.total_amount);
+  let totalAmount = num(booking.total_amount);
   const paidAmount = num(booking.paid_amount);
   const depositAmount = num(booking.deposit_amount);
+  const baseAmount = num(booking.base_amount);
+  const gstAmount = num(booking.gst_amount);
+  const extraCharges =
+    num(booking.surcharge_amount) +
+    num(booking.other_fees_amount) +
+    num(booking.extra_hours_amount) +
+    num(booking.extra_km_amount) +
+    num(booking.late_fee_amount) +
+    num(booking.damage_amount) -
+    num(booking.discount_amount);
+
+  const expectedRentalTotal = baseAmount + gstAmount + extraCharges;
+  // If baseAmount is present and totalAmount was inflated by depositAmount:
+  // e.g. base=2800, gst=168, deposit=1000, total_amount=3968 => clean rental total is 2968
+  if (baseAmount > 0 && depositAmount > 0 && (totalAmount >= expectedRentalTotal + depositAmount || totalAmount === baseAmount + gstAmount + depositAmount)) {
+    totalAmount = expectedRentalTotal;
+  } else if (totalAmount === 0 && expectedRentalTotal > 0) {
+    totalAmount = expectedRentalTotal;
+  }
+
   const balanceDue = Math.max(0, totalAmount - paidAmount);
   const isFullyPaid = paidAmount >= totalAmount && totalAmount > 0;
 

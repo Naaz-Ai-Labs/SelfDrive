@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calculateRentalQuoteFromStrings, isTwoWheeler, depositForVehicle } from "../../web/src/lib/pricing";
+import { calculateRentalQuoteFromStrings, isTwoWheeler, depositForVehicle, calculateBookingFinancials } from "../../web/src/lib/pricing";
 
 test("two-wheelers have Rs.1,000 security deposit policy while cars have Rs.2,000", () => {
   const scooter = { category_kind: "scooter", deposit: 1000, rate_24h: 900 };
@@ -199,4 +199,35 @@ test("formatDateTime correctly displays IST times for both canonical and unadorn
   const formattedLegacy = formatDateTime("2026-08-28T11:00");
   assert.ok(formattedLegacy.includes("28 Aug 2026"));
   assert.ok(formattedLegacy.includes("11:00 am") || formattedLegacy.includes("11:00 AM") || formattedLegacy.includes("11:00"), "Legacy string must format as 11:00 am, not 4:30 pm");
+});
+
+test("calculateBookingFinancials strips legacy deposit bundling and removes automatic fee inflation", () => {
+  // Legacy booking row where deposit (1000) was previously added into total_amount (3968 instead of 2968)
+  const legacyBooking = {
+    base_amount: 2800,
+    gst_amount: 168,
+    deposit_amount: 1000,
+    total_amount: 3968, // 2800 + 168 + 1000 (deposit bundled)
+    paid_amount: 954,
+  };
+
+  const fin = calculateBookingFinancials(legacyBooking);
+  assert.equal(fin.totalAmount, 2968, "Deposit of 1000 must be stripped from totalAmount");
+  assert.equal(fin.paidAmount, 954);
+  assert.equal(fin.depositAmount, 1000);
+  assert.equal(fin.balanceDue, 2014, "Balance due must be 2968 - 954 = 2014, NOT 3014");
+  assert.equal(fin.isFullyPaid, false);
+
+  // Standard 1-day rental (Dio or Jupiter @ Rs. 900/day): 900 base + 54 GST = 954 total
+  const standardBooking = {
+    base_amount: 900,
+    gst_amount: 54,
+    deposit_amount: 1000,
+    total_amount: 954,
+    paid_amount: 954,
+  };
+  const standardFin = calculateBookingFinancials(standardBooking);
+  assert.equal(standardFin.totalAmount, 954);
+  assert.equal(standardFin.balanceDue, 0);
+  assert.equal(standardFin.isFullyPaid, true);
 });

@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { formatDateTime, formatINR, waLink } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
+import { calculateBookingFinancials } from "@/lib/pricing";
 import { BookingReviewModal, type BookingReviewData } from "./BookingReviewModal";
 
 export function BookingsTableWithTabs({
@@ -277,7 +278,10 @@ export function BookingsTableWithTabs({
                   </td>
 
                   <td className="px-4 py-3.5 font-medium text-ink-700">
-                    {formatINR(b.paid_amount)} / {formatINR(b.total_amount)}
+                    {(() => {
+                      const fin = calculateBookingFinancials(b);
+                      return `${formatINR(fin.paidAmount)} / ${formatINR(fin.totalAmount)}`;
+                    })()}
                   </td>
 
                   <td className="px-4 py-3.5">
@@ -401,10 +405,17 @@ export function BookingsTableWithTabs({
                     </td>
 
                     <td className="px-4 py-3.5 font-medium text-ink-800">
-                      <span className={b.paid_amount >= b.total_amount ? "text-emerald-700 font-bold" : ""}>
-                        {formatINR(b.paid_amount)}
-                      </span>{" "}
-                      / {formatINR(b.total_amount)}
+                      {(() => {
+                        const fin = calculateBookingFinancials(b);
+                        return (
+                          <>
+                            <span className={fin.isFullyPaid ? "text-emerald-700 font-bold" : ""}>
+                              {formatINR(fin.paidAmount)}
+                            </span>{" "}
+                            / {formatINR(fin.totalAmount)}
+                          </>
+                        );
+                      })()}
                     </td>
 
                     <td className="px-4 py-3.5">

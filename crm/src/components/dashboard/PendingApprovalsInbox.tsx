@@ -11,6 +11,7 @@ import {
   revertDocumentDecision,
 } from "@/lib/actions";
 import { formatINR, formatDateTime } from "@/lib/utils";
+import { calculateBookingFinancials } from "@/lib/pricing";
 import { BookingReviewModal, type BookingReviewData } from "./BookingReviewModal";
 
 type PendingBooking = {
@@ -362,7 +363,7 @@ export function PendingApprovalsInbox({
                     Customer: <strong>{b.customer_name ?? "—"}</strong> ({b.customer_phone ?? "—"}) • Vehicle: <strong>{b.vehicle_name ?? "—"}</strong>
                   </p>
                   <p className="text-[11px] text-ink-500">
-                    Pickup: {formatDateTime(b.pickup_at)} • Return: {formatDateTime(b.return_at)} • Total: <strong>{formatINR(b.total_amount)}</strong>
+                    Pickup: {formatDateTime(b.pickup_at)} • Return: {formatDateTime(b.return_at)} • Total: <strong>{formatINR(calculateBookingFinancials(b).totalAmount)}</strong>
                   </p>
                 </div>
 
