@@ -212,8 +212,21 @@ export function computeRentalDays(input: RentalClockInput): RentalClockResult {
   const earlyPickup = pickupMinutes < RENTAL_DAY_START_MINUTES;
   const lateDrop = returnMinutes > RENTAL_DAY_START_MINUTES;
 
+  const returnWeekday = istParts(returnAt).weekday;
+  const pickupWeekday = istParts(pickupAt).weekday;
+  const isSaturdayReturn = returnWeekday === 6;
+  const isSaturdayPickup = pickupWeekday === 6;
+
   const spanDays = calendarDaysBetween(pickupAt, returnAt);
-  const days = Math.max(1, spanDays + (lateDrop ? 1 : 0));
+  let days = Math.max(1, spanDays + (lateDrop ? 1 : 0));
+
+  // Business Policy: Any drop on Saturday (or Saturday pickup) must take 2 weekend days (Sat + Sun)
+  if (isSaturdayReturn) {
+    const baseSpan = isSaturdayPickup ? 0 : spanDays;
+    days = Math.max(days, baseSpan + 2);
+  } else if (isSaturdayPickup) {
+    days = Math.max(days, 2);
+  }
 
   const p = istParts(pickupAt);
   const dayDates: Date[] = [];

@@ -28,7 +28,7 @@ const DIO_SCOOTER = {
   name: "Honda Dio",
   category_kind: "scooter",
   rate_24h: 900,
-  weekend_rate_24h: 900,
+  weekend_rate_24h: 950,
   deposit: 1000,
   included_km: 100,
   extra_km_rate: 4,
@@ -39,7 +39,7 @@ const BALENO_CAR = {
   name: "Maruti Suzuki Baleno",
   category_kind: "car",
   rate_24h: 3500,
-  weekend_rate_24h: 3500,
+  weekend_rate_24h: 3550,
   deposit: 2000,
   included_km: 300,
   extra_km_rate: 8,
@@ -121,7 +121,7 @@ test("Logic Check 3: Same-day weekday rental (Wed 11:00 AM -> Wed 11:00 PM)", ()
 test("Logic Check 4: Same-day Friday rental (Fri 11:00 AM -> Fri 11:00 PM)", () => {
   const quote = calculateRentalQuoteFromStrings(DIO_SCOOTER, "2026-08-28", "11:00", "2026-08-28", "23:00");
   assert.ok(quote);
-  assert.equal(quote.days, 1, "Must be 1 day (not 3 days)");
+  assert.equal(quote.days, 1, "Must be 1 day (same-day Friday does not touch Saturday drop)");
   assert.equal(quote.baseAmount, 900, "Weekday rate applies on Friday");
   assert.equal(quote.gstAmount, 54);
   assert.equal(quote.payableNow, 954);
@@ -131,22 +131,22 @@ test("Logic Check 4: Same-day Friday rental (Fri 11:00 AM -> Fri 11:00 PM)", () 
 test("Logic Check 5: Friday pickup with Saturday return (Fri 08:00 -> Sat 08:00)", () => {
   const quote = calculateRentalQuoteFromStrings(DIO_SCOOTER, "2026-08-28", "08:00", "2026-08-29", "08:00");
   assert.ok(quote);
-  assert.equal(quote.days, 1, "Friday to Saturday drops are exactly 1 day");
-  assert.equal(quote.baseAmount, 900);
-  assert.equal(quote.gstAmount, 54); // 6% of 900
-  assert.equal(quote.payableNow, 954);
-  assert.equal(quote.totalAmount, 954);
+  assert.equal(quote.days, 3, "Friday pickup with Saturday drop takes 1 weekday + 2 weekend days = 3 days");
+  assert.equal(quote.baseAmount, 2800, "1 Fri @ 900 + 2 Sat/Sun @ 950 = 2800");
+  assert.equal(quote.gstAmount, 168); // 6% of 2800
+  assert.equal(quote.payableNow, 2968);
+  assert.equal(quote.totalAmount, 2968);
   assert.equal(quote.depositAmount, 1000);
 });
 
 test("Logic Check 6: Saturday pickup (Sat 08:00 -> Sun 08:00)", () => {
   const quote = calculateRentalQuoteFromStrings(DIO_SCOOTER, "2026-08-29", "08:00", "2026-08-30", "08:00");
   assert.ok(quote);
-  assert.equal(quote.days, 1, "Saturday to Sunday 24h drop is exactly 1 day");
-  assert.equal(quote.baseAmount, 900);
-  assert.equal(quote.gstAmount, 54); // 6% of 900
-  assert.equal(quote.payableNow, 954);
-  assert.equal(quote.totalAmount, 954);
+  assert.equal(quote.days, 2, "Saturday pickup takes 2 weekend days (Sat + Sun)");
+  assert.equal(quote.baseAmount, 1900, "2 weekend days @ 950 = 1900");
+  assert.equal(quote.gstAmount, 114); // 6% of 1900
+  assert.equal(quote.payableNow, 2014);
+  assert.equal(quote.totalAmount, 2014);
 });
 
 test("Logic Check 7: Early pickup surcharge (Wed 06:00 -> Thu 08:00)", () => {
