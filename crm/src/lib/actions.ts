@@ -1104,6 +1104,7 @@ async function setBookingStatus(
     user_id: history.userId,
     action: history.action,
     detail: JSON.stringify(history.detail),
+    created_at: nowIso(),
   });
   if (!logged.ok) return fail(logged, "Recording the booking history");
 
@@ -1375,6 +1376,7 @@ export async function recordInspection(input: {
       user_id: user.id,
       action: "return_inspection",
       detail: JSON.stringify({ lateFee: late, extraKm: km }),
+      created_at: nowIso(),
     });
     if (!history.ok) return fail(history, "Recording the booking history");
   }
@@ -1933,6 +1935,7 @@ export async function verifyCustomerDocument(input: { documentId: number; approv
       user_id: staff.id,
       action: input.approve ? "document_verified" : "document_rejected",
       detail: JSON.stringify({ kind: doc.kind, staff_name: staff.name, notes: input.notes }),
+      created_at: nowIso(),
     });
     if (!history.ok) return fail(history, "Recording the booking history");
   }
@@ -1999,6 +2002,7 @@ export async function quickApproveBooking(input: { bookingId: number; approve: b
 
 export async function revertBookingDecision(bookingId: number) {
   const staff = await staffUser();
+  assertCan(staff, "manager");
 
   const restoredStatus = "Pending verification";
   const failed = await setBookingStatus(
@@ -2057,6 +2061,7 @@ export async function uploadSignedHandoverDocument(input: {
     file_path: input.filePath,
     verified: 1,
     verified_by: staff.id,
+    created_at: nowIso(),
   });
 
   if (!docRes.ok) return fail(docRes, `Saving signed ${isReturn ? "return" : "handover"} document`);
@@ -2071,6 +2076,7 @@ export async function uploadSignedHandoverDocument(input: {
       doc_type: isReturn ? "return" : "handover",
       notes: input.notes ?? defaultNote,
     }),
+    created_at: nowIso(),
   });
   if (!history.ok) return fail(history, "Recording booking history");
 

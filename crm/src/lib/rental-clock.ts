@@ -122,7 +122,15 @@ export function parseIstInstant(dateInput: string | Date | null | undefined, tim
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
-  // Otherwise, treat as wall-clock IST date + time
+  // If string has a full database timestamp with seconds (e.g. '2026-08-24 11:30:39' or '2026-08-24T11:30:39.123')
+  // and no timeHM override was provided, it originates from PostgreSQL NOW() in UTC.
+  if (!timeHM && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(trimmed)) {
+    const isoUtc = trimmed.replace(" ", "T") + (trimmed.includes("Z") ? "" : "Z");
+    const d = new Date(isoUtc);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+
+  // Otherwise, treat as wall-clock IST date + time (user pickup/return selections)
   const [datePart, rawTimePart] = trimmed.includes("T")
     ? trimmed.split("T")
     : trimmed.includes(" ")

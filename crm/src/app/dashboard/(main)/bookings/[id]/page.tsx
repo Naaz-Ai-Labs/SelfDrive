@@ -16,6 +16,7 @@ import { BookingHeaderActions } from "@/components/dashboard/BookingHeaderAction
 import { BookingPaymentsList } from "@/components/dashboard/BookingPaymentsList";
 import { BookingExportButton } from "@/components/dashboard/BookingExportButton";
 import { SignedDocumentUploader } from "@/components/dashboard/SignedDocumentUploader";
+import { parseIstInstant } from "@/lib/rental-clock";
 
 export const metadata: Metadata = { title: "Booking detail", robots: { index: false, follow: false } };
 export const revalidate = 0;
@@ -104,10 +105,17 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
 
   const staffNameById = new Map(staff.map((s) => [s.id, s.name]));
 
-  const history = (historyRes.ok ? historyRes.data : []).map((h): Record<string, unknown> => ({
-    ...h,
-    user_name: (h.users as { name?: string } | null)?.name ?? null,
-  }));
+  const history = (historyRes.ok ? historyRes.data : [])
+    .map((h): Record<string, unknown> => ({
+      ...h,
+      user_name: (h.users as { name?: string } | null)?.name ?? null,
+    }))
+    .sort((a, b) => {
+      const timeA = a.created_at ? (parseIstInstant(String(a.created_at))?.getTime() ?? 0) : 0;
+      const timeB = b.created_at ? (parseIstInstant(String(b.created_at))?.getTime() ?? 0) : 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return Number(b.id ?? 0) - Number(a.id ?? 0);
+    });
   const inspections = inspectionsRes.ok ? inspectionsRes.data : [];
   const damages = (damagesRes.ok ? damagesRes.data : []).map((d): Record<string, unknown> => ({ ...d, charge_amount: num(d.charge_amount) }));
   // manual_adjustments references users twice (employee_id, approved_by).
