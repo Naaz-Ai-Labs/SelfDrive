@@ -2101,3 +2101,77 @@ export async function uploadSignedHandoverDocument(input: {
   return { ok: true as const, documentId: docRes.data?.id };
 }
 
+
+/**
+ * Blocks a vehicle (optionally one specific unit) for a date range, so the CRM can take
+ * capacity off sale without touching the unit's own status.
+ *
+ * Distinct from bulkUpdateUnitStatus, which flips vehicle_units.status and therefore
+ * applies for ever until someone flips it back. A date-ranged block is what the fleet
+ * timeline needs: "this scooter is out on Friday", not "this scooter is out".
+ *
+ * Passing vehicleUnitId keeps the block to a single plate, matching how availability is
+ * computed — a unit-scoped block removes exactly that unit and leaves the vehicle's
+ * other units bookable.
+ */
+export async function blockVehicleDates(input: {
+  vehicleId: number;
+  vehicleUnitId?: number | null;
+  startsAt: string;
+  endsAt: string;
+  reason: string;
+  notes?: string;
+}) {
+  const user = await staffUser();
+  assertCan(user, "staff");
+
+  if (!input.vehicleId) return { ok: false as const, error: "Vehicle is required." };
+  if (!input.startsAt || !input.endsAt) return { ok: false as const, error: "Both dates are required." };
+  if (new Date(input.endsAt).getTime() <= new Date(input.startsAt).getTime()) {
+    return { ok: false as const, error: "The end of the block must be after its start." };
+  }
+
+  const res = await sbInsert<{ id: number }>("availability_blocks", {
+    vehicle_id: input.vehicleId,
+    vehicle_unit_id: input.vehicleUnitId ?? null,
+    starts_at: input.startsAt,
+    ends_at: input.endsAt,
+    // NOT NULL in the schema, so never allow an empty string through.
+    reason: input.reason?.trim() || "Blocked by staff",
+    notes: input.notes?.trim() || null,
+    booking_id: null,
+    created_at: nowIso(),
+  });
+  if (!res.ok) return { ok: false as const, error: res.error };
+
+  await logActivity(user.id, "vehicle_dates_blocked", "vehicle", input.vehicleId, {
+    unit_id: input.vehicleUnitId ?? null,
+    starts_at: input.startsAt,
+    ends_at: input.endsAt,
+    reason: input.reason,
+  });
+
+  await invalidateContentCaches();
+  revalidatePath("/dashboard/vehicles");
+  revalidatePath("/dashboard/fleet/timeline");
+  revalidatePath("/dashboard/fleet/units");
+  revalidatePath("/");
+  return { ok: true as const, id: res.data.id };
+}
+
+/** Lifts a block created by blockVehicleDates. Never touches booking-owned blocks. */
+export async function unblockVehicleDates(blockId: number) {
+  const user = await staffUser();
+  assertCan(user, "staff");
+
+  // booking_id IS NULL guards against deleting the hold that backs a real reservation,
+  // which would silently free a vehicle someone has already paid for.
+  const res = await sbDelete("availability_blocks", `id=eq.${blockId}&booking_id=is.null`);
+  if (!res.ok) return { ok: false as const, error: res.error };
+
+  await logActivity(user.id, "vehicle_dates_unblocked", "vehicle", null, { block_id: blockId });
+  await invalidateContentCaches();
+  revalidatePath("/dashboard/fleet/timeline");
+  revalidatePath("/");
+  return { ok: true as const };
+}
