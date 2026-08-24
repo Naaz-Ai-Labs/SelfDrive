@@ -15,15 +15,15 @@ export default async function PaymentsPage() {
 
   const paymentsRes = await sbSelect<Record<string, unknown>>(
     "payments",
-    "select=*,bookings(booking_no,pickup_at,return_at,vehicles(name,registration_no)),customers(name,phone,email)&order=created_at.desc,due_date.asc.nullslast"
+    "select=*,bookings(booking_no,pickup_at,return_at,customers(name,phone,email),vehicles(name,registration_no)),customers(name,phone,email)&order=created_at.desc,due_date.asc.nullslast"
   );
   if (!paymentsRes.ok) throw new Error(`Could not load payments: ${paymentsRes.error}`);
 
   const rawRows = paymentsRes.data.map((p) => {
     const booking = p.bookings as
-      | { booking_no?: string; pickup_at?: string; return_at?: string; vehicles?: { name?: string; registration_no?: string } | null }
+      | { booking_no?: string; pickup_at?: string; return_at?: string; customers?: { name?: string; phone?: string; email?: string } | null; vehicles?: { name?: string; registration_no?: string } | null }
       | null;
-    const customer = p.customers as { name?: string; phone?: string; email?: string } | null;
+    const customer = (p.customers || booking?.customers) as { name?: string; phone?: string; email?: string } | null;
     return {
       ...p,
       booking_no: booking?.booking_no ?? null,

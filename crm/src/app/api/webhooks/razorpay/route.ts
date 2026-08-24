@@ -149,18 +149,14 @@ export async function POST(req: NextRequest) {
 
     if (capturedOrderId && capturedPaymentId) {
       const paymentRow = await findPaymentByOrder(capturedOrderId);
-      if (paymentRow) {
-        const result = await verifyBookingPayment({
-          paymentId: paymentRow.id,
-          razorpayOrderId: capturedOrderId,
-          razorpayPaymentId: capturedPaymentId,
-          razorpaySignature: signature,
-          skipSignatureCheck: true,
-        });
-        if (!result.ok) processingError = result.error;
-      } else {
-        processingError = `No payment record for order ${capturedOrderId}.`;
-      }
+      const result = await verifyBookingPayment({
+        paymentId: paymentRow?.id,
+        razorpayOrderId: capturedOrderId,
+        razorpayPaymentId: capturedPaymentId,
+        razorpaySignature: signature,
+        skipSignatureCheck: true,
+      });
+      if (!result.ok) processingError = result.error;
     }
   } else if (eventType === "payment.failed") {
     const paymentEntity = payload?.payment?.entity;

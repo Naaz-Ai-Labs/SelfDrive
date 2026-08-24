@@ -160,7 +160,7 @@ export async function createBookingPaymentOrder(
     };
   }
 
-  // 2. Pre-booking online checkout order (Zero DB insertion until payment is verified)
+  // 2. Pre-booking online checkout order
   const finalAmount = overrideAmount && overrideAmount > 0 ? overrideAmount : (quote?.payableNow ?? quote?.totalAmount ?? 1);
   const duePaise = Math.max(100, Math.round(finalAmount * 100));
   const paymentNo = nextNumber("PY", null);
@@ -181,12 +181,52 @@ export async function createBookingPaymentOrder(
   const order = await createRazorpayOrder({ amountInRupees: finalAmount, receipt: paymentNo, notes: rzpNotes });
   if (!order.ok) return { ok: false, error: order.error };
 
+  // Look up or create customer if phone provided
+  let customerId: number | null = null;
+  if (customerInfo?.phone) {
+    try {
+      const { findOrCreateCustomer } = await import("./bookings");
+      const custRes = await findOrCreateCustomer({
+        name: customerInfo.name || "Online Customer",
+        phone: customerInfo.phone,
+        email: customerInfo.email,
+      });
+      if (custRes.ok) customerId = custRes.customerId;
+    } catch {}
+  }
+
+  const breakdownJson = JSON.stringify({
+    baseAmount: baseAmt,
+    depositAmount: depAmt,
+    gstAmount: gstAmt,
+    totalAmount: finalAmount,
+  });
+
+  // Pre-insert a Pending payment row so every created order has a durable database trail
+  const ins = await sbInsert<PaymentRow>("payments", {
+    payment_no: paymentNo,
+    booking_id: null,
+    customer_id: customerId,
+    amount: finalAmount,
+    amount_paise: duePaise,
+    currency: "INR",
+    kind: "full",
+    status: "Pending",
+    notes: `Pre-booking checkout for ${customerInfo?.name ?? "Customer"} (${customerInfo?.phone ?? ""})`,
+    gateway_ref: order.orderId,
+    razorpay_order_id: order.orderId,
+    breakdown_json: breakdownJson,
+    created_at: nowISO(),
+  });
+
+  const createdPaymentId = ins.ok ? ins.data.id : 0;
+
   return {
     ok: true,
     orderId: order.orderId,
     amountPaise: order.amount,
     keyId: razorpayKeyId()!,
-    paymentId: 0,
+    paymentId: createdPaymentId,
     paymentNo,
     notes: rzpNotes,
     businessName: "Darshh Holiday",
@@ -225,6 +265,9 @@ export async function verifyBookingPayment(input: {
   let realMethod: string | null = null;
   let realVpa: string | null = null;
   let realBankRef: string | null = null;
+  let customerContact: string | null = null;
+  let customerEmail: string | null = null;
+  let razorpayCustomerName: string | null = null;
 
   try {
     const rzpRes = await fetchRazorpayPayment(input.razorpayPaymentId);
@@ -237,6 +280,9 @@ export async function verifyBookingPayment(input: {
       realVpa = p.vpa || p.upi?.vpa || null;
       realMethod = p.method ? (p.method.toLowerCase() === "upi" ? "UPI" : p.method.toUpperCase()) : null;
       realBankRef = p.acquirer_data?.rrn || p.acquirer_data?.upi_transaction_id || p.acquirer_data?.bank_transaction_id || null;
+      customerContact = p.contact || p.notes?.Phone || null;
+      customerEmail = p.email || null;
+      razorpayCustomerName = p.notes?.Customer || null;
     }
   } catch (err) {
     console.error("[payments] fetchRazorpayPayment check error:", err);
@@ -244,7 +290,7 @@ export async function verifyBookingPayment(input: {
 
   const receiptNo = nextNumber("RC", null);
 
-  // CASE A: Pre-booking online checkout — ONLY create the booking in CRM once payment is verified!
+  // CASE A: Pre-booking online checkout — create the booking and link payment!
   if (input.bookingPayload) {
     const { submitBooking } = await import("./booking-actions");
     const subRes = await submitBooking(input.bookingPayload);
@@ -257,30 +303,57 @@ export async function verifyBookingPayment(input: {
     const customerId = subRes.customerId ?? null;
     const finalPaid = paidAmount > 0 ? paidAmount : (input.bookingPayload.amount || 1);
 
-    // Record the paid transaction
-    const paymentNo = nextNumber("PY", null);
-    await sbInsert<PaymentRow>("payments", {
-      payment_no: paymentNo,
-      booking_id: bookingId,
-      customer_id: customerId,
-      amount: finalPaid,
-      amount_paise: Math.round(finalPaid * 100),
-      currency: "INR",
-      kind: "full",
-      status: "Paid",
-      notes: `Razorpay payment ID: ${input.razorpayPaymentId}`,
-      receipt_no: receiptNo,
-      gateway_ref: input.razorpayPaymentId,
-      razorpay_order_id: input.razorpayOrderId,
-      razorpay_payment_id: input.razorpayPaymentId,
-      razorpay_signature: input.razorpaySignature,
-      method: realMethod || "UPI",
-      upi_id: realVpa,
-      vpa: realVpa,
-      bank_ref_no: realBankRef,
-      paid_at: nowISO(),
-      created_at: nowISO(),
-    });
+    const orderIdEnc = encodeURIComponent(input.razorpayOrderId);
+    const existingOrderPay = await sbSelectOne<PaymentRow>(
+      "payments",
+      `select=*&or=(gateway_ref.eq.${orderIdEnc},razorpay_order_id.eq.${orderIdEnc})`
+    );
+
+    let paymentNo = nextNumber("PY", null);
+    if (existingOrderPay.ok && existingOrderPay.data) {
+      paymentNo = existingOrderPay.data.payment_no;
+      await sbUpdate("payments", `id=eq.${existingOrderPay.data.id}`, {
+        booking_id: bookingId,
+        customer_id: customerId,
+        amount: finalPaid,
+        amount_paise: Math.round(finalPaid * 100),
+        status: "Paid",
+        notes: `Razorpay payment ID: ${input.razorpayPaymentId}`,
+        receipt_no: receiptNo,
+        gateway_ref: input.razorpayPaymentId,
+        razorpay_order_id: input.razorpayOrderId,
+        razorpay_payment_id: input.razorpayPaymentId,
+        razorpay_signature: input.razorpaySignature,
+        method: realMethod || "UPI",
+        upi_id: realVpa,
+        vpa: realVpa,
+        bank_ref_no: realBankRef,
+        paid_at: nowISO(),
+      });
+    } else {
+      await sbInsert<PaymentRow>("payments", {
+        payment_no: paymentNo,
+        booking_id: bookingId,
+        customer_id: customerId,
+        amount: finalPaid,
+        amount_paise: Math.round(finalPaid * 100),
+        currency: "INR",
+        kind: "full",
+        status: "Paid",
+        notes: `Razorpay payment ID: ${input.razorpayPaymentId}`,
+        receipt_no: receiptNo,
+        gateway_ref: input.razorpayPaymentId,
+        razorpay_order_id: input.razorpayOrderId,
+        razorpay_payment_id: input.razorpayPaymentId,
+        razorpay_signature: input.razorpaySignature,
+        method: realMethod || "UPI",
+        upi_id: realVpa,
+        vpa: realVpa,
+        bank_ref_no: realBankRef,
+        paid_at: nowISO(),
+        created_at: nowISO(),
+      });
+    }
 
     // Update booking status to Confirmed & record paid amount
     await sbUpdate("bookings", `id=eq.${bookingId}`, {
@@ -336,17 +409,65 @@ export async function verifyBookingPayment(input: {
     return { ok: true, bookingNo, bookingId };
   }
 
-  // CASE B: Existing booking payment update
+  // CASE B: Existing booking or Webhook payment update
   const orderId = encodeURIComponent(input.razorpayOrderId);
-  const paymentRes = await sbSelectOne<PaymentRow>(
+  let paymentRes = await sbSelectOne<PaymentRow>(
     "payments",
-    `select=*&id=eq.${input.paymentId}&or=(gateway_ref.eq.${orderId},razorpay_order_id.eq.${orderId})`
+    input.paymentId && input.paymentId > 0
+      ? `select=*&id=eq.${input.paymentId}`
+      : `select=*&or=(gateway_ref.eq.${orderId},razorpay_order_id.eq.${orderId})`
   );
-  if (!paymentRes.ok) return { ok: false, error: paymentRes.error };
-  const payment = paymentRes.data;
-  if (!payment) return { ok: false, error: "Payment record not found." };
 
-  if (payment.status === "Paid") {
+  let payment = paymentRes.ok ? paymentRes.data : null;
+
+  // Fallback: If no payment row exists at all in the database, create one from Razorpay entity
+  if (!payment) {
+    let fallbackCustomerId: number | null = null;
+    if (customerContact) {
+      try {
+        const { findOrCreateCustomer } = await import("./bookings");
+        const custRes = await findOrCreateCustomer({
+          name: razorpayCustomerName || "Customer",
+          phone: customerContact,
+          email: customerEmail || undefined,
+        });
+        if (custRes.ok) fallbackCustomerId = custRes.customerId;
+      } catch {}
+    }
+
+    const fallbackPayNo = nextNumber("PY", null);
+    const effectivePaidAmount = paidAmount > 0 ? paidAmount : 1;
+    const insRes = await sbInsert<PaymentRow>("payments", {
+      payment_no: fallbackPayNo,
+      booking_id: null,
+      customer_id: fallbackCustomerId,
+      amount: effectivePaidAmount,
+      amount_paise: Math.round(effectivePaidAmount * 100),
+      currency: "INR",
+      kind: "full",
+      status: "Paid",
+      notes: `Razorpay payment ID: ${input.razorpayPaymentId}`,
+      receipt_no: receiptNo,
+      gateway_ref: input.razorpayPaymentId,
+      razorpay_order_id: input.razorpayOrderId,
+      razorpay_payment_id: input.razorpayPaymentId,
+      razorpay_signature: input.razorpaySignature,
+      method: realMethod || "UPI",
+      upi_id: realVpa,
+      vpa: realVpa,
+      bank_ref_no: realBankRef,
+      paid_at: nowISO(),
+      created_at: nowISO(),
+    });
+
+    if (insRes.ok && insRes.data) {
+      payment = insRes.data;
+    } else {
+      return { ok: false, error: "Payment record could not be created." };
+    }
+  }
+
+  if (payment.status === "Paid" && payment.booking_id) {
     const bookingNo = await lookupBookingNo(payment.booking_id);
     return { ok: true, bookingNo: bookingNo ?? "", alreadyProcessed: true };
   }
@@ -372,13 +493,58 @@ export async function verifyBookingPayment(input: {
 
   const paidUpdate = await sbUpdate<PaymentRow>("payments", `id=eq.${payment.id}&status=neq.Paid`, patch);
   if (!paidUpdate.ok) return { ok: false, error: `Could not record the payment: ${paidUpdate.error}` };
-  if (paidUpdate.data.length === 0) {
-    const bookingNo = await lookupBookingNo(payment.booking_id);
-    return { ok: true, bookingNo: bookingNo ?? "", alreadyProcessed: true };
+
+  let bookingId = payment.booking_id;
+
+  // If payment is not linked to a booking (e.g. customer closed tab before callback), try auto-linking with enquiry
+  if (!bookingId) {
+    let searchPhone = customerContact;
+    if (!searchPhone && payment.customer_id) {
+      const cRes = await sbSelectOne<{ phone: string | null }>("customers", `select=phone&id=eq.${payment.customer_id}`);
+      if (cRes.ok && cRes.data?.phone) searchPhone = cRes.data.phone;
+    }
+
+    if (searchPhone) {
+      const cleanPhone = searchPhone.replace(/\D/g, "").slice(-10);
+      const enqRes = await sbSelectOne<{ id: number; data: string; vehicle_id: number; pickup_date: string; return_date: string }>(
+        "enquiries",
+        `select=id,data,vehicle_id,pickup_date,return_date&phone=like.*${encodeURIComponent(cleanPhone)}*&status=eq.draft&order=id.desc`
+      );
+      if (enqRes.ok && enqRes.data && enqRes.data.vehicle_id) {
+        const enq = enqRes.data;
+        const bNo = nextNumber("BK", null);
+        const insBooking = await sbInsert<{ id: number }>("bookings", {
+          booking_no: bNo,
+          enquiry_id: enq.id,
+          customer_id: payment.customer_id,
+          vehicle_id: enq.vehicle_id,
+          branch_id: 1,
+          pickup_at: enq.pickup_date,
+          return_at: enq.return_date,
+          status: "Confirmed",
+          total_amount: effectivePaid,
+          paid_amount: effectivePaid,
+          deposit_amount: 1000,
+          created_at: nowISO(),
+        });
+        if (insBooking.ok && insBooking.data) {
+          bookingId = insBooking.data.id;
+          await sbUpdate("payments", `id=eq.${payment.id}`, { booking_id: bookingId });
+          await sbUpdate("enquiries", `id=eq.${enq.id}`, { status: "converted", stage: "Converted" });
+        }
+      }
+    }
   }
 
-  const bookingId = payment.booking_id;
-  if (!bookingId) return { ok: false, error: "Payment is not linked to a booking." };
+  if (!bookingId) {
+    // Unlinked payment safely recorded in payments table
+    await logActivity(null, "payment_received_unlinked", "payment", payment.id, {
+      amount: effectivePaid,
+      razorpay_payment_id: input.razorpayPaymentId,
+      order_id: input.razorpayOrderId,
+    });
+    return { ok: true, bookingNo: "" };
+  }
 
   const unverifiedDocs = await sbCount("customer_documents", `booking_id=eq.${bookingId}&verified=eq.0`);
   const newBookingStatus = unverifiedDocs.ok && unverifiedDocs.data === 0 ? "Confirmed" : "Payment received";
