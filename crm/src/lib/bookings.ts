@@ -343,7 +343,7 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
     pickup_at: canonicalPickupAt,
     return_at: canonicalReturnAt,
     after_hours: quote.afterHours ? 1 : 0,
-    status: "Pending verification",
+    status: "Pending payment",
     base_amount: num(quote.baseAmount),
     gst_amount: num(quote.gstAmount),
     deposit_amount: num(quote.depositAmount),
