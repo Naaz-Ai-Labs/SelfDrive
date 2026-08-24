@@ -361,12 +361,30 @@ export const DEFAULT_VEHICLES_ROSTER: Vehicle[] = [
  * Batched deliberately: the SQLite version ran two queries per vehicle, which over
  * HTTP would be forty round trips to render the fleet page.
  */
-async function hydrateVehicles(rows: RawVehicle[]): Promise<Vehicle[]> {
+async function hydrateVehicles(
+  rows: RawVehicle[],
+  availabilityWindow?: { pickupAt: string; returnAt: string }
+): Promise<Vehicle[]> {
   if (rows.length === 0) return [];
 
   const ids = rows.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
   const idPredicate = inList(ids);
   const nowIso = new Date().toISOString();
+
+  // Which bookings count as occupying a unit.
+  //
+  // Without a window this asks "is this vehicle out at any point from now on", which is
+  // the right question for the CRM fleet list. It is the WRONG question for a booking
+  // search: a reservation on 28 Aug then suppressed the vehicle on every other date,
+  // including 15 Sep, for as long as that booking had not been returned. Mercedes W140
+  // disappeared from 29-30 Aug because of a 28 Aug booking on one of its two units.
+  //
+  // With a window it asks "is this vehicle out during the dates the customer asked
+  // for", which is the only question the availability filter should be answering.
+  const holdsFilter = availabilityWindow
+    ? `&return_at=gt.${encodeURIComponent(availabilityWindow.pickupAt)}` +
+      `&pickup_at=lt.${encodeURIComponent(availabilityWindow.returnAt)}`
+    : `&return_at=gte.${encodeURIComponent(nowIso)}`;
 
   const [photosRes, holdsRes, unitsRes, branchesRes] = await Promise.all([
     sbSelect<{ vehicle_id: number; url: string }>(
@@ -375,7 +393,7 @@ async function hydrateVehicles(rows: RawVehicle[]): Promise<Vehicle[]> {
     ),
     sbSelect<{ vehicle_id: number; branch_id: number | null; vehicle_unit_id: number | null }>(
       "bookings",
-      `select=vehicle_id,branch_id,vehicle_unit_id&vehicle_id=${idPredicate}&status=${inList(HOLDING_STATUSES)}&return_at=gte.${encodeURIComponent(nowIso)}`
+      `select=vehicle_id,branch_id,vehicle_unit_id&vehicle_id=${idPredicate}&status=${inList(HOLDING_STATUSES)}${holdsFilter}`
     ),
     sbSelect<{ id: number; vehicle_id: number; current_branch_id: number | null; status: string; registration_no?: string; unit_identifier?: string }>(
       "vehicle_units",
@@ -626,6 +644,13 @@ export type VehicleFilters = {
   onlyAvailable?: boolean;
   availableOnly?: boolean;
   branchId?: number;
+  /**
+   * The dates the customer actually asked for. When supplied, available_units reflects
+   * occupancy DURING THIS WINDOW only, instead of "booked at any point from now on".
+   * Callers rendering a fleet list (rather than answering a booking search) should omit
+   * it, which keeps the previous "currently out" semantics.
+   */
+  availabilityWindow?: { pickupAt: string; returnAt: string };
 };
 
 export async function getVehicles(
@@ -660,7 +685,7 @@ export async function getVehicles(
     const res = await sbSelect<RawVehicle>("vehicles", parts.join("&"));
     if (res.ok && Array.isArray(res.data)) {
       querySucceeded = true;
-      if (res.data.length > 0) vehicles = await hydrateVehicles(res.data);
+      if (res.data.length > 0) vehicles = await hydrateVehicles(res.data, filters.availabilityWindow);
     } else {
       console.error("[getVehicles] Supabase query failed:", res.ok ? "unexpected shape" : res.error);
     }
