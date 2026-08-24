@@ -48,13 +48,22 @@ const sb = (p: string) =>
 
 const CANONICAL = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
+/**
+ * Since the timestamptz migration these columns are typed, so PostgREST serialises them
+ * with an explicit offset ("2026-08-24T09:32:00+00:00"). That is correct output from a
+ * correct column, NOT the mixed-format drift this check was originally written to catch.
+ *
+ * What still matters is a value carrying no zone at all, or a bare epoch — either means
+ * something wrote a raw string into a column that should be rejecting it, i.e. the
+ * problem is creeping back.
+ */
 function shapeOf(v: unknown): string {
   const s = String(v ?? "");
   if (!s || s === "null") return "empty";
-  if (CANONICAL.test(s)) return "canonical-utc";
-  if (/Z$/.test(s)) return "iso-utc (non-ms)";
-  if (/[+-]\d{2}:?\d{2}$/.test(s)) return "offset";
-  if (/^\d+$/.test(s)) return "epoch-number";
+  if (CANONICAL.test(s)) return "zoned";
+  if (/Z$/.test(s)) return "zoned";
+  if (/[+-]\d{2}:?\d{2}$/.test(s)) return "zoned";
+  if (/^\d+$/.test(s)) return "EPOCH-NUMBER";
   if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:/.test(s)) return "NAIVE (no zone)";
   return "other";
 }
@@ -172,9 +181,9 @@ async function main() {
     }
     const counts: Record<string, number> = {};
     for (const r of rows) counts[shapeOf((r as any)[col])] = (counts[shapeOf((r as any)[col])] || 0) + 1;
-    const bad = Object.entries(counts).filter(([k]) => k !== "canonical-utc" && k !== "empty");
+    const bad = Object.entries(counts).filter(([k]) => k !== "zoned" && k !== "empty");
     if (bad.length) problems++;
-    console.log(`  ${table.padEnd(20)} ${JSON.stringify(counts)}${bad.length ? "   <-- non-canonical" : ""}`);
+    console.log(`  ${table.padEnd(20)} ${JSON.stringify(counts)}${bad.length ? "   <-- UNZONED VALUES" : ""}`);
   }
 
   console.log(`\n=== ${problems === 0 ? "ALL CHECKS PASSED" : `${problems} PROBLEM AREA(S)`} ===\n`);
