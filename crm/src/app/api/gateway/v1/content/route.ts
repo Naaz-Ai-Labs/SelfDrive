@@ -14,6 +14,14 @@ export async function GET(req: NextRequest) {
   const denied = requireGatewayKey(req);
   if (denied) return denied;
 
+  // Optional date window from the public site's search bar (?pickupAt=...&returnAt=...,
+  // canonical IST ISO strings). When present, `available_units`/`status` on each vehicle
+  // reflect occupancy during THIS window only, instead of "booked at any point from now
+  // on" — the same availabilityWindow mechanism already used by the booking picker.
+  const pickupAt = req.nextUrl.searchParams.get("pickupAt");
+  const returnAt = req.nextUrl.searchParams.get("returnAt");
+  const availabilityWindow = pickupAt && returnAt ? { pickupAt, returnAt } : undefined;
+
   // These are all async reads now. Handing the unawaited promises to
   // NextResponse.json serialises every one of them as `{}`.
   const [
@@ -23,7 +31,7 @@ export async function GET(req: NextRequest) {
     businessInfo(),
     rentalRules(),
     getVehicleCategories(),
-    getVehicles(),
+    getVehicles({ availabilityWindow }),
     getBranches(),
     getTestimonials(),
     getGallery(),

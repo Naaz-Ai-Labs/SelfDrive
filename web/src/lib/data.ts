@@ -430,10 +430,19 @@ async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
 }
 
 /** Fetched once per request (React cache dedupes repeated calls within the same render
- * pass) — the CRM gateway returns the whole read-mostly content model in one payload. */
-export const getContent = cache(async (): Promise<Content> => {
+ * pass, keyed by argument — an undated call and a dated call are cached separately) —
+ * the CRM gateway returns the whole read-mostly content model in one payload.
+ *
+ * `availabilityWindow`, when supplied, scopes every vehicle's available_units/status to
+ * that specific date range instead of "booked at any point from now on" — see the
+ * matching parameter on the CRM's /api/gateway/v1/content route. Omit it (as every
+ * caller except a customer's own date search does) to keep the previous behaviour. */
+export const getContent = cache(async (availabilityWindow?: { pickupAt: string; returnAt: string }): Promise<Content> => {
   try {
-    const data = await gatewayGet<Content & { error?: string }>("/api/gateway/v1/content", { revalidate: 0 });
+    const path = availabilityWindow
+      ? `/api/gateway/v1/content?pickupAt=${encodeURIComponent(availabilityWindow.pickupAt)}&returnAt=${encodeURIComponent(availabilityWindow.returnAt)}`
+      : "/api/gateway/v1/content";
+    const data = await gatewayGet<Content & { error?: string }>(path, { revalidate: 0 });
     if (data && !("error" in data) && Array.isArray(data.vehicles)) {
       return {
         ...data,
@@ -480,6 +489,12 @@ export type VehicleFilters = {
   /** Branch/location the customer is collecting from, e.g. "HASSAN" or "SAKLESHPURA" */
   location?: string;
   branchId?: number;
+  /**
+   * The dates the customer actually selected. When supplied, available_units reflects
+   * occupancy DURING THIS WINDOW only, instead of "booked at any point from now on".
+   * Omit for an undated fleet listing (keeps the previous "currently out" semantics).
+   */
+  availabilityWindow?: { pickupAt: string; returnAt: string };
 };
 
 /**
@@ -502,7 +517,7 @@ function matchesLocation(branchName: string | null, location?: string): boolean 
 }
 
 export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle[]> {
-  const { vehicles, branches } = await getContent();
+  const { vehicles, branches } = await getContent(filters.availabilityWindow);
   const matched: Vehicle[] = [];
 
   const targetBranchId = filters.branchId
@@ -571,8 +586,11 @@ export async function getVehicles(filters: VehicleFilters = {}): Promise<Vehicle
   return matched.map(withRates);
 }
 
-export async function getVehicle(slug: string): Promise<Vehicle | null> {
-  const v = (await getContent()).vehicles.find((v) => v.slug === slug) ?? null;
+export async function getVehicle(
+  slug: string,
+  availabilityWindow?: { pickupAt: string; returnAt: string }
+): Promise<Vehicle | null> {
+  const v = (await getContent(availabilityWindow)).vehicles.find((v) => v.slug === slug) ?? null;
   return v ? withRates(v) : null;
 }
 

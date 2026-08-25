@@ -9,6 +9,7 @@ import { businessInfo } from "@/lib/settings";
 import { Reveal } from "@/components/ui/Reveal";
 import { isWeekend } from "@/lib/pricing";
 import { getCachedVehicleSearchPrice } from "@/lib/search-pricing";
+import { toCanonicalIstIso } from "@/lib/rental-clock";
 
 export async function generateMetadata(props: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const params = await props.params;
@@ -65,7 +66,23 @@ export default async function VehicleDetailPage(props: {
 }) {
   const searchParams = await props.searchParams;
   const params = await props.params;
-  const vehicle = await getVehicle(params.slug);
+
+  const pickupDate = searchParams.pickup;
+  const pickupTime = searchParams.pickupTime || "08:00";
+  const returnDate = searchParams.return;
+  const returnTime = searchParams.returnTime || "08:00";
+  const branchParam = searchParams.branch || searchParams.branchId || searchParams.location;
+
+  // Same dates used below for pricing — reused here so a hold on ONE day no longer
+  // marks this vehicle Out of Stock on every day shown (was previously undated).
+  const availabilityWindow = pickupDate && returnDate
+    ? {
+        pickupAt: toCanonicalIstIso(pickupDate, pickupTime) || `${pickupDate}T${pickupTime}:00+05:30`,
+        returnAt: toCanonicalIstIso(returnDate, returnTime) || `${returnDate}T${returnTime}:00+05:30`,
+      }
+    : undefined;
+
+  const vehicle = await getVehicle(params.slug, availabilityWindow);
   if (!vehicle) notFound();
   const [similarAll, terms, info, branches] = await Promise.all([
     getVehicles({ categorySlug: vehicle.category_slug ?? undefined }),
@@ -74,12 +91,6 @@ export default async function VehicleDetailPage(props: {
     getBranches(),
   ]);
   const similar = similarAll.filter((v: Vehicle) => v.id !== vehicle.id).slice(0, 3);
-
-  const pickupDate = searchParams.pickup;
-  const pickupTime = searchParams.pickupTime || "08:00";
-  const returnDate = searchParams.return;
-  const returnTime = searchParams.returnTime || "08:00";
-  const branchParam = searchParams.branch || searchParams.branchId || searchParams.location;
 
   const selectedBranchId = branchParam
     ? branchParam === "1" || branchParam.toUpperCase().includes("SAKLESH")

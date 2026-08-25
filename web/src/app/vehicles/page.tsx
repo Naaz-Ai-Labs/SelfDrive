@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 import { getVehicles, getVehicleCategories, getBranches } from "@/lib/data";
+import { toCanonicalIstIso } from "@/lib/rental-clock";
 import { formatINR, formatDate } from "@/lib/utils";
 import { EmptyState } from "@/components/ui";
 import { Reveal } from "@/components/ui/Reveal";
@@ -58,6 +59,15 @@ export default async function VehiclesPage(
   const returnDate = searchParams.return;
   const returnTime = searchParams.returnTime || "08:00";
 
+  // Same dates already used below for pricing — reused here so a hold on ONE day no
+  // longer marks the vehicle Out of Stock on every day shown (was previously undated).
+  const availabilityWindow = pickupDate && returnDate
+    ? {
+        pickupAt: toCanonicalIstIso(pickupDate, pickupTime) || `${pickupDate}T${pickupTime}:00+05:30`,
+        returnAt: toCanonicalIstIso(returnDate, returnTime) || `${returnDate}T${returnTime}:00+05:30`,
+      }
+    : undefined;
+
   const [categories, branches, vehicles] = await Promise.all([
     getVehicleCategories(),
     getBranches(),
@@ -65,6 +75,7 @@ export default async function VehiclesPage(
       kind: kind || undefined,
       branchId: selectedBranchId,
       location: branchParam || undefined,
+      availabilityWindow,
     }),
   ]);
 
