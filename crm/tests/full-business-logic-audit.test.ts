@@ -128,10 +128,21 @@ test("Logic Check 4: Same-day Friday rental (Fri 11:00 AM -> Fri 11:00 PM)", () 
   assert.equal(quote.totalAmount, 954);
 });
 
-test("Logic Check 5: Friday pickup with Saturday return (Fri 08:00 -> Sat 08:00)", () => {
+test("Logic Check 5: Friday pickup with Saturday return ON TIME (Fri 08:00 -> Sat 08:00) — no weekend charge", () => {
   const quote = calculateRentalQuoteFromStrings(DIO_SCOOTER, "2026-08-28", "08:00", "2026-08-29", "08:00");
   assert.ok(quote);
-  assert.equal(quote.days, 3, "Friday pickup with Saturday drop takes 1 weekday + 2 weekend days = 3 days");
+  assert.equal(quote.days, 1, "on-time Fri->Sat drop is exactly the 1 Friday rental day, no weekend surcharge");
+  assert.equal(quote.baseAmount, 900, "1 Fri @ weekday rate 900");
+  assert.equal(quote.gstAmount, 54); // 6% of 900
+  assert.equal(quote.payableNow, 954);
+  assert.equal(quote.totalAmount, 954);
+  assert.equal(quote.depositAmount, 1000);
+});
+
+test("Logic Check 5b: Friday pickup with Saturday return LATE (Fri 08:00 -> Sat 09:00) — 2 weekend day charges apply", () => {
+  const quote = calculateRentalQuoteFromStrings(DIO_SCOOTER, "2026-08-28", "08:00", "2026-08-29", "09:00");
+  assert.ok(quote);
+  assert.equal(quote.days, 3, "late Fri pickup with Sat drop takes 1 weekday + 2 weekend days = 3 days");
   assert.equal(quote.baseAmount, 2800, "1 Fri @ 900 + 2 Sat/Sun @ 950 = 2800");
   assert.equal(quote.gstAmount, 168); // 6% of 2800
   assert.equal(quote.payableNow, 2968);

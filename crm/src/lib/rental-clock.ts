@@ -228,8 +228,13 @@ export function computeRentalDays(input: RentalClockInput): RentalClockResult {
   const spanDays = calendarDaysBetween(pickupAt, returnAt);
   let days = Math.max(1, spanDays + (lateDrop ? 1 : 0));
 
-  // Business Policy: Any drop on Saturday (or Saturday pickup) must take 2 weekend days (Sat + Sun)
-  if (isSaturdayReturn) {
+  // Business Policy: a LATE drop (after 08:00) on/into Saturday takes both weekend days
+  // (Sat + Sun) — returning late effectively keeps the vehicle unavailable through Sunday
+  // too. An on-time or early drop (at/before 08:00) does NOT get this padding — it is
+  // priced on the days actually rented, same as any other day. Saturday PICKUP keeps its
+  // own separate 2-day weekend minimum below, independent of drop timing — this rule is
+  // about the drop side only.
+  if (isSaturdayReturn && lateDrop) {
     const baseSpan = isSaturdayPickup ? 0 : spanDays;
     days = Math.max(days, baseSpan + 2);
   } else if (isSaturdayPickup) {

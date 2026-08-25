@@ -171,25 +171,51 @@ test("Saturday pickup to Monday morning return charges for 2 days", () => {
   assert.equal(r.dayDates.length, 2);
 });
 
-test("Friday pickup to Saturday drop-off charges for 3 days (1 weekday + 2 weekend days)", () => {
-  // 14 Aug 2026 is a Friday, 15 Aug 2026 is a Saturday.
+test("Friday pickup to Saturday drop-off ON TIME (08:00) charges 1 day — no weekend padding on an on-time drop", () => {
+  // 14 Aug 2026 is a Friday, 15 Aug 2026 is a Saturday. Return AT 08:00 is on time, not late.
   const r = computeRentalDays({
     pickupAt: istDate(2026, AUG, 14, 8),
     returnAt: istDate(2026, AUG, 15, 8),
   });
-  assert.equal(r.days, 3, "Fri pickup to Sat drop-off takes Friday + Sat/Sun weekend package = 3 days");
+  assert.equal(r.lateDrop, false);
+  assert.equal(r.days, 1, "on-time Fri->Sat drop is exactly the 1 Friday rental day, no weekend surcharge");
+  assert.equal(r.dayDates.length, 1);
+  assert.equal(istDateKey(r.dayDates[0]), "2026-08-14");
+  assert.deepEqual(r.dayDates.map(isWeekendIst), [false]);
+});
+
+test("Friday pickup to Saturday drop-off LATE (09:00) charges 3 days (1 weekday + 2 weekend days)", () => {
+  // Same dates as above, but the drop is after 08:00 — this is where the weekend padding applies.
+  const r = computeRentalDays({
+    pickupAt: istDate(2026, AUG, 14, 8),
+    returnAt: istDate(2026, AUG, 15, 9),
+  });
+  assert.equal(r.lateDrop, true);
+  assert.equal(r.days, 3, "late Fri pickup to Sat drop-off takes Friday + Sat/Sun weekend package = 3 days");
   assert.equal(r.dayDates.length, 3);
   assert.equal(istDateKey(r.dayDates[0]), "2026-08-14");
   assert.deepEqual(r.dayDates.map(isWeekendIst), [false, true, true]);
 });
 
-test("Thursday pickup to Saturday drop-off charges for 4 days (2 weekdays + 2 weekend days)", () => {
-  // 13 Aug 2026 is a Thursday.
+test("Thursday pickup to Saturday drop-off ON TIME (08:00) charges 2 weekdays — no weekend padding on an on-time drop", () => {
+  // 13 Aug 2026 is a Thursday. Return AT 08:00 on Saturday is on time, not late.
   const r = computeRentalDays({
     pickupAt: istDate(2026, AUG, 13, 8),
     returnAt: istDate(2026, AUG, 15, 8),
   });
-  assert.equal(r.days, 4, "Thu 08:00 to Sat 08:00 takes 2 weekdays + 2 weekend days = 4 days");
+  assert.equal(r.lateDrop, false);
+  assert.equal(r.days, 2, "on-time Thu->Sat drop is exactly the 2 weekdays rented, no weekend surcharge");
+  assert.equal(r.dayDates.length, 2);
+  assert.deepEqual(r.dayDates.map(isWeekendIst), [false, false]);
+});
+
+test("Thursday pickup to Saturday drop-off LATE (09:00) charges 4 days (2 weekdays + 2 weekend days)", () => {
+  const r = computeRentalDays({
+    pickupAt: istDate(2026, AUG, 13, 8),
+    returnAt: istDate(2026, AUG, 15, 9),
+  });
+  assert.equal(r.lateDrop, true);
+  assert.equal(r.days, 4, "late Thu 08:00 to Sat 09:00 drop takes 2 weekdays + 2 weekend days = 4 days");
   assert.equal(r.dayDates.length, 4);
   assert.deepEqual(r.dayDates.map(isWeekendIst), [false, false, true, true]);
 });
