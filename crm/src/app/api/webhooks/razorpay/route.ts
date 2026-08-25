@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { verifyRazorpayWebhookSignature } from "@/lib/razorpay";
-import { verifyBookingPayment } from "@/lib/payment-actions";
+import { verifyBookingPayment, recordFailedPaymentAttempt } from "@/lib/payment-actions";
 import { logActivity } from "@/lib/activity";
 import { sbSelectOne, sbInsert, sbUpdate } from "@/lib/supabase-rest";
 
@@ -201,9 +201,15 @@ async function processEvent(
   } else if (eventType === "payment.failed") {
     const paymentEntity = payload?.payment?.entity;
     if (paymentEntity?.order_id) {
-      const enc = encodeURIComponent(paymentEntity.order_id);
-      const upd = await sbUpdate("payments", `gateway_ref=eq.${enc}&status=eq.Pending`, { status: "Failed" });
-      if (!upd.ok) processingError = upd.error;
+      const paymentRow = await findPaymentByOrder(paymentEntity.order_id);
+      if (paymentRow) {
+        // Routes through the same attempt-counter + release logic the frontend's
+        // dismissal path uses — this is what actually decrements toward the 3-attempt
+        // limit and releases the reservation once it's exhausted, instead of just
+        // flipping the row to Failed with no further consequence.
+        const result = await recordFailedPaymentAttempt(paymentRow.id);
+        if (!result.ok) processingError = result.error;
+      }
       await logActivity(null, "payment_failed_webhook", "payment", null, {
         orderId: paymentEntity.order_id,
         reason: paymentEntity.error_description ?? "Payment failed",

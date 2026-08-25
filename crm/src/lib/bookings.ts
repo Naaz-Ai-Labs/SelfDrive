@@ -26,6 +26,13 @@ export type BookingPayload = {
   passengers?: number;
   notes?: string;
   enquiryId?: number | null;
+  /**
+   * One key per logical "start booking" attempt from the client, unchanged across
+   * retries of that SAME attempt (double-click, browser retry, a lost HTTP response
+   * after the DB write already succeeded). Guarantees one booking + one reservation
+   * per logical request, backed by a DB unique index (uq_bookings_idempotency_key),
+   * not just this in-memory check — see the race handling in the insert loop below.
+   */
   idempotencyKey?: string;
 };
 
@@ -84,7 +91,18 @@ export async function findOrCreateCustomer(
     emergency_contact: contact.emergencyContact ?? null,
     source: "Website booking",
   });
-  if (!created.ok) return { ok: false, error: `Could not save the customer: ${created.error}` };
+  if (!created.ok) {
+    // Two genuinely concurrent callers with the same phone/email both pass the
+    // lookup above (neither exists yet) and both reach here — the loser's INSERT
+    // hits the unique constraint. Re-fetch and adopt the winner instead of failing
+    // outright; the phone/email lookup above already proves this row is the same
+    // customer, just created by the other caller a moment earlier.
+    if (filters.length > 0 && isUniqueViolation(created.error, created.status)) {
+      const winner = await sbSelectOne<{ id: number }>("customers", `select=id&or=${encodeURIComponent(`(${filters.join(",")})`)}`);
+      if (winner.ok && winner.data) return { ok: true, customerId: Number(winner.data.id) };
+    }
+    return { ok: false, error: `Could not save the customer: ${created.error}` };
+  }
   const newId = Number(created.data?.id);
   if (!Number.isFinite(newId) || newId <= 0) return { ok: false, error: "The customer was saved without an id." };
   return { ok: true, customerId: newId };
@@ -235,11 +253,47 @@ function isUniqueViolation(error: string, status?: number): boolean {
   return status === 409 || /duplicate key|already exists|23505/i.test(error);
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Looks up a booking by idempotency key, retrying briefly. Claims are serialized by
+ * the advisory lock, so when N concurrent callers share a key and only some of them
+ * win a physical unit, a losing caller's claim can fail (no units left) BEFORE the
+ * winning caller — who claimed a moment earlier — has finished customer lookup +
+ * quote + insert. A short bounded wait catches the winner reliably without polling
+ * indefinitely; if nothing shows up, this genuinely isn't a race, just no availability.
+ */
+async function findBookingByIdempotencyKey(key: string): Promise<{ id: number; booking_no: string; customer_id: number } | null> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(250);
+    const found = await sbSelectOne<{ id: number; booking_no: string; customer_id: number }>(
+      "bookings",
+      `select=id,booking_no,customer_id&idempotency_key=eq.${encodeURIComponent(key)}`
+    );
+    if (found.ok && found.data) return found.data;
+  }
+  return null;
+}
+
 /**
  * Creates or reuses a customer, computes the quote, and inserts a booking in
  * 'Pending verification' with atomic unit-level slot reservation.
  */
 export async function createBooking(payload: BookingPayload): Promise<{ bookingId: number; bookingNo: string; customerId: number }> {
+  // Fast path for a sequential retry of the same logical request (the common case —
+  // double-click, browser auto-retry, a client that resubmits after a timeout). The
+  // insert loop below additionally handles the true CONCURRENT race, where two
+  // callers with the same key both pass this check before either has inserted yet.
+  if (payload.idempotencyKey) {
+    const existing = await sbSelectOne<{ id: number; booking_no: string; customer_id: number }>(
+      "bookings",
+      `select=id,booking_no,customer_id&idempotency_key=eq.${encodeURIComponent(payload.idempotencyKey)}`
+    );
+    if (existing.ok && existing.data) {
+      return { bookingId: existing.data.id, bookingNo: existing.data.booking_no, customerId: existing.data.customer_id };
+    }
+  }
+
   const vehicle = await getVehicleById(payload.vehicleId);
   if (!vehicle) throw new Error("Vehicle not found");
 
@@ -317,6 +371,17 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
       p_return_at: canonicalReturnAt,
     });
     if (!claim.ok || !claim.data) {
+      // Found no free unit. Before treating this as a genuine "sold out", check
+      // whether a concurrent caller sharing the SAME idempotency key already won —
+      // this caller never got a unit at all (someone else took the last one), but if
+      // that someone else was actually THIS SAME logical request, the right answer is
+      // to hand back their booking, not fail. A different vehicle-wide unique
+      // violation (a real second customer) never shares this key, so it always falls
+      // through to the real "not available" error below.
+      if (payload.idempotencyKey) {
+        const raced = await findBookingByIdempotencyKey(payload.idempotencyKey);
+        if (raced) return { bookingId: raced.id, bookingNo: raced.booking_no, customerId: raced.customer_id };
+      }
       throw new Error("This vehicle is not available for the selected dates and branch.");
     }
     claimedBlockId = Number(claim.data);
@@ -363,16 +428,42 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   let bookingId = 0;
   let bookingNo = "";
   let lastError = "";
+  let racedCustomerId: number | null = null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const candidate = makeBookingNo();
-    const inserted = await sbInsert<{ id: number; booking_no: string }>("bookings", { ...row, booking_no: candidate });
+    const inserted = await sbInsert<{ id: number; booking_no: string }>("bookings", {
+      ...row,
+      booking_no: candidate,
+      idempotency_key: payload.idempotencyKey ?? null,
+    });
     if (inserted.ok) {
       bookingId = Number(inserted.data?.id);
       bookingNo = String(inserted.data?.booking_no ?? candidate);
       break;
     }
     lastError = inserted.error;
+
+    // Two concurrent callers with the SAME idempotency key both pass the fast-path
+    // check above (neither had inserted yet) and both reach here — one of the unique
+    // violations below is the real signal, not a booking_no collision. Fetch the
+    // winner and adopt it instead of retrying into the same violation forever.
+    if (payload.idempotencyKey && isUniqueViolation(inserted.error, inserted.status)) {
+      const raced = await findBookingByIdempotencyKey(payload.idempotencyKey);
+      if (raced) {
+        bookingId = raced.id;
+        bookingNo = raced.booking_no;
+        racedCustomerId = raced.customer_id;
+        break;
+      }
+    }
     if (!isUniqueViolation(inserted.error, inserted.status)) break;
+  }
+
+  // Lost the race: our own claimed unit is redundant (the winning booking already
+  // holds one), so release it rather than stranding a phantom hold on the vehicle.
+  if (racedCustomerId !== null) {
+    await sbDelete("availability_blocks", `id=eq.${claimedBlockId}`);
+    return { bookingId, bookingNo, customerId: racedCustomerId };
   }
 
   if (!bookingId || !Number.isFinite(bookingId)) {

@@ -113,22 +113,48 @@ export async function createBookingPaymentOrder(
       if (!upd.ok) return { ok: false, error: upd.error };
       payment = { id: existingRes.data.id, payment_no: existingRes.data.payment_no, amount: num(existingRes.data.amount) };
     } else {
-      const paymentNo = nextNumber("PY", null);
-      const ins = await sbInsert<PaymentRow>("payments", {
-        payment_no: paymentNo,
-        booking_id: bookingId,
-        customer_id: booking.customer_id ?? null,
-        amount: due,
-        amount_paise: duePaise,
-        currency: "INR",
-        kind: "full",
-        status: "Pending",
-        notes: "Rental fare payment",
-        breakdown_json: breakdownJson,
-        created_at: nowISO(),
-      });
-      if (!ins.ok) return { ok: false, error: ins.error };
-      payment = { id: ins.data.id, payment_no: ins.data.payment_no, amount: num(ins.data.amount) };
+      // Deterministic attempt number, counted from the database rather than trusted
+      // from any client-side counter or the Razorpay payment id. A booking gets at
+      // most 3 payment attempts; the 4th is refused outright. The unique index on
+      // (booking_id, attempt_number) is the actual guarantee against two concurrent
+      // callers both minting "attempt 2" for the same booking — this loop just
+      // recovers cleanly if that race is ever lost, instead of surfacing a raw
+      // constraint error to the customer.
+      let payment_: { id: number; payment_no: string; amount: number } | null = null;
+      let attemptError = "";
+      for (let tryNo = 0; tryNo < 2 && !payment_; tryNo++) {
+        const priorAttempts = await sbCount("payments", `booking_id=eq.${bookingId}`);
+        const attemptNumber = (priorAttempts.ok ? priorAttempts.data : 0) + 1;
+        if (attemptNumber > 3) {
+          return { ok: false, error: "This booking has already reached the maximum of 3 payment attempts. Please start a new booking." };
+        }
+
+        const paymentNo = nextNumber("PY", null);
+        const ins = await sbInsert<PaymentRow>("payments", {
+          payment_no: paymentNo,
+          booking_id: bookingId,
+          customer_id: booking.customer_id ?? null,
+          amount: due,
+          amount_paise: duePaise,
+          currency: "INR",
+          kind: "full",
+          status: "Pending",
+          notes: "Rental fare payment",
+          breakdown_json: breakdownJson,
+          attempt_number: attemptNumber,
+          created_at: nowISO(),
+        });
+        if (ins.ok) {
+          payment_ = { id: ins.data.id, payment_no: ins.data.payment_no, amount: num(ins.data.amount) };
+          break;
+        }
+        attemptError = ins.error;
+        const isRaceOnAttemptNumber = ins.status === 409 || /duplicate key|already exists|23505/i.test(ins.error);
+        if (!isRaceOnAttemptNumber) return { ok: false, error: ins.error };
+        // Lost the race for this attempt number — loop recounts and tries the next one.
+      }
+      if (!payment_) return { ok: false, error: attemptError || "Could not start a new payment attempt." };
+      payment = payment_;
     }
 
     const gstAmount = Math.round(totalAmount * 0.06);
@@ -233,6 +259,109 @@ export async function createBookingPaymentOrder(
     notes: rzpNotes,
     businessName: "Darshh Holiday",
   };
+}
+
+/**
+ * Releases a booking's reservation once its payment attempts have genuinely failed.
+ *
+ * Idempotent: the status-guarded UPDATE below only ever affects the FIRST call to see
+ * the booking as "Pending payment" — a second release call (a stale retry racing its
+ * own first attempt, or a duplicate trigger) sees zero affected rows and returns
+ * cleanly, never releasing the same inventory twice.
+ *
+ * Confirmation always wins: re-checks the payments table directly (not just the
+ * booking's own status column) for an actual Paid row before releasing anything, so a
+ * payment.captured webhook that arrives late — even after release logic has already
+ * started — cannot be undone by this call finishing afterward.
+ */
+export async function releaseBookingReservation(
+  bookingId: number
+): Promise<{ ok: true; released: boolean } | { ok: false; error: string }> {
+  const bookingRes = await sbSelectOne<{ id: number; status: string; paid_amount: number | string }>(
+    "bookings",
+    `select=id,status,paid_amount&id=eq.${bookingId}`
+  );
+  if (!bookingRes.ok) return { ok: false, error: bookingRes.error };
+  const booking = bookingRes.data;
+  if (!booking) return { ok: false, error: `Booking ${bookingId} not found.` };
+
+  if (booking.status === "Confirmed" || booking.status === "Payment received" || num(booking.paid_amount) > 0) {
+    return { ok: true, released: false };
+  }
+
+  const paidRes = await sbCount("payments", `booking_id=eq.${bookingId}&status=eq.Paid`);
+  if (paidRes.ok && paidRes.data > 0) {
+    // A successful payment exists that hasn't confirmed the booking yet (a race with
+    // verifyBookingPayment still in flight) — do not release under it.
+    return { ok: true, released: false };
+  }
+
+  const statusFlip = await sbUpdate(
+    "bookings",
+    `id=eq.${bookingId}&status=eq.${encodeURIComponent("Pending payment")}`,
+    { status: "Rejected", notes: "Payment abandoned after 3 failed attempts.", updated_at: nowISO() }
+  );
+  if (!statusFlip.ok) return { ok: false, error: statusFlip.error };
+  if (statusFlip.data.length === 0) {
+    // Already moved on (confirmed by a race, or already released by a prior call).
+    return { ok: true, released: false };
+  }
+
+  await sbDelete("availability_blocks", `booking_id=eq.${bookingId}`);
+
+  await sbInsert("booking_history", {
+    booking_id: bookingId,
+    action: "reservation_released",
+    detail: JSON.stringify({ reason: "3 failed payment attempts" }),
+    created_at: nowISO(),
+  });
+
+  return { ok: true, released: true };
+}
+
+/**
+ * Records a payment attempt as failed/abandoned (webhook payment.failed, or the
+ * customer dismissing the Razorpay checkout without completing it) and releases the
+ * reservation once the 3rd attempt is exhausted. Safe to call from either source, and
+ * safe if it races a genuine capture: the Paid check and the CAS below mean a payment
+ * that actually succeeded is never overwritten to Failed, and releaseBookingReservation
+ * independently re-verifies no Paid payment exists before releasing anything.
+ */
+export async function recordFailedPaymentAttempt(
+  paymentId: number
+): Promise<
+  | { ok: true; bookingId: number | null; attemptNumber: number | null; released: boolean; attemptsExhausted: boolean }
+  | { ok: false; error: string }
+> {
+  const paymentRes = await sbSelectOne<{ id: number; booking_id: number | null; status: string; attempt_number: number | null }>(
+    "payments",
+    `select=id,booking_id,status,attempt_number&id=eq.${paymentId}`
+  );
+  if (!paymentRes.ok) return { ok: false, error: paymentRes.error };
+  const payment = paymentRes.data;
+  if (!payment) return { ok: false, error: `Payment ${paymentId} not found.` };
+
+  if (payment.status === "Paid") {
+    return { ok: true, bookingId: payment.booking_id, attemptNumber: payment.attempt_number, released: false, attemptsExhausted: false };
+  }
+
+  // Compare-and-swap: only the first caller to see this row as Pending flips it, same
+  // pattern as the Paid transition below in verifyBookingPayment.
+  await sbUpdate("payments", `id=eq.${paymentId}&status=eq.Pending`, { status: "Failed" });
+
+  if (!payment.booking_id) {
+    return { ok: true, bookingId: null, attemptNumber: payment.attempt_number, released: false, attemptsExhausted: false };
+  }
+
+  const attemptNumber = payment.attempt_number ?? 0;
+  if (attemptNumber < 3) {
+    return { ok: true, bookingId: payment.booking_id, attemptNumber, released: false, attemptsExhausted: false };
+  }
+
+  const release = await releaseBookingReservation(payment.booking_id);
+  if (!release.ok) return release;
+
+  return { ok: true, bookingId: payment.booking_id, attemptNumber, released: release.released, attemptsExhausted: true };
 }
 
 export async function verifyBookingPayment(input: {
@@ -735,7 +864,12 @@ export async function verifyBookingPayment(input: {
 
   // Atomic accumulate in Postgres. Read-modify-write in application code loses
   // one of two concurrent payments.
-  const incr = await sbRpc<number>("increment_booking_paid", { p_booking_id: bookingId, p_amount: paidAmount });
+  //
+  // effectivePaid, not the raw paidAmount: paidAmount comes from fetchRazorpayPayment,
+  // which is 0 whenever that live lookup fails (a network blip, or a fake/test payment
+  // id) — incrementing by that unconditionally under-credits a genuinely paid booking.
+  // effectivePaid already falls back to the payment's own stored, correct amount.
+  const incr = await sbRpc<number>("increment_booking_paid", { p_booking_id: bookingId, p_amount: effectivePaid });
   if (!incr.ok) return { ok: false, error: `Payment recorded but the booking balance could not be updated: ${incr.error}` };
 
   const statusUpdate = await sbUpdate("bookings", `id=eq.${bookingId}`, { status: newBookingStatus, updated_at: nowISO() });

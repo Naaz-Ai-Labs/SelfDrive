@@ -112,6 +112,9 @@ export async function submitBooking(input: {
   contact: DraftPayload["contact"];
   termsAccepted: boolean;
   documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }>;
+  /** See BookingPayload.idempotencyKey in bookings.ts — not schema-validated (it's an
+   * internal correctness mechanism, not user input), just threaded through as-is. */
+  idempotencyKey?: string;
 }): Promise<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }> {
   const parsed = submitSchema.safeParse(input);
   if (!parsed.success) {
@@ -147,6 +150,7 @@ export async function submitBooking(input: {
       passengers: parsed.data.passengers ?? undefined,
       customer: parsed.data.contact,
       enquiryId: existing ? Number(existing.id) : null,
+      idempotencyKey: input.idempotencyKey,
     });
 
     // createBooking wrote straight to Supabase, so there is nothing left to sync: the

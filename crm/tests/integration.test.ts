@@ -20,11 +20,12 @@
 import "dotenv/config";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { verifyBookingPayment } from "../src/lib/payment-actions";
+import { verifyBookingPayment, createBookingPaymentOrder, recordFailedPaymentAttempt, releaseBookingReservation } from "../src/lib/payment-actions";
 import { calculateQuote } from "../src/lib/pricing";
 import { getVehicleById, getVehicles } from "../src/lib/data";
 import { parseIstInstant } from "../src/lib/rental-clock";
 import { num } from "../src/lib/supabase-rest";
+import { createBooking } from "../src/lib/bookings";
 
 const URL = (
   process.env.SUPABASE_URL ||
@@ -195,6 +196,29 @@ after(async () => {
       method: "DELETE",
     }
   );
+
+  // Backstop for the concurrency test suite below: createBooking() can create a
+  // customer row and then throw (e.g. a genuinely failed reservation attempt) before
+  // ever returning that id to the caller, so per-test cleanup keyed on the returned
+  // customerId cannot always catch it. Every row those tests create is named/tagged
+  // with this run's TAG, so a broad sweep on that pattern is a safe, exhaustive
+  // backstop regardless of which individual test cleanup ran.
+  const concVehicles = await rest(`vehicles?slug=like.${encodeURIComponent(`${TAG.toLowerCase()}-conc-%`)}&select=id`);
+  const concVehicleIds = (concVehicles.ok ? (concVehicles.body as Array<{ id: number }>) : []).map((v) => v.id);
+  if (concVehicleIds.length) {
+    const inList = `(${concVehicleIds.join(",")})`;
+    const concBookings = await rest(`bookings?vehicle_id=in.${inList}&select=id`);
+    const concBookingIds = (concBookings.ok ? (concBookings.body as Array<{ id: number }>) : []).map((b) => b.id);
+    if (concBookingIds.length) {
+      await rest(`payments?booking_id=in.(${concBookingIds.join(",")})`, { method: "DELETE" });
+      await rest(`booking_history?booking_id=in.(${concBookingIds.join(",")})`, { method: "DELETE" });
+    }
+    await rest(`availability_blocks?vehicle_id=in.${inList}`, { method: "DELETE" });
+    await rest(`bookings?vehicle_id=in.${inList}`, { method: "DELETE" });
+    await rest(`vehicle_units?vehicle_id=in.${inList}`, { method: "DELETE" });
+    await rest(`vehicles?id=in.${inList}`, { method: "DELETE" });
+  }
+  await rest(`customers?name=like.${encodeURIComponent(`${TAG}%`)}`, { method: "DELETE" });
 });
 
 test(
@@ -912,13 +936,11 @@ test(
         "base + GST (plus any timing/gateway fee) must equal the total rental fare"
       );
 
-      // paid_amount is driven by a SEPARATE, unmodified step (increment_booking_paid
-      // fed by fetchRazorpayPayment's result) — not part of this fix. With a fake
-      // razorpay_payment_id that lookup fails against the real API, so paid_amount
-      // stays 0 here; in production it is fed the real captured amount by that
-      // untouched code. This assertion documents that boundary rather than papering
-      // over it.
-      assert.equal(num(booking.paid_amount), 0, "paid_amount tracks the real Razorpay capture via the untouched increment step, not this fix");
+      // paid_amount is driven by increment_booking_paid, fed by effectivePaid: the
+      // real captured amount from fetchRazorpayPayment when that live lookup
+      // succeeds, or the payment's own stored amount (2014 here) when it doesn't —
+      // e.g. for this fake razorpay_payment_id, which fails against the real API.
+      assert.equal(num(booking.paid_amount), 2014, "paid_amount must fall back to the payment's own stored amount when the live Razorpay lookup fails");
     } finally {
       if (recoveredBookingId) {
         await rest(`invoices?booking_id=eq.${recoveredBookingId}`, { method: "DELETE" });
@@ -1109,6 +1131,407 @@ test(
     } finally {
       await rest(`vehicle_units?vehicle_id=eq.${vehId}`, { method: "DELETE" });
       await rest(`vehicles?id=eq.${vehId}`, { method: "DELETE" });
+    }
+  }
+);
+
+// ===========================================================================
+// Booking/payment concurrency hardening — 20260826_booking_reservation_concurrency.sql
+//
+// These require that migration's two columns (bookings.idempotency_key,
+// payments.attempt_number) to exist. They fail with a clear "column does not
+// exist" error, not a false pass, if it hasn't been run yet.
+// ===========================================================================
+
+async function makeConcurrencyTestVehicle(units: number, branchId = 1) {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const v = await rest("vehicles", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      slug: `${TAG}-conc-${suffix}`.toLowerCase(),
+      name: `${TAG} Concurrency Vehicle`,
+      brand: "TestBrand",
+      model: "ConcModel",
+      active: 1,
+      status: "available",
+      seats: 4,
+      rate_24h: 500,
+      deposit: 500,
+      included_km: 100,
+      extra_km_rate: 4,
+      total_units: units,
+    }),
+  });
+  assert.ok(v.ok, `concurrency test vehicle must be created: ${JSON.stringify(v.body)}`);
+  const vehId = Number((v.body as Array<{ id: number }>)[0].id);
+  const unitIds: number[] = [];
+  for (let i = 0; i < units; i++) {
+    const u = await rest("vehicle_units", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ vehicle_id: vehId, unit_identifier: `${TAG}-U${i}-${suffix}`, status: "available", current_branch_id: branchId, active: 1 }),
+    });
+    assert.ok(u.ok, `concurrency test unit must be created: ${JSON.stringify(u.body)}`);
+    unitIds.push(Number((u.body as Array<{ id: number }>)[0].id));
+  }
+  return { vehId, unitIds };
+}
+
+async function cleanupConcurrencyTestVehicle(vehId: number, bookingIds: number[], customerIds: number[]) {
+  const bIds = bookingIds.filter((n) => Number.isFinite(n));
+  if (bIds.length) {
+    await rest(`payments?booking_id=in.(${bIds.join(",")})`, { method: "DELETE" });
+    await rest(`booking_history?booking_id=in.(${bIds.join(",")})`, { method: "DELETE" });
+  }
+  await rest(`availability_blocks?vehicle_id=eq.${vehId}`, { method: "DELETE" });
+  if (bIds.length) await rest(`bookings?id=in.(${bIds.join(",")})`, { method: "DELETE" });
+  await rest(`vehicle_units?vehicle_id=eq.${vehId}`, { method: "DELETE" });
+  await rest(`vehicles?id=eq.${vehId}`, { method: "DELETE" });
+  const cIds = [...new Set(customerIds)].filter((n) => Number.isFinite(n));
+  if (cIds.length) await rest(`customers?id=in.(${cIds.join(",")})`, { method: "DELETE" });
+}
+
+function testPhone(seed: number): string {
+  return `+91${(6000000000 + (Date.now() % 900000000) + seed).toString().slice(0, 10)}`;
+}
+
+test(
+  "Test 1 — 40 concurrent reservations for 1 available unit: exactly 1 succeeds, 39 fail",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const pickup = "2033-01-10T08:00:00+05:30";
+    const ret = "2033-01-12T08:00:00+05:30";
+    let bookingIds: number[] = [];
+    let customerIds: number[] = [];
+    try {
+      const results = await Promise.allSettled(
+        Array.from({ length: 40 }, (_, i) =>
+          createBooking({
+            vehicleId: vehId,
+            pickupAt: pickup,
+            returnAt: ret,
+            customer: { name: `${TAG} User ${i}`, phone: testPhone(i) },
+            idempotencyKey: `${TAG}-t1-${i}`, // 40 genuinely DISTINCT logical requests
+          })
+        )
+      );
+      const succeeded = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ bookingId: number; bookingNo: string; customerId: number }>[];
+      const failed = results.filter((r) => r.status === "rejected");
+      bookingIds = succeeded.map((s) => s.value.bookingId);
+      customerIds = succeeded.map((s) => s.value.customerId);
+
+      assert.equal(succeeded.length, 1, `expected exactly 1 success, got ${succeeded.length}`);
+      assert.equal(failed.length, 39, `expected exactly 39 failures, got ${failed.length}`);
+
+      const blocks = await rest(`availability_blocks?vehicle_id=eq.${vehId}&select=id`);
+      assert.equal((blocks.body as unknown[]).length, 1, "exactly one availability block must exist");
+
+      const bookings = await rest(`bookings?vehicle_id=eq.${vehId}&select=id`);
+      assert.equal((bookings.body as unknown[]).length, 1, "exactly one booking must exist");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);
+
+test(
+  "Test 2 — the same logical reservation request, sent 10 times concurrently: exactly one booking, one reservation",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(2); // 2 units — proves dedup, not just capacity
+    const pickup = "2033-02-10T08:00:00+05:30";
+    const ret = "2033-02-12T08:00:00+05:30";
+    const key = `${TAG}-t2-samekey`;
+    const phone = testPhone(200);
+    let bookingIds: number[] = [];
+    let customerIds: number[] = [];
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          createBooking({
+            vehicleId: vehId,
+            pickupAt: pickup,
+            returnAt: ret,
+            customer: { name: `${TAG} Same User`, phone },
+            idempotencyKey: key,
+          })
+            .then((r) => ({ ok: true as const, r }))
+            .catch((e) => ({ ok: false as const, e: e instanceof Error ? e.message : String(e) }))
+        )
+      );
+      const oks = results.filter((r): r is { ok: true; r: { bookingId: number; bookingNo: string; customerId: number } } => r.ok);
+      assert.equal(oks.length, 10, `all 10 idempotent retries should resolve successfully: ${JSON.stringify(results.filter((r) => !r.ok))}`);
+
+      const distinctBookingIds = new Set(oks.map((o) => o.r.bookingId));
+      assert.equal(distinctBookingIds.size, 1, "all 10 retries must return the SAME booking id");
+      bookingIds = [...distinctBookingIds];
+      customerIds = [...new Set(oks.map((o) => o.r.customerId))];
+
+      const blocks = await rest(`availability_blocks?vehicle_id=eq.${vehId}&select=id`);
+      assert.equal((blocks.body as unknown[]).length, 1, "exactly one availability block despite 10 concurrent calls");
+
+      const bookings = await rest(`bookings?vehicle_id=eq.${vehId}&select=id`);
+      assert.equal((bookings.body as unknown[]).length, 1, "exactly one booking row must exist");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);
+
+test(
+  "Test 3 — two customers concurrently reserving a 2-unit vehicle both succeed, on two DIFFERENT units",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(2);
+    const pickup = "2033-03-10T08:00:00+05:30";
+    const ret = "2033-03-12T08:00:00+05:30";
+    let bookingIds: number[] = [];
+    let customerIds: number[] = [];
+    try {
+      const [a, b] = await Promise.all([
+        createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} A`, phone: testPhone(301) }, idempotencyKey: `${TAG}-t3-a` }),
+        createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} B`, phone: testPhone(302) }, idempotencyKey: `${TAG}-t3-b` }),
+      ]);
+      bookingIds = [a.bookingId, b.bookingId];
+      customerIds = [a.customerId, b.customerId];
+      assert.notEqual(a.bookingId, b.bookingId, "must be two distinct bookings");
+
+      const blocksRes = await rest(`availability_blocks?vehicle_id=eq.${vehId}&select=vehicle_unit_id`);
+      const unitIds = new Set((blocksRes.body as Array<{ vehicle_unit_id: number }>).map((x) => x.vehicle_unit_id));
+      assert.equal(unitIds.size, 2, "the two bookings must occupy two DIFFERENT physical units — the lock must not over-serialize unrelated capacity");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);
+
+test(
+  "Test 4 — an expired temporary hold does not block a new reservation of the same unit",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId, unitIds } = await makeConcurrencyTestVehicle(1);
+    const pickup = "2033-04-10T08:00:00+05:30";
+    const ret = "2033-04-12T08:00:00+05:30";
+    let bookingIds: number[] = [];
+    let customerIds: number[] = [];
+    try {
+      await rest("availability_blocks", {
+        method: "POST",
+        body: JSON.stringify({
+          vehicle_id: vehId,
+          vehicle_unit_id: unitIds[0],
+          booking_id: null,
+          starts_at: pickup,
+          ends_at: ret,
+          reason: "manual_block",
+          expires_at: new Date(Date.now() - 3600_000).toISOString(),
+        }),
+      });
+      const res = await createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} C`, phone: testPhone(401) }, idempotencyKey: `${TAG}-t4` });
+      bookingIds = [res.bookingId];
+      customerIds = [res.customerId];
+      assert.ok(res.bookingId, "reservation must succeed despite the expired hold sitting on the unit");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);
+
+test(
+  "Test 5/6 — payment attempts 1 and 2 failing leave the booking Pending payment with its reservation intact",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const pickup = "2033-05-10T08:00:00+05:30";
+    const ret = "2033-05-12T08:00:00+05:30";
+    const booking = await createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} D`, phone: testPhone(501) }, idempotencyKey: `${TAG}-t567` });
+    try {
+      const p1 = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ payment_no: `${TAG}-P1`, booking_id: booking.bookingId, amount: 1, status: "Pending", attempt_number: 1, razorpay_order_id: `${TAG}-o1-${booking.bookingId}` }),
+      });
+      const p1Id = Number((p1.body as Array<{ id: number }>)[0].id);
+      const r1 = await recordFailedPaymentAttempt(p1Id);
+      assert.ok(r1.ok && r1.attemptNumber === 1 && !r1.attemptsExhausted, `attempt 1: ${JSON.stringify(r1)}`);
+
+      let b = await rest(`bookings?id=eq.${booking.bookingId}&select=status`);
+      assert.equal((b.body as Array<{ status: string }>)[0].status, "Pending payment");
+      let blocks = await rest(`availability_blocks?booking_id=eq.${booking.bookingId}&select=id`);
+      assert.equal((blocks.body as unknown[]).length, 1, "reservation remains after attempt 1 fails");
+
+      const p2 = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ payment_no: `${TAG}-P2`, booking_id: booking.bookingId, amount: 1, status: "Pending", attempt_number: 2, razorpay_order_id: `${TAG}-o2-${booking.bookingId}` }),
+      });
+      const p2Id = Number((p2.body as Array<{ id: number }>)[0].id);
+      const r2 = await recordFailedPaymentAttempt(p2Id);
+      assert.ok(r2.ok && r2.attemptNumber === 2 && !r2.attemptsExhausted, `attempt 2: ${JSON.stringify(r2)}`);
+
+      b = await rest(`bookings?id=eq.${booking.bookingId}&select=status`);
+      assert.equal((b.body as Array<{ status: string }>)[0].status, "Pending payment");
+      blocks = await rest(`availability_blocks?booking_id=eq.${booking.bookingId}&select=id`);
+      assert.equal((blocks.body as unknown[]).length, 1, "reservation remains after attempt 2 fails");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, [booking.bookingId], [booking.customerId]);
+    }
+  }
+);
+
+test(
+  "Test 7 — payment attempt 3 failing releases the reservation exactly once",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const pickup = "2033-06-10T08:00:00+05:30";
+    const ret = "2033-06-12T08:00:00+05:30";
+    const booking = await createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} E`, phone: testPhone(701) }, idempotencyKey: `${TAG}-t7` });
+    try {
+      const p3 = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ payment_no: `${TAG}-P3`, booking_id: booking.bookingId, amount: 1, status: "Pending", attempt_number: 3, razorpay_order_id: `${TAG}-o3-${booking.bookingId}` }),
+      });
+      const p3Id = Number((p3.body as Array<{ id: number }>)[0].id);
+
+      const r3 = await recordFailedPaymentAttempt(p3Id);
+      assert.ok(r3.ok && r3.attemptNumber === 3 && r3.attemptsExhausted && r3.released, `attempt 3: ${JSON.stringify(r3)}`);
+
+      const b = await rest(`bookings?id=eq.${booking.bookingId}&select=status`);
+      assert.equal((b.body as Array<{ status: string }>)[0].status, "Rejected", "booking must no longer consume inventory");
+
+      const blocks = await rest(`availability_blocks?booking_id=eq.${booking.bookingId}&select=id`);
+      assert.equal((blocks.body as unknown[]).length, 0, "reservation must be released");
+
+      const again = await releaseBookingReservation(booking.bookingId);
+      assert.ok(again.ok && again.released === false, "a second release call must be a safe no-op, not a double release");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, [booking.bookingId], [booking.customerId]);
+    }
+  }
+);
+
+test(
+  "Test 8 — payment succeeding on attempt 2 confirms the booking and keeps the reservation",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const pickup = "2033-07-10T08:00:00+05:30";
+    const ret = "2033-07-12T08:00:00+05:30";
+    const booking = await createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} F`, phone: testPhone(801) }, idempotencyKey: `${TAG}-t8` });
+    try {
+      const p1 = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ payment_no: `${TAG}-P1b`, booking_id: booking.bookingId, amount: 1, status: "Pending", attempt_number: 1, razorpay_order_id: `${TAG}-o1b-${booking.bookingId}` }),
+      });
+      await recordFailedPaymentAttempt(Number((p1.body as Array<{ id: number }>)[0].id));
+
+      const p2 = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ payment_no: `${TAG}-P2b`, booking_id: booking.bookingId, amount: 1, status: "Pending", attempt_number: 2, razorpay_order_id: `${TAG}-o2b-${booking.bookingId}` }),
+      });
+      const p2Id = Number((p2.body as Array<{ id: number }>)[0].id);
+
+      const verify = await verifyBookingPayment({
+        paymentId: p2Id,
+        razorpayOrderId: `${TAG}-o2b-${booking.bookingId}`,
+        razorpayPaymentId: `${TAG}-pay2b-${booking.bookingId}`,
+        razorpaySignature: "x",
+        skipSignatureCheck: true,
+      });
+      assert.ok(verify.ok, JSON.stringify(verify));
+
+      const b = await rest(`bookings?id=eq.${booking.bookingId}&select=status`);
+      assert.equal((b.body as Array<{ status: string }>)[0].status, "Confirmed");
+      const blocks = await rest(`availability_blocks?booking_id=eq.${booking.bookingId}&select=id`);
+      assert.equal((blocks.body as unknown[]).length, 1, "reservation must remain after confirmation — attempt 1's earlier failure must not have released it");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, [booking.bookingId], [booking.customerId]);
+    }
+  }
+);
+
+test(
+  "Test 9 — simultaneous browser callback + webhook confirmation: exactly one confirmation, no duplicate financial effect",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const pickup = "2033-08-10T08:00:00+05:30";
+    const ret = "2033-08-12T08:00:00+05:30";
+    const booking = await createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} G`, phone: testPhone(901) }, idempotencyKey: `${TAG}-t9` });
+    try {
+      const pay = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ payment_no: `${TAG}-P9`, booking_id: booking.bookingId, amount: 1, status: "Pending", attempt_number: 1, razorpay_order_id: `${TAG}-o9-${booking.bookingId}` }),
+      });
+      const payId = Number((pay.body as Array<{ id: number }>)[0].id);
+
+      const args = { paymentId: payId, razorpayOrderId: `${TAG}-o9-${booking.bookingId}`, razorpayPaymentId: `${TAG}-pay9-${booking.bookingId}`, razorpaySignature: "x", skipSignatureCheck: true };
+      const [r1, r2] = await Promise.all([verifyBookingPayment(args), verifyBookingPayment(args)]);
+      assert.ok(r1.ok && r2.ok, JSON.stringify({ r1, r2 }));
+
+      const b = await rest(`bookings?id=eq.${booking.bookingId}&select=status,paid_amount`);
+      assert.equal((b.body as Array<{ status: string }>)[0].status, "Confirmed");
+      assert.equal(Number((b.body as Array<{ paid_amount: number }>)[0].paid_amount), 1, "paid_amount must reflect exactly ONE increment, not two");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, [booking.bookingId], [booking.customerId]);
+    }
+  }
+);
+
+test(
+  "Test 10 — repeated confirmation calls for an already-Paid payment are a safe no-op",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const pickup = "2033-09-10T08:00:00+05:30";
+    const ret = "2033-09-12T08:00:00+05:30";
+    const booking = await createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} H`, phone: testPhone(1001) }, idempotencyKey: `${TAG}-t10` });
+    try {
+      const pay = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ payment_no: `${TAG}-P10`, booking_id: booking.bookingId, amount: 1, status: "Pending", attempt_number: 1, razorpay_order_id: `${TAG}-o10-${booking.bookingId}` }),
+      });
+      const payId = Number((pay.body as Array<{ id: number }>)[0].id);
+      const args = { paymentId: payId, razorpayOrderId: `${TAG}-o10-${booking.bookingId}`, razorpayPaymentId: `${TAG}-pay10-${booking.bookingId}`, razorpaySignature: "x", skipSignatureCheck: true };
+
+      for (let i = 0; i < 5; i++) {
+        const r = await verifyBookingPayment(args);
+        assert.ok(r.ok, `duplicate call ${i} should succeed/no-op cleanly: ${JSON.stringify(r)}`);
+      }
+      const b = await rest(`bookings?id=eq.${booking.bookingId}&select=status,paid_amount`);
+      assert.equal((b.body as Array<{ status: string }>)[0].status, "Confirmed");
+      assert.equal(Number((b.body as Array<{ paid_amount: number }>)[0].paid_amount), 1, "5 repeated confirmations must not increment paid_amount more than once");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, [booking.bookingId], [booking.customerId]);
+    }
+  }
+);
+
+test(
+  "Test 11 — retrying order creation before any attempt fails reuses the same pending payment, not a new attempt",
+  { skip: !CONFIGURED && "not configured" },
+  async () => {
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const pickup = "2033-10-10T08:00:00+05:30";
+    const ret = "2033-10-12T08:00:00+05:30";
+    const booking = await createBooking({ vehicleId: vehId, pickupAt: pickup, returnAt: ret, customer: { name: `${TAG} I`, phone: testPhone(1101) }, idempotencyKey: `${TAG}-t11` });
+    try {
+      const o1 = await createBookingPaymentOrder(booking.bookingId);
+      const o2 = await createBookingPaymentOrder(booking.bookingId);
+      assert.ok(o1.ok && o2.ok, JSON.stringify({ o1, o2 }));
+      if (o1.ok && o2.ok) {
+        assert.equal(o1.paymentId, o2.paymentId, "a retry before the first attempt fails must reuse the same payment, not mint a second attempt");
+      }
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, [booking.bookingId], [booking.customerId]);
     }
   }
 );
