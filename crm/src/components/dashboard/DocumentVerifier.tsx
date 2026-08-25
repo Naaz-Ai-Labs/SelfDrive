@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { verifyCustomerDocument } from "@/lib/actions";
+import { isPdfDocument } from "@/lib/doc-preview";
 
 type DocRow = Record<string, unknown>;
 
@@ -39,6 +40,8 @@ export function DocumentVerifier({ documents }: { documents: DocRow[] }) {
   const [pending, startTransition] = useTransition();
   const [selectedDoc, setSelectedDoc] = useState<DocItem | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [brokenIds, setBrokenIds] = useState<Set<number>>(new Set());
+  const markBroken = (id: number) => setBrokenIds((prev) => new Set(prev).add(id));
 
   const docItems = documents.map(toDocItem);
   const totalVerified = docItems.filter((d) => d.verified === 1).length;
@@ -130,15 +133,26 @@ export function DocumentVerifier({ documents }: { documents: DocRow[] }) {
                   }}
                   className="relative cursor-pointer overflow-hidden rounded-lg border border-ink-200 bg-ink-900 aspect-video flex items-center justify-center group-hover:border-brand-500"
                 >
-                  <img
-                    src={doc.file_path}
-                    alt={info.label}
-                    className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-                    onError={(e) => {
-                      // Fallback for non-image or file paths
-                      (e.target as HTMLElement).style.display = "none";
-                    }}
-                  />
+                  {brokenIds.has(doc.id) ? (
+                    <div className="flex flex-col items-center gap-1 px-3 text-center text-ink-300">
+                      <span className="text-xl">📄</span>
+                      <span className="text-[11px]">Document preview unavailable</span>
+                    </div>
+                  ) : isPdfDocument(doc.file_path) ? (
+                    <iframe
+                      src={doc.file_path}
+                      title={info.label}
+                      className="h-full w-full pointer-events-none"
+                      onError={() => markBroken(doc.id)}
+                    />
+                  ) : (
+                    <img
+                      src={doc.file_path}
+                      alt={info.label}
+                      className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+                      onError={() => markBroken(doc.id)}
+                    />
+                  )}
                   <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100">
                     <span className="rounded-lg bg-white/90 px-3 py-1.5 text-xs font-semibold text-ink-900 shadow">
                       🔍 Inspect & Zoom
@@ -240,14 +254,38 @@ export function DocumentVerifier({ documents }: { documents: DocRow[] }) {
               </div>
             </div>
 
-            {/* Modal Image Viewport */}
+            {/* Modal Image/PDF Viewport */}
             <div className="relative flex-1 overflow-auto bg-ink-950 p-6 flex items-center justify-center min-h-[350px]">
-              <img
-                src={selectedDoc.file_path}
-                alt="Document Full Preview"
-                style={{ transform: `scale(${zoom})`, transition: "transform 0.15s ease-out" }}
-                className="max-h-[60vh] max-w-full rounded-lg object-contain shadow-lg"
-              />
+              {brokenIds.has(selectedDoc.id) ? (
+                <div className="flex flex-col items-center gap-3 text-center text-ink-300">
+                  <span className="text-4xl">📄</span>
+                  <p className="text-sm">Unable to preview document.</p>
+                  <a
+                    href={selectedDoc.file_path}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-secondary text-xs"
+                  >
+                    Open document
+                  </a>
+                </div>
+              ) : isPdfDocument(selectedDoc.file_path) ? (
+                <iframe
+                  src={selectedDoc.file_path}
+                  title="Document Full Preview"
+                  style={{ transform: `scale(${zoom})`, transition: "transform 0.15s ease-out" }}
+                  className="h-[60vh] w-full max-w-full rounded-lg bg-white shadow-lg"
+                  onError={() => markBroken(selectedDoc.id)}
+                />
+              ) : (
+                <img
+                  src={selectedDoc.file_path}
+                  alt="Document Full Preview"
+                  style={{ transform: `scale(${zoom})`, transition: "transform 0.15s ease-out" }}
+                  className="max-h-[60vh] max-w-full rounded-lg object-contain shadow-lg"
+                  onError={() => markBroken(selectedDoc.id)}
+                />
+              )}
             </div>
 
             {/* Modal Footer Controls */}

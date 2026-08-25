@@ -11,6 +11,7 @@ import {
   revertDocumentDecision,
 } from "@/lib/actions";
 import { formatINR, formatDateTime } from "@/lib/utils";
+import { isPdfDocument } from "@/lib/doc-preview";
 import { calculateBookingFinancials } from "@/lib/pricing";
 import { BookingReviewModal, type BookingReviewData } from "./BookingReviewModal";
 
@@ -86,6 +87,7 @@ export function PendingApprovalsInbox({
   const [fallback, setFallback] = useState<FallbackState | null>(null);
   const [timeLeftSec, setTimeLeftSec] = useState(0);
   const [reviewBooking, setReviewBooking] = useState<BookingReviewData | null>(null);
+  const [brokenDocThumbIds, setBrokenDocThumbIds] = useState<Set<number>>(new Set());
 
   const totalCount =
     pendingBookings.length +
@@ -416,16 +418,21 @@ export function PendingApprovalsInbox({
                 className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-200 bg-white p-4 shadow-xs"
               >
                 <div className="flex items-center gap-3">
-                  {d.file_path ? (
+                  {!d.file_path || brokenDocThumbIds.has(d.id) ? (
+                    <div className="h-12 w-16 rounded-lg bg-ink-100 flex items-center justify-center text-xs text-ink-400">
+                      {d.file_path ? "📄" : "🪪"}
+                    </div>
+                  ) : isPdfDocument(d.file_path) ? (
+                    <div className="h-12 w-16 rounded-lg bg-ink-100 flex items-center justify-center text-[10px] text-ink-500 border border-ink-200 shrink-0">
+                      PDF
+                    </div>
+                  ) : (
                     <img
                       src={d.file_path}
                       alt={d.kind}
                       className="h-12 w-16 rounded-lg object-cover border border-ink-200 shrink-0"
+                      onError={() => setBrokenDocThumbIds((prev) => new Set(prev).add(d.id))}
                     />
-                  ) : (
-                    <div className="h-12 w-16 rounded-lg bg-ink-100 flex items-center justify-center text-xs text-ink-400">
-                      🪪
-                    </div>
                   )}
                   <div className="min-w-0 space-y-0.5">
                     <p className="font-semibold text-sm text-ink-900 capitalize">
