@@ -413,9 +413,15 @@ async function hydrateVehicles(
       `select=id,vehicle_id,current_branch_id,status,registration_no,unit_identifier&vehicle_id=${idPredicate}&active=eq.1`
     ),
     sbSelect<{ id: number; name: string; blocked?: number }>("branches", "select=id,name,blocked&active=eq.1"),
+    // A NULL-booking block only occupies a unit while its hold is actually live:
+    // expires_at IS NULL (a permanent staff block) or expires_at is still in the
+    // future (an unexpired temporary reservation hold). A stale hold whose
+    // expires_at has already passed must not count — release_expired_holds() is a
+    // secondary cleanup, not something this read can depend on having already run.
     sbSelect<{ vehicle_id: number; vehicle_unit_id: number | null }>(
       "availability_blocks",
-      `select=vehicle_id,vehicle_unit_id&vehicle_id=${idPredicate}&booking_id=is.null${blocksFilter}`
+      `select=vehicle_id,vehicle_unit_id&vehicle_id=${idPredicate}&booking_id=is.null${blocksFilter}` +
+        `&or=(expires_at.is.null,expires_at.gt.${encodeURIComponent(nowIso)})`
     ),
   ]);
 
