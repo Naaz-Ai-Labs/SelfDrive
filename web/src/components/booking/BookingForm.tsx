@@ -246,6 +246,10 @@ export function BookingForm({
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ bookingId: number; bookingNo: string } | null>(null);
   const [paid, setPaid] = useState(false);
+  // One key per checkout attempt — unchanged across retries of the SAME attempt (so a
+  // double-click or a lost response reuses the same reservation instead of claiming a
+  // second unit), regenerated only when the customer restarts after 3 failed payments.
+  const [reservationKey, setReservationKey] = useState<string>(() => crypto.randomUUID());
 
   const handlePickupDateChange = (newDate: string) => {
     const validDate = newDate < liveClock.minPickupDate ? liveClock.minPickupDate : newDate;
@@ -618,8 +622,8 @@ export function BookingForm({
             </p>
             <div className="mt-6">
               <RazorpayCheckout
-                bookingId={result?.bookingId}
                 bookingPayload={currentBookingPayload}
+                reservationKey={reservationKey}
                 amountDue={payNowAmount}
                 customerName={contact.name}
                 customerPhone={contact.phone}
@@ -629,6 +633,16 @@ export function BookingForm({
                   localStorage.removeItem("darshh_booking_draft");
                   setResult({ bookingId: res.bookingId, bookingNo: res.bookingNo });
                   setPaid(true);
+                }}
+                onExhausted={() => {
+                  // Reservation is already released server-side at this point. A fresh
+                  // reservationKey means the next attempt claims a NEW unit rather than
+                  // colliding with the now-released one; contact info, documents and
+                  // vehicle/date selections are untouched — only the step pointer and
+                  // the attempt identity reset.
+                  setReservationKey(crypto.randomUUID());
+                  setSubmitError("Payment was not completed after 3 attempts. Your reservation has been released — please try again.");
+                  setStep(1);
                 }}
                 onPayLater={() => setPaid(true)}
               />

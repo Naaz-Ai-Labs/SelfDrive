@@ -105,6 +105,31 @@ export async function createBookingPaymentOrder(
   }
 }
 
+/**
+ * Reports that a payment attempt did not complete — the customer dismissed the
+ * Razorpay checkout, or it errored before any webhook could fire. Safe to call
+ * regardless of the actual outcome: the CRM never overwrites an already-Paid row,
+ * and only releases the reservation after independently re-verifying no successful
+ * payment exists for the booking (a late payment.captured webhook always wins).
+ */
+export async function reportPaymentAttemptFailed(
+  paymentId: number
+): Promise<
+  | { ok: true; bookingId: number | null; attemptNumber: number | null; released: boolean; attemptsExhausted: boolean }
+  | { ok: false; error: string }
+> {
+  try {
+    const res = await gatewayPost<any>("/api/gateway/v1/payments/attempt-failed", { paymentId });
+    if (res && res.ok !== undefined) return res;
+  } catch (err) {
+    console.warn("Gateway attempt-failed proxy error:", err);
+  }
+  // No safe direct-Supabase fallback here (unlike order creation/verification, this
+  // path decides whether to release real inventory) — if the gateway is unreachable,
+  // the customer can simply retry; nothing is lost by not reporting this attempt.
+  return { ok: false, error: "Could not reach the server." };
+}
+
 export async function verifyBookingPayment(input: {
   paymentId?: number;
   razorpayOrderId: string;
@@ -192,30 +217,74 @@ export async function verifyBookingPayment(input: {
   }
 
   // CASE B: Existing booking payment update
-  let bookingNo = input.paymentId ? `BK-${input.paymentId}` : "";
+  //
+  // input.paymentId is a payments.id (see createBookingPaymentOrder above), never a
+  // bookings.id — this used to query the "bookings" table by that id directly, which
+  // could match a completely unrelated booking that happened to share the same
+  // numeric id and confirm THAT booking instead, leaving the customer's real booking
+  // stuck on "Pending payment" forever. Resolve the real booking through the
+  // payments table first.
+  let bookingNo = "";
   let paidAmount = 1000;
 
   try {
-    const rows = input.paymentId ? await supabaseRestSelect<any>("bookings", `id=eq.${input.paymentId}`) : [];
-    let b = rows && rows.length > 0 ? rows[0] : null;
+    let paymentRow: any = null;
+    if (input.paymentId) {
+      const byId = await supabaseRestSelect<any>("payments", `id=eq.${input.paymentId}`);
+      paymentRow = byId && byId.length > 0 ? byId[0] : null;
+    }
+    if (!paymentRow) {
+      const encOrder = encodeURIComponent(input.razorpayOrderId);
+      const byOrder = await supabaseRestSelect<any>(
+        "payments",
+        `or=(gateway_ref.eq.${encOrder},razorpay_order_id.eq.${encOrder})`
+      );
+      paymentRow = byOrder && byOrder.length > 0 ? byOrder[0] : null;
+    }
+
+    const bookingId: number | null = paymentRow?.booking_id ? Number(paymentRow.booking_id) : null;
+    const rows = bookingId ? await supabaseRestSelect<any>("bookings", `id=eq.${bookingId}`) : [];
+    const b = rows && rows.length > 0 ? rows[0] : null;
 
     if (b) {
       bookingNo = b.booking_no || bookingNo;
       const allIn = Number(b.total_amount || 0);
       paidAmount = allIn > 0 ? allIn : Number(b.paid_amount || 0);
 
-      await supabaseRestUpsert("bookings", {
-        ...b,
-        status: "Confirmed",
-        paid_amount: paidAmount,
-        updated_at: new Date().toISOString(),
-      });
+      // Do not overwrite a booking that a previous call (this fallback retrying, or
+      // the CRM's own webhook landing independently) has already confirmed.
+      if (b.status !== "Confirmed" && b.status !== "Payment received") {
+        await supabaseRestUpsert("bookings", {
+          ...b,
+          status: "Confirmed",
+          paid_amount: paidAmount,
+          updated_at: new Date().toISOString(),
+        });
+      }
     }
 
-    if (input.paymentId) {
+    if (paymentRow) {
+      // Update the SAME payment row rather than inserting a second one for this
+      // order/payment id.
+      if (paymentRow.status !== "Paid") {
+        await supabaseRestUpsert("payments", {
+          ...paymentRow,
+          booking_id: bookingId,
+          status: "Paid",
+          method: paymentRow.method || "UPI",
+          gateway_ref: input.razorpayPaymentId,
+          razorpay_order_id: input.razorpayOrderId,
+          razorpay_payment_id: input.razorpayPaymentId,
+          notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
+        });
+      }
+    } else if (input.paymentId) {
+      // No payment row exists anywhere to correct — record what we know without
+      // guessing at a booking to attach it to (same "unlinked payment" principle the
+      // primary flow uses for staff to reconcile from the CRM).
       const paymentNo = `PY-${Date.now().toString(36).toUpperCase()}`;
       await supabaseRestInsert("payments", {
-        booking_id: input.paymentId,
+        booking_id: null,
         payment_no: paymentNo,
         kind: "online",
         amount: paidAmount,
@@ -224,7 +293,7 @@ export async function verifyBookingPayment(input: {
         gateway_ref: input.razorpayPaymentId,
         razorpay_order_id: input.razorpayOrderId,
         razorpay_payment_id: input.razorpayPaymentId,
-        notes: `Razorpay Online Payment verified. Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
+        notes: `Razorpay Online Payment verified (unlinked — no matching payment record found). Order ID: ${input.razorpayOrderId}, Payment ID: ${input.razorpayPaymentId}`,
         created_at: new Date().toISOString(),
       });
     }

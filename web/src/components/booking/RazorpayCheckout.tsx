@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { createBookingPaymentOrder, verifyBookingPayment } from "@/lib/payment-actions";
+import { createBookingPaymentOrder, verifyBookingPayment, reportPaymentAttemptFailed } from "@/lib/payment-actions";
+import { submitBooking } from "@/lib/booking-actions";
 import { formatINR } from "@/lib/utils";
 
 declare global {
@@ -21,19 +22,28 @@ function loadRazorpayScript(): Promise<boolean> {
   });
 }
 
+const MAX_ATTEMPTS = 3;
+
 export function RazorpayCheckout({
-  bookingId,
   bookingPayload,
+  reservationKey,
   amountDue,
   customerName,
   customerPhone,
   customerEmail,
   quote,
   onPaid,
+  onExhausted,
   onPayLater,
 }: {
-  bookingId?: number;
-  bookingPayload?: any;
+  /** Full submitBooking() payload — the reservation is made from this, before any
+   * payment attempt, so the booking exists (and holds its physical unit) throughout
+   * up to 3 payment attempts instead of being created only after payment succeeds. */
+  bookingPayload: any;
+  /** One key per logical checkout attempt (crypto.randomUUID(), generated once by the
+   * parent and unchanged across retries of the SAME attempt — a double-click or a
+   * lost response must return the SAME booking, never reserve a second unit). */
+  reservationKey: string;
   /** Deposit-EXCLUDED figure. This is what Razorpay charges — never the all-in total. */
   amountDue: number;
   customerName: string;
@@ -52,21 +62,58 @@ export function RazorpayCheckout({
     depositPayableAtPickup?: number;
   } | null;
   onPaid: (res: { bookingNo: string; bookingId: number }) => void;
+  /** Called once after the 3rd payment attempt is genuinely exhausted — the
+   * reservation has already been released server-side by this point. */
+  onExhausted?: () => void;
   onPayLater?: () => void;
 }) {
-  const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "reserving" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [showBreakdown, setShowBreakdown] = useState(true);
+  const [attemptNumber, setAttemptNumber] = useState(0);
+  const [reservedBookingId, setReservedBookingId] = useState<number | undefined>(undefined);
+  const [reservedBookingNo, setReservedBookingNo] = useState<string | undefined>(undefined);
+
+  /** Idempotent: submitBooking() with the same reservationKey always returns the SAME
+   * booking, so calling this again on a later attempt is a no-op fast path once the
+   * first call has succeeded. */
+  async function ensureReservation(): Promise<number | null> {
+    if (reservedBookingId) return reservedBookingId;
+    setStatus("reserving");
+    const res = await submitBooking({ ...bookingPayload, idempotencyKey: reservationKey });
+    if (!res.ok || !res.bookingId) {
+      setStatus("error");
+      setError(res.error || "Could not reserve this vehicle. Please try again.");
+      return null;
+    }
+    setReservedBookingId(res.bookingId);
+    setReservedBookingNo(res.bookingNo);
+    return res.bookingId;
+  }
 
   async function payNow() {
+    if (attemptNumber >= MAX_ATTEMPTS) {
+      setStatus("error");
+      setError("Maximum payment attempts reached for this booking.");
+      return;
+    }
     setStatus("loading");
     setError("");
-    const order = await createBookingPaymentOrder(
-      bookingId ?? null,
-      amountDue,
-      quote,
-      { name: customerName, phone: customerPhone, email: customerEmail }
-    );
+
+    const bookingId = await ensureReservation();
+    if (!bookingId) return;
+
+    setStatus("loading");
+    // No amount override: the server derives the authoritative charge from THIS
+    // booking's own stored total_amount (fixed at reservation time by calculateQuote()
+    // inside createBooking()), never from amountDue here — a tampered client value
+    // must not be able to change what Razorpay actually charges. amountDue/quote are
+    // used only for the Razorpay notes and the on-screen breakdown above.
+    const order = await createBookingPaymentOrder(bookingId, undefined, quote, {
+      name: customerName,
+      phone: customerPhone,
+      email: customerEmail,
+    });
     if (!order.ok) {
       setStatus("error");
       setError(order.error);
@@ -104,21 +151,43 @@ export function RazorpayCheckout({
       },
       handler: async (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
         setStatus("loading");
+        // No bookingPayload here — the booking already exists (reserved above), so
+        // this goes through the existing-booking confirmation path, never creating a
+        // second booking.
         const verify = await verifyBookingPayment({
           paymentId: order.paymentId,
           razorpayOrderId: response.razorpay_order_id,
           razorpayPaymentId: response.razorpay_payment_id,
           razorpaySignature: response.razorpay_signature,
-          bookingPayload: bookingPayload ? { ...bookingPayload, amount: amountDue } : undefined,
         });
         if (!verify.ok) {
           setStatus("error");
           setError(verify.error);
           return;
         }
-        onPaid({ bookingNo: verify.bookingNo, bookingId: verify.bookingId ?? order.paymentId });
+        onPaid({ bookingNo: verify.bookingNo || reservedBookingNo || "", bookingId: verify.bookingId ?? bookingId });
       },
-      modal: { ondismiss: () => setStatus("idle") },
+      modal: {
+        ondismiss: async () => {
+          setStatus("idle");
+          const next = attemptNumber + 1;
+          setAttemptNumber(next);
+          // Backend-verified failure, not a client-side "captured = false" claim — the
+          // gateway only ever marks THIS attempt failed and only releases the
+          // reservation after independently confirming no successful payment exists.
+          try {
+            const failRes = await reportPaymentAttemptFailed(order.paymentId);
+            if (failRes.ok && failRes.attemptsExhausted) {
+              setStatus("error");
+              setError("Payment was not completed after 3 attempts. This reservation has been released — please start over.");
+              onExhausted?.();
+            }
+          } catch {
+            // Non-fatal — the customer can still retry; the webhook (if the attempt
+            // actually reached Razorpay) is the authoritative backstop either way.
+          }
+        },
+      },
     });
     rzp.open();
   }
@@ -190,15 +259,18 @@ export function RazorpayCheckout({
       </div>
 
       {error && <p className="field-error" role="alert">{error}</p>}
+      {attemptNumber > 0 && attemptNumber < MAX_ATTEMPTS && status !== "error" && (
+        <p className="text-xs text-ink-500">Attempt {attemptNumber} of {MAX_ATTEMPTS} did not complete — you can try again.</p>
+      )}
 
       <div>
         <button
           type="button"
           onClick={payNow}
-          disabled={status === "loading"}
+          disabled={status === "loading" || status === "reserving" || attemptNumber >= MAX_ATTEMPTS}
           className="btn-shine inline-flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-8 py-4 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98] disabled:opacity-60"
         >
-          {status === "loading" ? "Opening secure checkout…" : "Pay with Razorpay"}
+          {status === "reserving" ? "Reserving your vehicle…" : status === "loading" ? "Opening secure checkout…" : "Pay with Razorpay"}
         </button>
       </div>
     </div>

@@ -84,6 +84,10 @@ export async function submitBooking(input: {
   contact: DraftPayload["contact"];
   termsAccepted: boolean;
   documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }>;
+  /** One key per logical "start booking" attempt — unchanged across retries of the
+   * SAME attempt (double-click, network retry), regenerated only when the customer
+   * restarts the flow after abandoning it. Passed straight through to the CRM. */
+  idempotencyKey?: string;
 }): Promise<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }> {
   // Terms and mandatory documents are enforced here as well as in the CRM, so the
   // emergency path below cannot be used to skip them.
@@ -138,6 +142,26 @@ export async function submitBooking(input: {
   if (supabaseUrl && supabaseKey) {
     try {
       const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Fast path for a retried identical request (double-click, browser auto-retry) —
+    // mirrors the CRM's own createBooking() idempotency check. Without this, a retry
+    // that lands here during a CRM outage would claim and book a second unit for the
+    // same logical request.
+    if (input.idempotencyKey) {
+      const existing = await supabaseRestSelect<any>(
+        "bookings",
+        `select=id,booking_no,customer_id&idempotency_key=eq.${encodeURIComponent(input.idempotencyKey)}`
+      );
+      if (existing && existing.length > 0) {
+        const hit = existing[0];
+        return {
+          ok: true,
+          bookingNo: hit.booking_no,
+          bookingId: Number(hit.id),
+          customerId: hit.customer_id != null ? Number(hit.customer_id) : undefined,
+        };
+      }
+    }
 
     // Validate vehicle status and branch status directly before slot reservation
     const { getVehicleById, getBranches } = await import("./data");
@@ -285,12 +309,33 @@ export async function submitBooking(input: {
       total_amount: totalAmount,
       // Marked as "Pending payment" until Razorpay payment is verified or manager assigns
       status: "Pending payment",
+      idempotency_key: input.idempotencyKey ?? null,
       created_at: new Date().toISOString(),
     });
 
     // A failed insert previously still produced a booking id from the clock, so the
     // customer received a confirmation for a row that was never written.
     if (!insertRes.ok || !insertRes.data?.id) {
+      // A concurrent identical retry may have already won this idempotency key while
+      // we were reserving/pricing this one — recover its booking instead of failing
+      // outright (the unique index on bookings.idempotency_key is what actually
+      // guarantees only one of two racing inserts here succeeds).
+      const insertErr = insertRes.ok ? "" : insertRes.error;
+      if (input.idempotencyKey && /duplicate key|23505|already exists/i.test(insertErr)) {
+        const raced = await supabaseRestSelect<any>(
+          "bookings",
+          `select=id,booking_no,customer_id&idempotency_key=eq.${encodeURIComponent(input.idempotencyKey)}`
+        );
+        if (raced && raced.length > 0) {
+          const hit = raced[0];
+          return {
+            ok: true,
+            bookingNo: hit.booking_no,
+            bookingId: Number(hit.id),
+            customerId: hit.customer_id != null ? Number(hit.customer_id) : undefined,
+          };
+        }
+      }
       console.error("submitBooking fallback: Supabase booking insert failed", insertRes);
       // The hold we claimed above carries a 10-minute expiry and is skipped by
       // availability counts once lapsed, so an abandoned claim frees itself.
