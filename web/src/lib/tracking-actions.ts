@@ -86,6 +86,10 @@ export async function getBookingTrackingData(bookingNo: string): Promise<Trackin
         } catch {}
 
         const verifiedCount = docs.filter((d) => Number(d.verified) === 1).length;
+        // 0 is a legitimate "nothing paid yet" value — `b.paid_amount || b.total_amount`
+        // treated it as falsy and fell through to the total, which displayed a booking
+        // that had never been paid for as fully "Paid".
+        const paidAmountNum = b.paid_amount != null ? Number(b.paid_amount) : 0;
 
         return {
           id: b.id,
@@ -104,7 +108,7 @@ export async function getBookingTrackingData(bookingNo: string): Promise<Trackin
           gst_amount: Number(b.gst_amount || 60),
           deposit_amount: Number(b.deposit_amount || 1000),
           total_amount: Number(b.total_amount || 1000),
-          paid_amount: Number(b.paid_amount || b.total_amount || 1000),
+          paid_amount: paidAmountNum,
           documents: docs.map((d) => ({
             id: Number(d.id),
             kind: String(d.kind),
@@ -114,16 +118,21 @@ export async function getBookingTrackingData(bookingNo: string): Promise<Trackin
           total_docs: docs.length,
           verified_docs: verifiedCount,
           is_all_docs_verified: docs.length > 0 && verifiedCount === docs.length,
-          payments: [
-            {
-              payment_no: `PY-${b.id}`,
-              amount: Number(b.paid_amount || b.total_amount),
-              kind: "full",
-              status: "Paid",
-              method: "Online",
-              paid_at: b.created_at,
-            },
-          ],
+          // Only fabricate a payment-history row when something was actually paid —
+          // an unpaid booking must never show a "Paid" line in this fallback.
+          payments:
+            paidAmountNum > 0
+              ? [
+                  {
+                    payment_no: `PY-${b.id}`,
+                    amount: paidAmountNum,
+                    kind: "full",
+                    status: "Paid",
+                    method: "Online",
+                    paid_at: b.created_at,
+                  },
+                ]
+              : [],
           history: [],
           invoice_no: `INV-${new Date().getFullYear()}-${String(b.id).padStart(5, "0")}`,
           created_at: b.created_at || new Date().toISOString(),
