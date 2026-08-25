@@ -106,8 +106,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       })),
   };
 
+  // suppressHydrationWarning below: browser extensions (screen recorders, translators,
+  // etc.) inject attributes onto <html> — e.g. data-scribe-recorder-ready — before React
+  // hydrates. That's a mismatch React can't fix and isn't caused by our markup, so this
+  // only silences the false-positive warning on this one element; it does not suppress
+  // mismatches anywhere else in the tree.
   return (
-    <html lang="en" data-scroll-behavior="smooth" className={`${display.variable} ${sans.variable}`}>
+    <html lang="en" data-scroll-behavior="smooth" className={`${display.variable} ${sans.variable}`} suppressHydrationWarning>
       <body className="flex min-h-screen flex-col">
         <script
           dangerouslySetInnerHTML={{
