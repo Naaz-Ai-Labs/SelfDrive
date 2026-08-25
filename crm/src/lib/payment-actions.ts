@@ -6,8 +6,10 @@ import { sendTemplate } from "./messaging";
 import { createRazorpayOrder, verifyRazorpaySignature, fetchRazorpayPayment, razorpayConfigured, razorpayKeyId } from "./razorpay";
 import { generateInvoiceForBooking } from "./invoices";
 import { toPaise } from "./utils";
-import { calculateBookingFinancials } from "./pricing";
-import { sbSelectOne, sbSelect, sbInsert, sbUpdate, sbCount, sbRpc, num } from "./supabase-rest";
+import { calculateBookingFinancials, calculateQuote } from "./pricing";
+import { parseIstInstant } from "./rental-clock";
+import { getVehicleById } from "./data";
+import { sbSelectOne, sbSelect, sbInsert, sbUpdate, sbDelete, sbCount, sbRpc, num } from "./supabase-rest";
 
 /**
  * The money path talks to Supabase directly.
@@ -578,48 +580,142 @@ export async function verifyBookingPayment(input: {
       );
       if (enqRes.ok && enqRes.data && enqRes.data.vehicle_id) {
         const enq = enqRes.data;
-        const bNo = nextNumber("BK", null);
-        const insBooking = await sbInsert<{ id: number }>("bookings", {
-          booking_no: bNo,
-          enquiry_id: enq.id,
-          customer_id: payment.customer_id,
-          vehicle_id: enq.vehicle_id,
-          branch_id: 1,
-          pickup_at: enq.pickup_date,
-          return_at: enq.return_date,
-          status: "Confirmed",
-          total_amount: effectivePaid,
-          // Starts at zero on purpose. increment_booking_paid() below is the single
-          // writer of this column; seeding it with the payment amount here made every
-          // auto-linked booking record twice what was actually paid.
-          paid_amount: 0,
-          deposit_amount: 1000,
-          created_at: nowISO(),
-        });
-        if (insBooking.ok && insBooking.data) {
-          bookingId = insBooking.data.id;
-          await sbUpdate("payments", `id=eq.${payment.id}`, { booking_id: bookingId });
-          await sbUpdate("enquiries", `id=eq.${enq.id}`, { status: "converted", stage: "Converted" });
+        const draftData = parseJSON<{ location?: string; documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }> }>(enq.data, {});
 
-          // This path builds the booking straight from the draft enquiry, bypassing
-          // submitBooking() entirely — the ONE thing that used to write
-          // customer_documents. The customer's uploaded licence/ID photos were durably
-          // in storage the moment they were uploaded, but nothing in the DB pointed to
-          // them unless the browser's own final submit call completed. Since the draft
-          // now carries `documents` as soon as each file is uploaded (see
-          // BookingForm.tsx's autosave), pull them from here instead of losing them.
-          try {
-            const draftData = parseJSON<{ documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }> }>(enq.data, {});
-            const draftDocs = draftData.documents;
-            if (Array.isArray(draftDocs) && draftDocs.length > 0 && payment.customer_id) {
-              const { attachCustomerDocuments } = await import("./booking-actions");
-              const attachRes = await attachCustomerDocuments(payment.customer_id, bookingId, draftDocs);
-              if (!attachRes.ok) console.error(`[payments] booking ${bookingId}: draft documents not attached — ${attachRes.error}`);
+        // Same branch resolution submitBooking() uses — this used to hardcode branch_id
+        // 1 (Sakleshpura) regardless of which branch the customer actually picked.
+        let resolvedBranchId: number | undefined;
+        if (draftData.location) {
+          const locUpper = draftData.location.toUpperCase();
+          if (locUpper.includes("SAKLESH")) resolvedBranchId = 1;
+          else if (locUpper.includes("HASSAN")) resolvedBranchId = 2;
+        }
+
+        // This used to insert the booking directly with NO capacity check at all — if
+        // two different customers both had a draft for the same vehicle/dates and both
+        // payments fell into this fallback (e.g. both closed their tab right after
+        // Razorpay's success screen), BOTH got a real Confirmed booking for a vehicle
+        // that only had one unit left. Claim through the exact same atomic RPC
+        // createBooking() uses (pg_advisory_xact_lock serializes concurrent callers per
+        // vehicle) so only one of them can ever win the slot.
+        let claimedBlockId: number | null = null;
+        let claimedUnitId: number | null = null;
+        try {
+          const unitClaim = await sbRpc<Array<{ block_id: number; unit_id: number | null; unit_identifier: string | null }>>(
+            "reserve_vehicle_unit_slot",
+            { p_vehicle_id: enq.vehicle_id, p_pickup_at: enq.pickup_date, p_return_at: enq.return_date, p_branch_id: resolvedBranchId ?? null }
+          );
+          if (unitClaim.ok && Array.isArray(unitClaim.data) && unitClaim.data.length > 0) {
+            claimedBlockId = Number(unitClaim.data[0].block_id);
+            claimedUnitId = unitClaim.data[0].unit_id ? Number(unitClaim.data[0].unit_id) : null;
+          }
+        } catch (err) {
+          console.error(`[payments] enquiry ${enq.id}: reserve_vehicle_unit_slot threw`, err);
+        }
+        if (!claimedBlockId) {
+          const claim = await sbRpc<number | null>("reserve_vehicle_slot", {
+            p_vehicle_id: enq.vehicle_id,
+            p_pickup_at: enq.pickup_date,
+            p_return_at: enq.return_date,
+          });
+          if (claim.ok && claim.data) claimedBlockId = Number(claim.data);
+        }
+
+        if (claimedBlockId) {
+          // Reconstruct the SAME authoritative quote createBooking() uses for the normal
+          // booking path — this recovery path must never invent its own pricing. It used
+          // to skip pricing entirely (total_amount: effectivePaid, base_amount/gst_amount
+          // left unset), which is why a recovered booking could show "Base Rental ₹0,
+          // GST ₹0, Total ₹2,014" in the CRM even though ₹2,014 was genuinely captured.
+          let quote: Awaited<ReturnType<typeof calculateQuote>> | null = null;
+          const vehicle = await getVehicleById(enq.vehicle_id).catch(() => null);
+          const pickup = parseIstInstant(enq.pickup_date);
+          const ret = parseIstInstant(enq.return_date);
+          if (vehicle && pickup && ret) {
+            try {
+              quote = await calculateQuote(vehicle, pickup, ret);
+            } catch (err) {
+              console.error(`[payments] enquiry ${enq.id}: calculateQuote threw`, err);
             }
-          } catch (err) {
-            console.error(`[payments] booking ${bookingId}: draft document recovery threw`, err);
+          }
+
+          if (!quote) {
+            // Cannot price this booking correctly — refuse to fabricate one, same
+            // principle submitBooking() already applies. Release the claim so it falls
+            // through to the unlinked-payment handling below for staff review.
+            console.error(`[payments] enquiry ${enq.id}: could not price recovered booking (vehicle=${!!vehicle}, pickup=${!!pickup}, return=${!!ret}) — releasing claim`);
+            await sbDelete("availability_blocks", `id=eq.${claimedBlockId}`);
+            claimedBlockId = null;
+          } else {
+            const otherFees = num(quote.offSchedulePickupFee) + num(quote.gatewayFeeAmount);
+            const bNo = nextNumber("BK", null);
+            const insBooking = await sbInsert<{ id: number }>("bookings", {
+              booking_no: bNo,
+              enquiry_id: enq.id,
+              customer_id: payment.customer_id,
+              vehicle_id: enq.vehicle_id,
+              vehicle_unit_id: claimedUnitId,
+              branch_id: resolvedBranchId ?? null,
+              pickup_at: enq.pickup_date,
+              return_at: enq.return_date,
+              status: "Confirmed",
+              base_amount: num(quote.baseAmount),
+              gst_amount: num(quote.gstAmount),
+              other_fees_amount: otherFees,
+              included_km: num(quote.includedKm),
+              total_amount: num(quote.totalAmount),
+              // Starts at zero on purpose. increment_booking_paid() below is the single
+              // writer of this column; seeding it with the payment amount here made every
+              // auto-linked booking record twice what was actually paid.
+              paid_amount: 0,
+              deposit_amount: num(quote.depositAmount),
+              created_at: nowISO(),
+            });
+            if (insBooking.ok && insBooking.data) {
+              bookingId = insBooking.data.id;
+              await sbUpdate("payments", `id=eq.${payment.id}`, { booking_id: bookingId });
+              await sbUpdate("enquiries", `id=eq.${enq.id}`, { status: "converted", stage: "Converted" });
+              // Link the claimed hold to the real booking — mirrors createBooking()'s own
+              // linking step, so this booking shows up consistently everywhere the other
+              // creation path's bookings do (Gantt, unit blocking, etc).
+              await sbUpdate("availability_blocks", `id=eq.${claimedBlockId}`, {
+                booking_id: bookingId,
+                vehicle_unit_id: claimedUnitId,
+                expires_at: null,
+                notes: null,
+              });
+
+              // This path builds the booking straight from the draft enquiry, bypassing
+              // submitBooking() entirely — the ONE thing that used to write
+              // customer_documents. The customer's uploaded licence/ID photos were durably
+              // in storage the moment they were uploaded, but nothing in the DB pointed to
+              // them unless the browser's own final submit call completed. Since the draft
+              // now carries `documents` as soon as each file is uploaded (see
+              // BookingForm.tsx's autosave), pull them from here instead of losing them.
+              try {
+                const draftDocs = draftData.documents;
+                if (Array.isArray(draftDocs) && draftDocs.length > 0 && payment.customer_id) {
+                  const { attachCustomerDocuments } = await import("./booking-actions");
+                  const attachRes = await attachCustomerDocuments(payment.customer_id, bookingId, draftDocs);
+                  if (!attachRes.ok) console.error(`[payments] booking ${bookingId}: draft documents not attached — ${attachRes.error}`);
+                }
+              } catch (err) {
+                console.error(`[payments] booking ${bookingId}: draft document recovery threw`, err);
+              }
+            } else {
+              // Booking insert failed after a successful claim — release the hold rather
+              // than stranding a phantom 10-minute-unavailable slot on a vehicle nobody
+              // actually booked.
+              console.error(`[payments] enquiry ${enq.id}: booking insert failed after claim —`, insBooking.ok ? "no id returned" : insBooking.error);
+              await sbDelete("availability_blocks", `id=eq.${claimedBlockId}`);
+            }
           }
         }
+        // If claimedBlockId is still null here, the vehicle genuinely has no capacity
+        // left for this window (or is unavailable/blocked). Falls through to the
+        // unlinked-payment handling below, same as any other payment that can't be
+        // matched to a real slot — staff can see and refund it, instead of the system
+        // fabricating a booking for a vehicle that was never actually available.
       }
     }
   }
@@ -720,7 +816,7 @@ export async function verifyBookingPayment(input: {
     revalidatePath("/dashboard/allocations", "page");
   } catch {}
 
-  return { ok: true, bookingNo };
+  return { ok: true, bookingNo, bookingId };
 }
 
 async function lookupBookingNo(bookingId: number | null | undefined): Promise<string | null> {
