@@ -20,6 +20,11 @@
 import "dotenv/config";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { verifyBookingPayment } from "../src/lib/payment-actions";
+import { calculateQuote } from "../src/lib/pricing";
+import { getVehicleById, getVehicles } from "../src/lib/data";
+import { parseIstInstant } from "../src/lib/rental-clock";
+import { num } from "../src/lib/supabase-rest";
 
 const URL = (
   process.env.SUPABASE_URL ||
@@ -744,6 +749,366 @@ test(
     } finally {
       // Clean up test vehicle
       await rest(`vehicles?id=eq.${testVehId}`, { method: "DELETE" });
+    }
+  }
+);
+
+test(
+  "recovering a booking from an unlinked payment prices it the same way a normal booking is priced",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // Regression test for: a booking recovered via payment-actions.ts's auto-link
+    // path (payment settles with no linked booking, matched back to a draft enquiry
+    // by phone) used to insert only total_amount (= whatever was paid) and leave
+    // base_amount/gst_amount/deposit_amount unset — the CRM Booking Review screen
+    // then showed "Base Rental ₹0, GST ₹0, Total ₹2,014" for a genuinely paid
+    // booking. The fix reconstructs the SAME quote calculateQuote()/createBooking()
+    // use for the normal path — this test proves that end to end, through the real
+    // verifyBookingPayment() function, not a reimplementation of the pricing math.
+    //
+    // Needs its own ACTIVE throwaway vehicle (the shared fixture above is
+    // deliberately inactive) because reserve_vehicle_unit_slot/reserve_vehicle_slot
+    // refuse to claim a slot on an inactive vehicle — matching the "vehicle
+    // soft-deletion" test above, which needs the same for the same reason.
+    const slug = `${TAG}-recovery-vehicle`.toLowerCase();
+    const vRes = await rest("vehicles", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        slug,
+        name: `${TAG} Recovery Vehicle`,
+        brand: "TestBrand",
+        model: "RecoveryModel",
+        active: 1,
+        status: "available",
+        seats: 4,
+        rate_24h: 900,
+        weekend_rate_24h: 950,
+        deposit: 1000,
+        included_km: 100,
+        extra_km_rate: 4,
+        total_units: 1,
+      }),
+    });
+    assert.ok(vRes.ok, `recovery test vehicle must be created: ${JSON.stringify(vRes.body)}`);
+    const recVehicleId = Number((vRes.body as Array<{ id: number }>)[0].id);
+
+    const phone = `+9197${String(Date.now()).slice(-8)}`;
+    const custRes = await rest("customers", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ name: `${TAG} Recovery Customer`, phone }),
+    });
+    assert.ok(custRes.ok, `recovery test customer must be created: ${JSON.stringify(custRes.body)}`);
+    const recCustomerId = Number((custRes.body as Array<{ id: number }>)[0].id);
+
+    const pickupIso = "2031-03-10T08:00:00+05:30";
+    const returnIso = "2031-03-11T08:00:00+05:30";
+
+    let enqId = 0;
+    let paymentId = 0;
+    let recoveredBookingId: number | undefined;
+
+    try {
+      // A draft the customer abandoned mid-checkout (browser closed right after
+      // paying) — exactly what the auto-link path matches against by phone.
+      const enqRes = await rest("enquiries", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          enquiry_no: `${TAG}-DR1`,
+          vehicle_id: recVehicleId,
+          pickup_date: pickupIso,
+          return_date: returnIso,
+          location: "HASSAN",
+          phone,
+          name: `${TAG} Recovery Customer`,
+          data: JSON.stringify({
+            categoryId: null,
+            vehicleId: recVehicleId,
+            pickupAt: pickupIso,
+            returnAt: returnIso,
+            location: "HASSAN",
+            passengers: null,
+            step: 5,
+            contact: { name: `${TAG} Recovery Customer`, phone },
+          }),
+          status: "draft",
+          draft_token: `${TAG}-token`,
+        }),
+      });
+      assert.ok(enqRes.ok, `draft enquiry must be created: ${JSON.stringify(enqRes.body)}`);
+      enqId = Number((enqRes.body as Array<{ id: number }>)[0].id);
+
+      // The payment DID capture — this is the "unlinked payment" the recovery path
+      // exists to handle. razorpay_payment_id is fake, so fetchRazorpayPayment()
+      // will fail against the real Razorpay API inside verifyBookingPayment(); that
+      // only affects paid_amount (fed by a separate, unmodified step), never the
+      // base/gst/deposit/total fields this test is about.
+      const payRes = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          payment_no: `${TAG}-PY1`,
+          booking_id: null,
+          customer_id: recCustomerId,
+          amount: 2014,
+          amount_paise: 201400,
+          currency: "INR",
+          kind: "full",
+          status: "Paid",
+          gateway_ref: `${TAG}-order`,
+          razorpay_order_id: `${TAG}-order`,
+          razorpay_payment_id: `${TAG}-payment`,
+        }),
+      });
+      assert.ok(payRes.ok, `unlinked payment must be created: ${JSON.stringify(payRes.body)}`);
+      paymentId = Number((payRes.body as Array<{ id: number }>)[0].id);
+
+      // Independently computed — the exact function the recovery path now calls —
+      // so this test fails if the two ever diverge, instead of hardcoding numbers
+      // that would silently go stale if a pricing rule changes.
+      const vehicle = await getVehicleById(recVehicleId, false);
+      assert.ok(vehicle, "test vehicle must be readable via getVehicleById");
+      const pickup = parseIstInstant(pickupIso);
+      const ret = parseIstInstant(returnIso);
+      assert.ok(pickup && ret);
+      const expectedQuote = await calculateQuote(vehicle!, pickup!, ret!);
+      assert.ok(expectedQuote.baseAmount > 0, "sanity check on the test fixture itself");
+
+      const result = await verifyBookingPayment({
+        paymentId,
+        razorpayOrderId: `${TAG}-order`,
+        razorpayPaymentId: `${TAG}-payment`,
+        razorpaySignature: "test-signature",
+        skipSignatureCheck: true,
+      });
+
+      assert.ok(result.ok, `recovery should succeed: ${JSON.stringify(result)}`);
+      assert.ok((result as { bookingId?: number }).bookingId, "recovery must produce a real booking id");
+      recoveredBookingId = (result as { bookingId?: number }).bookingId;
+
+      const bookingRes = await rest(
+        `bookings?id=eq.${recoveredBookingId}&select=base_amount,gst_amount,deposit_amount,total_amount,included_km,paid_amount,enquiry_id,vehicle_id`
+      );
+      assert.ok(bookingRes.ok);
+      const booking = (bookingRes.body as Array<Record<string, unknown>>)[0];
+      assert.ok(booking, "recovered booking row must exist");
+
+      // The actual bug: these used to be 0/unset while total_amount held the
+      // captured amount.
+      assert.equal(num(booking.base_amount), expectedQuote.baseAmount, "base_amount must match the authoritative quote, not be 0");
+      assert.equal(num(booking.gst_amount), expectedQuote.gstAmount, "gst_amount must match the authoritative quote, not be 0");
+      assert.equal(num(booking.deposit_amount), expectedQuote.depositAmount, "deposit_amount must match the authoritative quote");
+      assert.equal(num(booking.total_amount), expectedQuote.totalAmount, "total_amount must match the authoritative quote");
+      assert.equal(num(booking.included_km), expectedQuote.includedKm, "included_km must match the authoritative quote");
+
+      // Internal consistency the bug report asked for explicitly.
+      assert.equal(
+        num(booking.base_amount) + num(booking.gst_amount),
+        num(booking.total_amount) - expectedQuote.offSchedulePickupFee - expectedQuote.gatewayFeeAmount,
+        "base + GST (plus any timing/gateway fee) must equal the total rental fare"
+      );
+
+      // paid_amount is driven by a SEPARATE, unmodified step (increment_booking_paid
+      // fed by fetchRazorpayPayment's result) — not part of this fix. With a fake
+      // razorpay_payment_id that lookup fails against the real API, so paid_amount
+      // stays 0 here; in production it is fed the real captured amount by that
+      // untouched code. This assertion documents that boundary rather than papering
+      // over it.
+      assert.equal(num(booking.paid_amount), 0, "paid_amount tracks the real Razorpay capture via the untouched increment step, not this fix");
+    } finally {
+      if (recoveredBookingId) {
+        await rest(`invoices?booking_id=eq.${recoveredBookingId}`, { method: "DELETE" });
+        await rest(`booking_history?booking_id=eq.${recoveredBookingId}`, { method: "DELETE" });
+        await rest(`messages?booking_id=eq.${recoveredBookingId}`, { method: "DELETE" });
+      }
+      await rest(`availability_blocks?vehicle_id=eq.${recVehicleId}`, { method: "DELETE" });
+      if (recoveredBookingId) await rest(`bookings?id=eq.${recoveredBookingId}`, { method: "DELETE" });
+      if (paymentId) await rest(`payments?id=eq.${paymentId}`, { method: "DELETE" });
+      if (enqId) await rest(`enquiries?id=eq.${enqId}`, { method: "DELETE" });
+      await rest(`customers?id=eq.${recCustomerId}`, { method: "DELETE" });
+      await rest(`vehicles?id=eq.${recVehicleId}`, { method: "DELETE" });
+    }
+  }
+);
+
+test(
+  "expired temporary reservation holds do not reduce displayed availability",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // Regression test for: availability_blocks with booking_id IS NULL were counted
+    // as occupying a unit regardless of expires_at, so a stale temporary hold (e.g.
+    // a reservation claim from an abandoned checkout, past its 10-minute expiry)
+    // permanently reduced availability until release_expired_holds() happened to run.
+    // hydrateVehicles()'s blocks query now excludes expired NULL-booking holds itself,
+    // so the read path is correct even if cleanup has not run yet.
+    const WINDOW = { pickupAt: "2032-04-10T08:00:00+05:30", returnAt: "2032-04-11T08:00:00+05:30" };
+    const past = new Date(Date.now() - 3600_000).toISOString();
+    const future = new Date(Date.now() + 3600_000).toISOString();
+
+    const vRes = await rest("vehicles", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        slug: `${TAG}-expholds-vehicle`.toLowerCase(),
+        name: `${TAG} Expired Holds Vehicle`,
+        brand: "TestBrand",
+        model: "ExpiredHoldModel",
+        active: 1,
+        status: "available",
+        seats: 4,
+        rate_24h: 500,
+        deposit: 500,
+        included_km: 100,
+        extra_km_rate: 4,
+        total_units: 2,
+      }),
+    });
+    assert.ok(vRes.ok, `test vehicle must be created: ${JSON.stringify(vRes.body)}`);
+    const vehId = Number((vRes.body as Array<{ id: number }>)[0].id);
+
+    const u1Res = await rest("vehicle_units", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ vehicle_id: vehId, unit_identifier: `${TAG}-U1`, status: "available", current_branch_id: 1, active: 1 }),
+    });
+    const u2Res = await rest("vehicle_units", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ vehicle_id: vehId, unit_identifier: `${TAG}-U2`, status: "available", current_branch_id: 1, active: 1 }),
+    });
+    assert.ok(u1Res.ok && u2Res.ok, "both test units must be created");
+    const unit1 = Number((u1Res.body as Array<{ id: number }>)[0].id);
+
+    const availableUnitsFor = async () => {
+      const list = await getVehicles({ availabilityWindow: WINDOW }, true);
+      return list.find((v) => v.id === vehId)?.available_units;
+    };
+
+    try {
+      // Case 1: 2 units, 0 active holds -> 2/2
+      assert.equal(await availableUnitsFor(), 2, "Case 1: no holds at all");
+
+      // Case 2: 1 unexpired NULL-booking hold -> 1/2
+      const hold2 = await rest("availability_blocks", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          vehicle_id: vehId, vehicle_unit_id: unit1, booking_id: null,
+          starts_at: WINDOW.pickupAt, ends_at: WINDOW.returnAt, reason: "manual_block", expires_at: future,
+        }),
+      });
+      assert.ok(hold2.ok, `case 2 hold insert failed: ${JSON.stringify(hold2.body)}`);
+      assert.equal(await availableUnitsFor(), 1, "Case 2: one unexpired temporary hold");
+      await rest(`availability_blocks?id=eq.${Number((hold2.body as Array<{ id: number }>)[0].id)}`, { method: "DELETE" });
+
+      // Case 3: same hold, but ALREADY EXPIRED -> 2/2 — this is the actual bug.
+      const hold3 = await rest("availability_blocks", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          vehicle_id: vehId, vehicle_unit_id: unit1, booking_id: null,
+          starts_at: WINDOW.pickupAt, ends_at: WINDOW.returnAt, reason: "manual_block", expires_at: past,
+        }),
+      });
+      assert.ok(hold3.ok, `case 3 hold insert failed: ${JSON.stringify(hold3.body)}`);
+      assert.equal(await availableUnitsFor(), 2, "Case 3: an EXPIRED temporary hold must not reduce availability");
+      await rest(`availability_blocks?id=eq.${Number((hold3.body as Array<{ id: number }>)[0].id)}`, { method: "DELETE" });
+
+      // Case 4: one real booking on a unit -> 1/2
+      const bk4 = await rest("bookings", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          booking_no: `${TAG}-EXPH1`, vehicle_id: vehId, vehicle_unit_id: unit1,
+          pickup_at: WINDOW.pickupAt, return_at: WINDOW.returnAt, status: "Confirmed",
+          base_amount: 500, gst_amount: 30, deposit_amount: 500, total_amount: 530, paid_amount: 0,
+        }),
+      });
+      assert.ok(bk4.ok, `case 4 booking insert failed: ${JSON.stringify(bk4.body)}`);
+      assert.equal(await availableUnitsFor(), 1, "Case 4: a real active booking still occupies its unit");
+      await rest(`bookings?id=eq.${Number((bk4.body as Array<{ id: number }>)[0].id)}`, { method: "DELETE" });
+
+      // Case 5: permanent staff block (expires_at IS NULL) -> 1/2
+      const hold5 = await rest("availability_blocks", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          vehicle_id: vehId, vehicle_unit_id: unit1, booking_id: null,
+          starts_at: WINDOW.pickupAt, ends_at: WINDOW.returnAt, reason: "manual_block", expires_at: null,
+        }),
+      });
+      assert.ok(hold5.ok, `case 5 hold insert failed: ${JSON.stringify(hold5.body)}`);
+      assert.equal(await availableUnitsFor(), 1, "Case 5: a permanent staff block (no expiry) still occupies its unit");
+      await rest(`availability_blocks?id=eq.${Number((hold5.body as Array<{ id: number }>)[0].id)}`, { method: "DELETE" });
+    } finally {
+      await rest(`availability_blocks?vehicle_id=eq.${vehId}`, { method: "DELETE" });
+      await rest(`bookings?vehicle_id=eq.${vehId}`, { method: "DELETE" });
+      await rest(`vehicle_units?vehicle_id=eq.${vehId}`, { method: "DELETE" });
+      await rest(`vehicles?id=eq.${vehId}`, { method: "DELETE" });
+    }
+  }
+);
+
+test(
+  "branch-specific availability reflects only that branch's own inventory",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // Case 6 from the expired-holds fix spec: a 2-unit vehicle with one unit at each
+    // of two branches must show branch-scoped counts, not the global 2-unit total,
+    // when a specific branch is requested. Guards that the expired-holds fix did not
+    // disturb this — it only changed which rows feed bookedUnitIds, not how
+    // branch_distribution is derived from it.
+    const WINDOW = { pickupAt: "2032-05-10T08:00:00+05:30", returnAt: "2032-05-11T08:00:00+05:30" };
+
+    const vRes = await rest("vehicles", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        slug: `${TAG}-branch-vehicle`.toLowerCase(),
+        name: `${TAG} Branch Vehicle`,
+        brand: "TestBrand",
+        model: "BranchModel",
+        active: 1,
+        status: "available",
+        seats: 4,
+        rate_24h: 500,
+        deposit: 500,
+        included_km: 100,
+        extra_km_rate: 4,
+        total_units: 2,
+      }),
+    });
+    assert.ok(vRes.ok, `test vehicle must be created: ${JSON.stringify(vRes.body)}`);
+    const vehId = Number((vRes.body as Array<{ id: number }>)[0].id);
+
+    try {
+      const uA = await rest("vehicle_units", {
+        method: "POST",
+        body: JSON.stringify({ vehicle_id: vehId, unit_identifier: `${TAG}-BA`, status: "available", current_branch_id: 1, active: 1 }),
+      });
+      const uB = await rest("vehicle_units", {
+        method: "POST",
+        body: JSON.stringify({ vehicle_id: vehId, unit_identifier: `${TAG}-BB`, status: "available", current_branch_id: 2, active: 1 }),
+      });
+      assert.ok(uA.ok && uB.ok, "both branch units must be created");
+
+      const list = await getVehicles({ availabilityWindow: WINDOW, branchId: 1 }, true);
+      const v = list.find((x) => x.id === vehId);
+      const branchA = v?.branch_distribution?.find((bd) => bd.branch_id === 1);
+
+      assert.equal(branchA?.total_units, 1, "Branch 1 has exactly one unit, not the global 2");
+      assert.equal(branchA?.available_units, 1, "Branch 1's availability reflects only Branch 1's own inventory");
+    } finally {
+      await rest(`vehicle_units?vehicle_id=eq.${vehId}`, { method: "DELETE" });
+      await rest(`vehicles?id=eq.${vehId}`, { method: "DELETE" });
     }
   }
 );
