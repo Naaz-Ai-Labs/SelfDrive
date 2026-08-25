@@ -359,6 +359,11 @@ export function BookingForm({
         const res = await saveBookingDraft({
           token, categoryId: null, vehicleId, pickupAt: pickupAt || null, returnAt: returnAt || null,
           location, passengers: passengers ? Number(passengers) : null, step, contact,
+          // Persisted as soon as each document is uploaded (documents is in the deps
+          // array below), not just at final submit — a tab closed right after payment
+          // (payment settles independently via webhook) must not lose the link between
+          // an uploaded file and this customer.
+          documents: Object.entries(documents).filter(([, v]) => v.url).map(([kind, v]) => ({ kind, url: v.url, number: v.number, expiry: v.expiry })),
         });
         setToken(res.token);
         setSaveStatus("saved");
@@ -369,7 +374,7 @@ export function BookingForm({
     }, 1600);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryKind, location, pickupDate, pickupTime, returnDate, returnTime, passengers, vehicleId, contact, step, result]);
+  }, [categoryKind, location, pickupDate, pickupTime, returnDate, returnTime, passengers, vehicleId, contact, step, result, documents]);
 
   // Load available vehicles for step 2 vehicle picker.
   const vehiclesFetchedRef = useRef(false);

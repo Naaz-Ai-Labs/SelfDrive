@@ -16,13 +16,16 @@ export type DraftPayload = {
   step: number;
   contact: { name: string; phone: string; email?: string; address?: string; dob?: string; emergencyContact?: string };
   notes?: string;
+  /** See the matching field on web's copy of this type — documents land here as soon as
+   * each one is uploaded, not just at final submit, so they survive a tab closed early. */
+  documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }>;
 };
 
 export async function saveBookingDraft(input: DraftPayload & { token?: string | null }): Promise<{ token: string; savedAt: string }> {
   const token = input.token && /^[a-f0-9]{32,64}$/.test(input.token) ? input.token : randomToken(32);
   const existing = await sbSelectOne<{ id: number }>("enquiries", `select=id&draft_token=eq.${encodeURIComponent(token)}`);
   const phone = input.contact.phone ? normalizePhone(input.contact.phone) : null;
-  const payload = { categoryId: input.categoryId, vehicleId: input.vehicleId, pickupAt: input.pickupAt, returnAt: input.returnAt, location: input.location, passengers: input.passengers, step: input.step, contact: input.contact, notes: input.notes };
+  const payload = { categoryId: input.categoryId, vehicleId: input.vehicleId, pickupAt: input.pickupAt, returnAt: input.returnAt, location: input.location, passengers: input.passengers, step: input.step, contact: input.contact, notes: input.notes, documents: input.documents ?? [] };
 
   const common = {
     category_id: input.categoryId,

@@ -18,6 +18,15 @@ export type DraftPayload = {
   step: number;
   contact: { name: string; phone: string; email?: string; address?: string; dob?: string; emergencyContact?: string };
   notes?: string;
+  /**
+   * Uploaded so far, persisted into the draft as soon as each file lands — not just at
+   * final submit. The uploaded FILE itself is already durable in storage the moment
+   * upload() resolves; without this, the DB row linking it to a customer only existed in
+   * the browser tab's memory until checkout completed. A tab closed right after payment
+   * (the payment succeeds independently via webhook) lost that link forever, and the
+   * booking that got auto-created from this draft had no idea documents existed.
+   */
+  documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }>;
 };
 
 export type Quote = {

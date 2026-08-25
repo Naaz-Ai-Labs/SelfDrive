@@ -1,6 +1,6 @@
 "use server";
 
-import { nextNumber } from "./utils";
+import { nextNumber, parseJSON } from "./utils";
 import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { createRazorpayOrder, verifyRazorpaySignature, fetchRazorpayPayment, razorpayConfigured, razorpayKeyId } from "./razorpay";
@@ -600,6 +600,25 @@ export async function verifyBookingPayment(input: {
           bookingId = insBooking.data.id;
           await sbUpdate("payments", `id=eq.${payment.id}`, { booking_id: bookingId });
           await sbUpdate("enquiries", `id=eq.${enq.id}`, { status: "converted", stage: "Converted" });
+
+          // This path builds the booking straight from the draft enquiry, bypassing
+          // submitBooking() entirely — the ONE thing that used to write
+          // customer_documents. The customer's uploaded licence/ID photos were durably
+          // in storage the moment they were uploaded, but nothing in the DB pointed to
+          // them unless the browser's own final submit call completed. Since the draft
+          // now carries `documents` as soon as each file is uploaded (see
+          // BookingForm.tsx's autosave), pull them from here instead of losing them.
+          try {
+            const draftData = parseJSON<{ documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }> }>(enq.data, {});
+            const draftDocs = draftData.documents;
+            if (Array.isArray(draftDocs) && draftDocs.length > 0 && payment.customer_id) {
+              const { attachCustomerDocuments } = await import("./booking-actions");
+              const attachRes = await attachCustomerDocuments(payment.customer_id, bookingId, draftDocs);
+              if (!attachRes.ok) console.error(`[payments] booking ${bookingId}: draft documents not attached — ${attachRes.error}`);
+            }
+          } catch (err) {
+            console.error(`[payments] booking ${bookingId}: draft document recovery threw`, err);
+          }
         }
       }
     }
