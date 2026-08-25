@@ -49,6 +49,15 @@ export function num(value: unknown, fallback = 0): number {
 }
 
 async function parse<T>(res: Response, label: string): Promise<RestResult<T>> {
+  // 204 No Content is PostgREST's normal, successful response for a request made
+  // without `Prefer: return=representation` — every sbDelete() call, and any RPC to a
+  // function that returns void. It has an empty body and no content-type header, so
+  // without this check the "not JSON" branch below misreported every one of those
+  // successes as a failure ("Database returned a non-JSON response (204)").
+  if (res.status === 204) {
+    return { ok: true, data: null as T };
+  }
+
   const contentType = res.headers.get("content-type") ?? "";
 
   if (!contentType.includes("application/json")) {
