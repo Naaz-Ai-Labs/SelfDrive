@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { sbSelect, num } from "@/lib/supabase-rest";
 import { getBranches } from "@/lib/data";
 import { calculateBookingFinancials } from "@/lib/pricing";
@@ -160,6 +161,12 @@ export default async function BookingsPage() {
             Review customer bookings, inspect uploaded Driving Licences & Aadhaar IDs, and manage rejections.
           </p>
         </div>
+        <Link
+          href="/dashboard/bookings/new"
+          className="btn-primary text-sm font-semibold px-4 py-2 whitespace-nowrap"
+        >
+          + Counter booking
+        </Link>
       </div>
 
       <AfterHoursPanel requests={afterHoursRequests} />

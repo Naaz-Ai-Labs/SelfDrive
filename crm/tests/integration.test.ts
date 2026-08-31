@@ -1690,3 +1690,61 @@ test(
     }
   }
 );
+
+test(
+  "Test 16 — a manual counter booking holds its unit and is immune to the 15-minute sweep",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // createBooking() produces status "Pending payment" with a 15-minute window. A
+    // walk-in booking left in that state would be rejected by
+    // release_expired_reservations() a quarter of an hour after the customer paid at
+    // the counter, freeing their vehicle. This is the guard for that.
+    const pickup = "2033-12-10T08:00:00+05:30";
+    const ret = "2033-12-12T08:00:00+05:30";
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      const booking = await createBooking({
+        vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+        customer: { name: `${TAG} Walkin`, phone: testPhone(1601) },
+        idempotencyKey: `${TAG}-t16`,
+      });
+      bookingIds.push(booking.bookingId); customerIds.push(booking.customerId);
+
+      // What createManualBooking() does immediately after createBooking().
+      const promoted = await rest(`bookings?id=eq.${booking.bookingId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "Pending verification", source: "manual", payment_window_expires_at: null }),
+      });
+      assert.ok(promoted.ok, `could not mark the booking manual: ${JSON.stringify(promoted.body)}`);
+
+      // Even with the window nulled and time long past, the sweep must not touch it.
+      const expired = await rpc("is_expired_reservation", { p_booking_id: booking.bookingId });
+      assert.equal(expired.body, false, "a manual counter booking must never count as an expired reservation");
+
+      const swept = await rpc("release_expired_reservations", {});
+      assert.ok(swept.ok, "sweep must run");
+      const after = await rest(`bookings?id=eq.${booking.bookingId}&select=status,source`);
+      const row = (after.body as Array<{ status: string; source: string }>)[0];
+      assert.equal(row.status, "Pending verification", "the sweep must not reject a counter booking");
+      assert.equal(row.source, "manual", "source must record how the booking was taken");
+
+      // And it genuinely holds the unit: a second customer cannot take those dates.
+      await assert.rejects(
+        createBooking({
+          vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+          customer: { name: `${TAG} Other`, phone: testPhone(1602) },
+          idempotencyKey: `${TAG}-t16-b`,
+        }),
+        /unavailable|not available/i,
+        "a counter booking must hold its unit against other bookings"
+      );
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);

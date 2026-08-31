@@ -2112,6 +2112,103 @@ export async function reopenBooking(bookingId: number) {
   return { ok: true as const };
 }
 
+/**
+ * Walk-in / offline booking created by staff at the counter.
+ *
+ * Deliberately reuses createBooking() rather than inserting a row directly: that is
+ * where the atomic per-unit reservation (pg_advisory_xact_lock), the authoritative
+ * calculateQuote() pricing, customer find-or-create by normalised phone, and the
+ * availability_blocks hold all live. A manual booking that skipped it could double-book
+ * a unit the online flow had already reserved.
+ *
+ * The one thing it must NOT inherit is the online payment lifecycle. createBooking
+ * produces status "Pending payment" with a 15-minute payment_window_expires_at, and
+ * release_expired_reservations() would then reject this booking and free the vehicle a
+ * quarter of an hour after the customer walked in. So the booking is immediately moved
+ * out of that state, its window cleared, and marked source=manual.
+ */
+export async function createManualBooking(input: {
+  vehicleId: number;
+  pickupAt: string;
+  returnAt: string;
+  branchId?: number;
+  customer: { name: string; phone: string; email?: string; address?: string };
+  notes?: string;
+  /** Staff may collect cash at the counter; recorded through the normal payment path. */
+  amountCollected?: number;
+  paymentMethod?: string;
+}) {
+  const user = await staffUser();
+  assertCan(user, "staff");
+
+  const { createBooking } = await import("./bookings");
+
+  let created: { bookingId: number; bookingNo: string; customerId: number };
+  try {
+    created = await createBooking({
+      vehicleId: input.vehicleId,
+      pickupAt: input.pickupAt,
+      returnAt: input.returnAt,
+      branchId: input.branchId,
+      customer: input.customer,
+      notes: input.notes,
+    });
+  } catch (err) {
+    // createBooking throws for a real business reason — no unit free for those dates,
+    // branch suspended, below the weekend minimum. Surface it as-is to the counter.
+    return { ok: false as const, error: err instanceof Error ? err.message : "Could not create the booking." };
+  }
+
+  // Out of the online payment lifecycle, before the TTL sweep can ever see it.
+  const promoted = await sbUpdate("bookings", `id=eq.${created.bookingId}`, {
+    status: "Pending verification",
+    source: "manual",
+    payment_window_expires_at: null,
+    updated_at: nowIso(),
+  });
+  if (!promoted.ok) return fail(promoted, "Marking the booking as a counter booking");
+
+  const history = await sbInsert("booking_history", {
+    booking_id: created.bookingId,
+    user_id: user.id,
+    action: "manual_booking_created",
+    detail: JSON.stringify({ staff_name: user.name, source: "manual", counter: true }),
+    created_at: nowIso(),
+  });
+  if (!history.ok) console.error(`[bookings] ${created.bookingNo}: history not written — ${history.error}`);
+
+  // Cash taken at the counter goes through the same payments table the online flow
+  // uses, so paid_amount, refunds and reporting all behave identically.
+  if (input.amountCollected && input.amountCollected > 0) {
+    const payment = await addPayment({
+      bookingId: created.bookingId,
+      amount: input.amountCollected,
+      kind: "full",
+      method: input.paymentMethod || "Cash",
+      notes: "Collected at the counter",
+    });
+    if (!payment.ok) {
+      // The booking exists and holds its unit — do not fail the whole thing over the
+      // payment row, but make it loud so staff re-enter it rather than losing the cash.
+      console.error(`[bookings] ${created.bookingNo}: counter payment NOT recorded — ${payment.error}`);
+      return {
+        ok: true as const,
+        bookingId: created.bookingId,
+        bookingNo: created.bookingNo,
+        warning: `Booking created, but the payment could not be recorded: ${payment.error}. Add it manually from the booking.`,
+      };
+    }
+  }
+
+  await logActivity(user.id, "manual_booking_created", "booking", created.bookingId, {
+    booking_no: created.bookingNo,
+    staff_name: user.name,
+  });
+  refresh();
+
+  return { ok: true as const, bookingId: created.bookingId, bookingNo: created.bookingNo };
+}
+
 export async function quickApproveBooking(input: { bookingId: number; approve: boolean; notes?: string }) {
   const staff = await staffUser();
 
