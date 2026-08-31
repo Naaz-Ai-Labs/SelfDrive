@@ -267,18 +267,30 @@ export async function saveVehicle(input: {
       ? input.physicalUnits[0].registration_no
       : input.registrationNo ?? null;
 
+    // Marking the vehicle itself unavailable/blocked still propagates DOWN to its
+    // units below — that is how an operator takes a whole vehicle out of service.
+    // Only the reverse (units dictating the parent) is removed.
     const isVehicleUnavailableInput = input.status === "unavailable" || input.status === "blocked";
+
+    // The operator's explicit choice wins.
+    //
+    // This used to recompute the parent status from the unit statuses AFTER reading the
+    // operator's selection, and overwrite it: setting "Overall Fleet Status" to
+    // available on a vehicle whose units were all unavailable silently saved back as
+    // unavailable. The save landed, the choice did not — it looked like the edit had no
+    // effect at all.
+    //
+    // Bookability does not depend on this field being derived: reserve_vehicle_unit_slot
+    // and hydrateVehicles both decide capacity per UNIT (see 20260901d), so a parent
+    // marked available over blocked units still cannot be booked. Derivation is kept
+    // only as a fallback for callers that send no status at all.
     let calculatedVehicleStatus = input.status ?? "available";
 
-    if (input.physicalUnits && input.physicalUnits.length > 0) {
+    if (input.status === undefined && input.physicalUnits && input.physicalUnits.length > 0) {
       const allUnitsUnavailable = input.physicalUnits.every(
         (u) => u.status === "unavailable" || u.status === "blocked"
       );
-      if (allUnitsUnavailable || isVehicleUnavailableInput) {
-        calculatedVehicleStatus = isVehicleUnavailableInput ? input.status! : "unavailable";
-      } else if (input.physicalUnits.some((u) => u.status === "available")) {
-        calculatedVehicleStatus = "available";
-      }
+      calculatedVehicleStatus = allUnitsUnavailable ? "unavailable" : "available";
     }
 
     const fields = {
