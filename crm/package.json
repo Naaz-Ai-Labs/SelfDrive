@@ -13,6 +13,7 @@
     "test:integration": "tsx --test tests/integration.test.ts"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.72.0",
     "@supabase/server": "^1.4.1",
     "@supabase/supabase-js": "^2.112.0",
     "@upstash/redis": "^1.38.2",

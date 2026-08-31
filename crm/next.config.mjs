@@ -1,3 +1,4 @@
+import { withSentryConfig } from "@sentry/nextjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,4 +18,19 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// The existing config above is passed through untouched; withSentryConfig only adds
+// the build-time pieces (source map upload when credentials are present, and the
+// /monitoring tunnel so ad-blockers cannot silently drop error reports).
+//
+// org/project/authToken are read from the environment rather than hardcoded: without
+// SENTRY_AUTH_TOKEN the upload step is simply skipped, so builds keep working
+// unchanged until those are set in Vercel.
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+
+  widenClientFileUpload: true,
+  tunnelRoute: "/monitoring",
+  silent: !process.env.CI,
+});

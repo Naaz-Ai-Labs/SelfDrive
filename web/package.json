@@ -11,6 +11,7 @@
     "test": "npx tsx --test tests/pricing-invariants.test.ts"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.72.0",
     "@supabase/supabase-js": "^2.112.0",
     "@upstash/redis": "^1.38.2",
     "@vercel/blob": "^2.7.0",

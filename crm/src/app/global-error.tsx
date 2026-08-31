@@ -1,5 +1,8 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+import { useEffect } from "react";
+
 export default function GlobalError({
   error,
   reset,
@@ -7,6 +10,11 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // Report to Sentry, then fall through to the existing UI unchanged.
+  useEffect(() => {
+    Sentry.captureException(error);
+  }, [error]);
+
   const showDetail = process.env.NODE_ENV !== "production";
 
   return (
