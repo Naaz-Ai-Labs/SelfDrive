@@ -1381,11 +1381,11 @@ export async function recordInspection(input: {
       if (booking.data.vehicle_unit_id) {
         await sbUpdate("vehicle_units", `id=eq.${booking.data.vehicle_unit_id}`, { status: "booked", updated_at: nowIso() });
       }
-      const allUnits = await sbSelect<{ id: number; status: string }>("vehicle_units", `select=id,status&vehicle_id=eq.${vehicleId}&active=eq.1`);
-      const anyAvailable = allUnits.ok && allUnits.data ? allUnits.data.some((u) => u.status === "available") : false;
-      if (!anyAvailable && allUnits.ok && allUnits.data && allUnits.data.length > 0) {
-        await sbUpdate("vehicles", `id=eq.${vehicleId}`, { status: "booked", updated_at: nowIso() });
-      }
+      // Deliberately does NOT flip the vehicle MODEL to "booked" when its last unit
+      // goes out. reserve_vehicle_unit_slot reads vehicles.status as a date-blind gate,
+      // so that escalation made the entire model unbookable for every future date —
+      // including dates after this rental returns, and including its other units.
+      // Whether capacity exists for a given window is decided per-unit, per-date.
     }
   } else {
     const vehicle = vehicleId

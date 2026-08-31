@@ -508,10 +508,11 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
   return null;
 }
 
-export async function getVehicleById(id: number): Promise<Vehicle | null> {
+export async function getVehicleById(id: number, pickupAt?: string | null, returnAt?: string | null): Promise<Vehicle | null> {
   // 1. Try Gateway API
   try {
-    const res = await gatewayGet<{ vehicle: Vehicle | null }>(`/api/gateway/v1/booking/vehicle?id=${id}`);
+    const window = pickupAt && returnAt ? `&pickupAt=${encodeURIComponent(pickupAt)}&returnAt=${encodeURIComponent(returnAt)}` : "";
+    const res = await gatewayGet<{ vehicle: Vehicle | null }>(`/api/gateway/v1/booking/vehicle?id=${id}${window}`);
     if (res && res.vehicle) return res.vehicle;
   } catch {}
 

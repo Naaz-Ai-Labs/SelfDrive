@@ -350,6 +350,14 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
     }
   }
 
+  // Sweep reservations whose window has closed before claiming. The RPC already
+  // ignores them, so inventory is correct either way — this is what actually flips the
+  // abandoned booking to Rejected and deletes its hold, instead of leaving it sitting
+  // in the CRM as "Pending payment" forever. Never fatal: a failed sweep must not stop
+  // a customer booking.
+  const swept = await sbRpc<number>("release_expired_reservations", {});
+  if (!swept.ok) console.error(`[bookings] expired-reservation sweep failed — ${swept.error}`);
+
   // 1. Try unit-level atomic reservation RPC
   let claimedBlockId: number | null = null;
   let claimedUnitId: number | null = null;

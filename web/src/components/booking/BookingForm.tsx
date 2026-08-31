@@ -420,15 +420,27 @@ export function BookingForm({
   const [fetchedVehicle, setFetchedVehicle] = useState<Vehicle | null>(null);
   useEffect(() => {
     if (!vehicleId) { setFetchedVehicle(null); return; }
-    getVehicleById(vehicleId).then(setFetchedVehicle);
-  }, [vehicleId]);
+    // Pass the chosen window so this fallback reports availability for the dates the
+    // customer actually asked for, matching the list they picked from.
+    getVehicleById(vehicleId, pickupAt || null, returnAt || null).then(setFetchedVehicle);
+  }, [vehicleId, pickupAt, returnAt]);
 
-  // Resolve selectedVehicle: initialVehicles (instant SSR), then availableVehicles, then fetchedVehicle
+  // Resolve selectedVehicle from the DATE-SCOPED list first.
+  //
+  // initialVehicles is the SSR list, rendered before the customer picked their dates,
+  // so its available_units is the undated "booked at any point from now on" figure.
+  // Reading it first meant the card could render "1 Left" from the fresh list while
+  // validateStep(2) read available_units: 0 off the stale one and refused with "The
+  // selected vehicle is currently unavailable…" — the same vehicle, two answers.
+  //
+  // availableVehicles is seeded from initialVehicles, so before the fetch lands this
+  // is identical to the old behaviour; afterwards it is the list the server actually
+  // filtered for these dates and this branch.
   const selectedVehicle = useMemo(() => {
     const numId = Number(vehicleId);
     if (!numId || isNaN(numId)) return undefined;
-    return initialVehicles.find((v) => Number(v.id) === numId)
-      ?? availableVehicles.find((v) => Number(v.id) === numId)
+    return availableVehicles.find((v) => Number(v.id) === numId)
+      ?? initialVehicles.find((v) => Number(v.id) === numId)
       ?? (Number(fetchedVehicle?.id) === numId ? fetchedVehicle : undefined);
   }, [vehicleId, initialVehicles, availableVehicles, fetchedVehicle]);
 
@@ -634,14 +646,18 @@ export function BookingForm({
                   setResult({ bookingId: res.bookingId, bookingNo: res.bookingNo });
                   setPaid(true);
                 }}
-                onExhausted={() => {
+                onExhausted={(reason) => {
                   // Reservation is already released server-side at this point. A fresh
                   // reservationKey means the next attempt claims a NEW unit rather than
                   // colliding with the now-released one; contact info, documents and
                   // vehicle/date selections are untouched — only the step pointer and
                   // the attempt identity reset.
                   setReservationKey(crypto.randomUUID());
-                  setSubmitError("Payment was not completed after 3 attempts. Your reservation has been released — please try again.");
+                  setSubmitError(
+                    reason === "window"
+                      ? "Your 15-minute payment window expired, so the vehicle was released. Please pick your dates again to start a new booking."
+                      : "Payment was not completed after 3 attempts. Your reservation has been released — please try again."
+                  );
                   setStep(1);
                 }}
                 onPayLater={() => setPaid(true)}

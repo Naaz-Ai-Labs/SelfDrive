@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createBookingPaymentOrder, verifyBookingPayment, reportPaymentAttemptFailed } from "@/lib/payment-actions";
 import { submitBooking } from "@/lib/booking-actions";
 import { formatINR } from "@/lib/utils";
@@ -64,7 +64,7 @@ export function RazorpayCheckout({
   onPaid: (res: { bookingNo: string; bookingId: number }) => void;
   /** Called once after the 3rd payment attempt is genuinely exhausted — the
    * reservation has already been released server-side by this point. */
-  onExhausted?: () => void;
+  onExhausted?: (reason: "attempts" | "window") => void;
   onPayLater?: () => void;
 }) {
   const [status, setStatus] = useState<"idle" | "reserving" | "loading" | "error">("idle");
@@ -90,6 +90,17 @@ export function RazorpayCheckout({
   const msLeft = windowExpiresAt ? new Date(windowExpiresAt).getTime() - now : null;
   const windowClosed = msLeft !== null && msLeft <= 0;
   const attemptsLeft = MAX_ATTEMPTS - attemptNumber;
+
+  // The window closing is a terminating condition in its own right — it must return
+  // the customer to step 1 on its own, not wait for them to click Pay and be told no.
+  // The server has already released the unit by this point; the ref keeps this to a
+  // single fire even though the clock ticks every second.
+  const expiryHandled = useRef(false);
+  useEffect(() => {
+    if (!windowClosed || expiryHandled.current) return;
+    expiryHandled.current = true;
+    onExhausted?.("window");
+  }, [windowClosed, onExhausted]);
 
   /** Idempotent: submitBooking() with the same reservationKey always returns the SAME
    * booking, so calling this again on a later attempt is a no-op fast path once the
@@ -205,7 +216,7 @@ export function RazorpayCheckout({
             if (failRes.ok && failRes.attemptsExhausted) {
               setStatus("error");
               setError("Payment was not completed after 3 attempts. This reservation has been released — please start over.");
-              onExhausted?.();
+              onExhausted?.("attempts");
             }
           } catch {
             // Non-fatal — the customer can still retry; the webhook (if the attempt

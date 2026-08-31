@@ -361,6 +361,14 @@ export const DEFAULT_VEHICLES_ROSTER: Vehicle[] = [
  * Batched deliberately: the SQLite version ran two queries per vehicle, which over
  * HTTP would be forty round trips to render the fleet page.
  */
+/** Statuses that make a unit unbookable on EVERY date. "booked" is deliberately not
+ * one of them: it records that the unit is physically out on a current rental, which
+ * says nothing about a window that does not overlap it — occupancy for the requested
+ * dates is decided by bookedUnitIds below. Treating "booked" as permanent made one
+ * handover today remove the unit from every future date. */
+const PERMANENTLY_UNBOOKABLE_UNIT_STATUSES = new Set(["maintenance", "blocked", "unavailable", "inactive", "archived"]);
+const UNIT_BOOKABLE = (status: string) => !PERMANENTLY_UNBOOKABLE_UNIT_STATUSES.has(String(status || "available"));
+
 async function hydrateVehicles(
   rows: RawVehicle[],
   availabilityWindow?: { pickupAt: string; returnAt: string }
@@ -584,7 +592,7 @@ async function hydrateVehicles(
     // With no units at all there is nothing to derive from, so the vehicle-level status
     // and its primary branch remain the only available signal.
     const activeUnits = hasUnits
-      ? vUnits.filter((u) => u.status === "available" && !bookedUnitIds.has(Number(u.id)) && !branchMap.get(u.current_branch_id || 0)?.blocked).length
+      ? vUnits.filter((u) => UNIT_BOOKABLE(u.status) && !bookedUnitIds.has(Number(u.id)) && !branchMap.get(u.current_branch_id || 0)?.blocked).length
       : (branchBlocked || isVehicleUnavailable ? 0 : totalUnits);
 
     // Previously read `branchBlocked || isVehicleUnavailable || activeUnits === 0`.
@@ -614,7 +622,7 @@ async function hydrateVehicles(
         const entry = countsByBranch.get(u.current_branch_id) ?? { total: 0, available: 0 };
         entry.total += 1;
         const isUnitBooked = bookedUnitIds.has(Number(u.id));
-        if (u.status === "available" && !isUnitBooked) entry.available += 1;
+        if (UNIT_BOOKABLE(u.status) && !isUnitBooked) entry.available += 1;
         countsByBranch.set(u.current_branch_id, entry);
       }
       for (const [bId, stats] of countsByBranch.entries()) {

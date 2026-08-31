@@ -1587,3 +1587,106 @@ test(
     }
   }
 );
+
+test(
+  "Test 14 — a booking OUTSIDE the requested window must not make the vehicle read as unavailable",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // The bug this guards: getVehicleById()/hydrateVehicles() without a window ask
+    // "is this vehicle out at ANY point from now on". A single-unit vehicle with a
+    // booking in October then reported status "unavailable" for a September request —
+    // which surfaced in the booking form as "The selected vehicle is currently
+    // unavailable or the branch is temporarily blocked".
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      // Occupy the unit in OCTOBER.
+      const october = await createBooking({
+        vehicleId: vehId,
+        pickupAt: "2033-10-10T08:00:00+05:30",
+        returnAt: "2033-10-12T08:00:00+05:30",
+        customer: { name: `${TAG} Oct`, phone: testPhone(1401) },
+        idempotencyKey: `${TAG}-t14`,
+      });
+      bookingIds.push(october.bookingId); customerIds.push(october.customerId);
+
+      // Ask about SEPTEMBER — no overlap at all.
+      const sept = { pickupAt: "2033-09-10T08:00:00+05:30", returnAt: "2033-09-12T08:00:00+05:30" };
+      const dated = await getVehicleById(vehId, true, sept);
+      assert.ok(dated, "the vehicle must still be found");
+      assert.equal(dated!.status, "available", "a booking outside the window must not mark the vehicle unavailable");
+      assert.ok((dated!.available_units ?? 0) > 0, `expected free capacity in September, got ${dated!.available_units}`);
+
+      // And the window is genuinely respected in the other direction: asking about the
+      // dates that ARE booked must report no capacity.
+      const clash = await getVehicleById(vehId, true, { pickupAt: "2033-10-10T08:00:00+05:30", returnAt: "2033-10-12T08:00:00+05:30" });
+      assert.equal(clash!.available_units, 0, "the vehicle must report no capacity for its own booked dates");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);
+
+test(
+  "Test 15 — a unit physically out on a rental is still bookable for a non-overlapping window",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // The bug this guards: handover sets vehicle_units.status (and used to set
+    // vehicles.status) to "booked", and both the RPC and hydrateVehicles treated that
+    // as a date-blind gate. One rental today therefore removed the vehicle from EVERY
+    // future date — "blocking the whole timeline" — even though occupancy is already
+    // decided per-date by the bookings/availability_blocks checks.
+    const { vehId, unitIds } = await makeConcurrencyTestVehicle(1);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      // Book September and mark it handed over, exactly as the CRM does at pickup.
+      const sept = await createBooking({
+        vehicleId: vehId,
+        pickupAt: "2033-09-10T08:00:00+05:30",
+        returnAt: "2033-09-12T08:00:00+05:30",
+        customer: { name: `${TAG} Out`, phone: testPhone(1501) },
+        idempotencyKey: `${TAG}-t15`,
+      });
+      bookingIds.push(sept.bookingId); customerIds.push(sept.customerId);
+
+      const out = await rest(`vehicle_units?id=eq.${unitIds[0]}`, {
+        method: "PATCH", body: JSON.stringify({ status: "booked" }),
+      });
+      assert.ok(out.ok, `could not mark the unit out: ${JSON.stringify(out.body)}`);
+
+      // A window that does NOT overlap the rental must still be claimable.
+      const nov = await rpc("reserve_vehicle_unit_slot", {
+        p_vehicle_id: vehId, p_pickup_at: "2033-11-10T08:00:00+05:30",
+        p_return_at: "2033-11-12T08:00:00+05:30", p_branch_id: null,
+      });
+      const novRows = Array.isArray(nov.body) ? nov.body : [];
+      assert.equal(novRows.length, 1, "a unit out on another rental must still be bookable for a non-overlapping window");
+      await rest(`availability_blocks?id=eq.${novRows[0].block_id}`, { method: "DELETE" });
+
+      // And the dates it IS out for must still be refused.
+      const clash = await rpc("reserve_vehicle_unit_slot", {
+        p_vehicle_id: vehId, p_pickup_at: "2033-09-11T08:00:00+05:30",
+        p_return_at: "2033-09-12T08:00:00+05:30", p_branch_id: null,
+      });
+      assert.equal((Array.isArray(clash.body) ? clash.body : []).length, 0, "the dates the unit is genuinely out for must stay blocked");
+
+      // A genuinely date-blind reason must still block every date.
+      await rest(`vehicle_units?id=eq.${unitIds[0]}`, { method: "PATCH", body: JSON.stringify({ status: "maintenance" }) });
+      const maint = await rpc("reserve_vehicle_unit_slot", {
+        p_vehicle_id: vehId, p_pickup_at: "2033-11-10T08:00:00+05:30",
+        p_return_at: "2033-11-12T08:00:00+05:30", p_branch_id: null,
+      });
+      assert.equal((Array.isArray(maint.body) ? maint.body : []).length, 0, "maintenance must still block every date");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);

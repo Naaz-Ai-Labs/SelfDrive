@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sbSelectOne, sbUpdate } from "@/lib/supabase-rest";
+import { sbSelectOne, sbUpdate, sbRpc } from "@/lib/supabase-rest";
 import { razorpayConfigured } from "@/lib/razorpay";
 import { requireGatewayKey } from "@/lib/gateway-auth";
 import { epochSecondsToUtcIso, nowUtcIso } from "@/lib/time";
@@ -78,6 +78,11 @@ export async function GET(req: NextRequest) {
   if (!keyId || !keySecret) {
     return NextResponse.json({ ok: false, error: "Razorpay credentials are incomplete." }, { status: 500 });
   }
+
+  // Reservations whose 15-minute window lapsed with no payment. Runs here too so the
+  // CRM self-corrects even on a day with no new bookings to trigger the sweep.
+  const sweptReservations = await sbRpc<number>("release_expired_reservations", {});
+  if (!sweptReservations.ok) console.error(`[sync] expired-reservation sweep failed — ${sweptReservations.error}`);
 
   let items: any[];
   try {
@@ -175,6 +180,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: failures.length === 0,
     syncedRazorpayCount,
+    expiredReservationsReleased: sweptReservations.ok ? sweptReservations.data : null,
     orphanCount: orphans.length,
     orphans,
     failures,
