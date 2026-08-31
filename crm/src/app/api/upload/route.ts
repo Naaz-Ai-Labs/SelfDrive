@@ -5,9 +5,23 @@ import { randomToken } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/auth";
 import { getPortalSession } from "@/lib/portal-actions";
 import { getWritableUploadsDir } from "@/lib/uploads-dir";
+import { PUBLIC_MEDIA_BUCKET, PRIVATE_DOCS_BUCKET } from "@/lib/storage-buckets";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 const MAX_BYTES = 8 * 1024 * 1024;
+
+/** Folders that carry customer identity/agreement data and must never be public,
+ * regardless of the request's own folder string. SignedDocumentUploader posts here
+ * with folder="signed_agreements" (a scanned, signed rental agreement — name,
+ * signature, ID details) and this route used to upload it straight into the public
+ * vehicle-photos bucket alongside marketing photos, with a public URL handed back
+ * and rendered as a direct link in the CRM UI. */
+const PRIVATE_FOLDER_PREFIXES = ["signed_agreements", "documents", "licence", "aadhaar", "govt_id", "id_proof"];
+
+function isPrivateFolder(folder: string): boolean {
+  const lower = folder.toLowerCase();
+  return PRIVATE_FOLDER_PREFIXES.some((p) => lower === p || lower.startsWith(`${p}/`) || lower.startsWith(`${p}s/`));
+}
 
 export async function POST(req: NextRequest) {
   // Uploads happen either from an authenticated staff/employee session (inspection photos,
@@ -50,6 +64,9 @@ export async function POST(req: NextRequest) {
     targetSubfolder = `uploads/${dateStr}`;
   }
 
+  const isPrivate = isPrivateFolder(targetSubfolder) || (categoryParam ? isPrivateFolder(categoryParam) : false);
+  const bucketName = isPrivate ? PRIVATE_DOCS_BUCKET : PUBLIC_MEDIA_BUCKET;
+
   const rawBaseName = file.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 24) : "image";
   const fileName = `${rawBaseName}_${nowStamp}_${cleanRandom}.${ext}`;
   const structuredPath = `${targetSubfolder}/${fileName}`;
@@ -62,14 +79,14 @@ export async function POST(req: NextRequest) {
   fs.writeFileSync(path.join(localTargetDir, fileName), buf);
 
   let supabasePublicUrl: string | null = null;
+  let uploadedToPrivateBucket = false;
   const { supabaseAdmin } = await import("@/lib/supabase");
 
   if (supabaseAdmin) {
     try {
-      const bucketName = "vehicle-photos";
       const { data: buckets } = await supabaseAdmin.storage.listBuckets();
       if (!buckets?.some((b) => b.name === bucketName)) {
-        await supabaseAdmin.storage.createBucket(bucketName, { public: true });
+        await supabaseAdmin.storage.createBucket(bucketName, { public: !isPrivate });
       }
 
       // Upload file to Supabase Storage at structured path
@@ -78,9 +95,16 @@ export async function POST(req: NextRequest) {
         .upload(structuredPath, buf, { contentType: file.type, upsert: true });
 
       if (!uploadErr && uploadData) {
-        const { data: pubUrl } = supabaseAdmin.storage.from(bucketName).getPublicUrl(structuredPath);
-        if (pubUrl?.publicUrl) {
-          supabasePublicUrl = pubUrl.publicUrl;
+        if (isPrivate) {
+          // A customer document/signed agreement must never get a direct public URL —
+          // it is served only through /api/files/doc, which checks for a staff session
+          // before streaming it out of the private bucket.
+          uploadedToPrivateBucket = true;
+        } else {
+          const { data: pubUrl } = supabaseAdmin.storage.from(bucketName).getPublicUrl(structuredPath);
+          if (pubUrl?.publicUrl) {
+            supabasePublicUrl = pubUrl.publicUrl;
+          }
         }
       }
     } catch (err: any) {
@@ -89,7 +113,8 @@ export async function POST(req: NextRequest) {
   }
 
   const relativeLocalPath = `/api/files/${structuredPath}`;
-  const finalPath = supabasePublicUrl ?? relativeLocalPath;
+  const privateDocPath = `/api/files/doc?p=${encodeURIComponent(structuredPath)}`;
+  const finalPath = uploadedToPrivateBucket ? privateDocPath : (supabasePublicUrl ?? relativeLocalPath);
 
   return NextResponse.json({
     ok: true,

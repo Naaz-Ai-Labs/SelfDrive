@@ -241,104 +241,6 @@ test(
 );
 
 test(
-  "two concurrent reservations for a 1-unit vehicle: exactly one wins",
-  {
-    skip: !CONFIGURED && "not configured",
-  },
-  async () => {
-    const pickup = "2030-01-10T08:00";
-    const ret = "2030-01-11T08:00";
-
-    // Fired together on purpose — this is the double-booking race.
-    // Before the advisory lock existed, both callers passed the
-    // availability check and both bookings were confirmed against
-    // one physical vehicle.
-    const [a, b] = await Promise.all([
-      rpc("reserve_vehicle_slot", {
-        p_vehicle_id: vehicleId,
-        p_pickup_at: pickup,
-        p_return_at: ret,
-      }),
-      rpc("reserve_vehicle_slot", {
-        p_vehicle_id: vehicleId,
-        p_pickup_at: pickup,
-        p_return_at: ret,
-      }),
-    ]);
-
-    assert.ok(
-      a.ok && b.ok,
-      `reserve_vehicle_slot missing — run the migrations. ${JSON.stringify(
-        a.body
-      )} ${JSON.stringify(b.body)}`
-    );
-
-    const winners = [a.body, b.body].filter(
-      (x) => x !== null && x !== undefined
-    );
-
-    assert.equal(
-      winners.length,
-      1,
-      `expected exactly one winner, got ${winners.length}`
-    );
-  }
-);
-
-test(
-  "an expired hold stops blocking inventory",
-  {
-    skip: !CONFIGURED && "not configured",
-  },
-  async () => {
-    const pickup = "2030-02-10T08:00";
-    const ret = "2030-02-11T08:00";
-
-    const claim = await rpc(
-      "reserve_vehicle_slot",
-      {
-        p_vehicle_id: vehicleId,
-        p_pickup_at: pickup,
-        p_return_at: ret,
-      }
-    );
-
-    assert.ok(
-      claim.body,
-      "first claim should succeed"
-    );
-
-    const holdId = Number(claim.body);
-
-    // Backdate the hold: simulates a lambda that died
-    // between claiming and linking.
-    await rest(
-      `availability_blocks?id=eq.${holdId}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({
-          expires_at: "2020-01-01T00:00:00Z",
-        }),
-      }
-    );
-
-    const second = await rpc(
-      "reserve_vehicle_slot",
-      {
-        p_vehicle_id: vehicleId,
-        p_pickup_at: pickup,
-        p_return_at: ret,
-      }
-    );
-
-    assert.ok(
-      second.body,
-      "a lapsed hold must not block the unit forever"
-    );
-  }
-);
-
-test(
   "cancelling a booking releases its vehicle",
   {
     skip: !CONFIGURED && "not configured",
@@ -1532,6 +1434,65 @@ test(
       }
     } finally {
       await cleanupConcurrencyTestVehicle(vehId, [booking.bookingId], [booking.customerId]);
+    }
+  }
+);
+test(
+  "Test 12 — a Pending payment reservation older than 15 minutes stops blocking its unit, and the sweep releases it",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    const pickup = "2033-06-10T08:00:00+05:30";
+    const ret = "2033-06-12T08:00:00+05:30";
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      const first = await createBooking({
+        vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+        customer: { name: `${TAG} TTL`, phone: testPhone(1201) },
+        idempotencyKey: `${TAG}-t12-a`,
+      });
+      bookingIds.push(first.bookingId); customerIds.push(first.customerId);
+
+      // Fresh reservation on the only unit: a different customer must be refused.
+      await assert.rejects(
+        createBooking({
+          vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+          customer: { name: `${TAG} TTL2`, phone: testPhone(1202) },
+          idempotencyKey: `${TAG}-t12-b`,
+        }),
+        /unavailable|not available/i,
+        "a reservation inside its 15-minute TTL must still hold the unit"
+      );
+
+      // Backdate past the TTL. Nothing else changes — no sweep has run yet.
+      const backdated = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+      const aged = await rest(`bookings?id=eq.${first.bookingId}`, {
+        method: "PATCH", body: JSON.stringify({ created_at: backdated }),
+      });
+      assert.ok(aged.ok, `could not backdate the reservation: ${JSON.stringify(aged.body)}`);
+
+      // The RPC itself must now ignore it — this is the TTL enforcement point, and it
+      // works without any sweep/cron having run.
+      const second = await createBooking({
+        vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+        customer: { name: `${TAG} TTL2`, phone: testPhone(1202) },
+        idempotencyKey: `${TAG}-t12-b`,
+      });
+      bookingIds.push(second.bookingId); customerIds.push(second.customerId);
+      assert.notEqual(second.bookingId, first.bookingId, "an expired reservation must not be handed back as the winner");
+
+      // And the sweep formally releases the abandoned one rather than leaving it
+      // sitting in the CRM as Pending payment forever.
+      const swept = await rpc("release_expired_reservations", {});
+      assert.ok(swept.ok, `release_expired_reservations must exist: ${JSON.stringify(swept.body)}`);
+      const after = await rest(`bookings?id=eq.${first.bookingId}&select=status`);
+      assert.equal((after.body as Array<{ status: string }>)[0].status, "Rejected", "the swept reservation must end up Rejected");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
     }
   }
 );

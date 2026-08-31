@@ -67,12 +67,17 @@ export async function getBookingTrackingData(bookingNo: string): Promise<Trackin
   if (supabaseUrl && supabaseKey) {
     try {
       const sb = createClient(supabaseUrl, supabaseKey);
-      let query = sb.from("bookings").select("*, vehicles(*), customers(*)");
-      if (/^\d+$/.test(cleanNo)) {
-        query = query.eq("id", Number(cleanNo));
-      } else {
-        query = query.eq("booking_no", cleanNo);
-      }
+      // Never matched on the raw numeric id — this fallback is reachable by anyone
+      // holding (or guessing) a booking reference, and the primary key is a small,
+      // sequential integer. Matching it directly let /track/1, /track/2, ... walk
+      // every booking's name/vehicle/dates/amounts (this query also selects the full
+      // customer row, phone included). booking_no is long and non-sequential, so it
+      // isn't practically enumerable the same way. Still tolerates a bare numeric
+      // suffix typed without its "BK-" prefix, matched against booking_no itself, not id.
+      const query = sb
+        .from("bookings")
+        .select("*, vehicles(*), customers(*)")
+        .or(/^\d+$/.test(cleanNo) ? `booking_no.eq.${cleanNo},booking_no.eq.BK-${cleanNo}` : `booking_no.eq.${cleanNo}`);
       const { data: b } = await query.single();
       if (b) {
         const cust = b.customers || {};

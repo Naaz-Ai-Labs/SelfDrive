@@ -38,7 +38,12 @@ async function ownedBooking(customerId: number | null, bookingId: number) {
     notes: raw.notes === null || raw.notes === undefined ? null : String(raw.notes),
   };
 
-  if (booking.customer_id && customerId && booking.customer_id !== customerId) {
+  // Both ids must be present AND equal. The previous form short-circuited to
+  // "authorised" whenever EITHER side was null — so any logged-in customer could
+  // cancel, refund or file tickets against a booking with a null customer_id (which
+  // the payment auto-recovery path can legitimately produce), and a session with an
+  // unresolved customerId was authorised against every booking in the system.
+  if (!customerId || booking.customer_id !== customerId) {
     return { error: "Not authorised for this booking." } as const;
   }
   return { booking } as const;

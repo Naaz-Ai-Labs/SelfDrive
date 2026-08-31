@@ -386,6 +386,20 @@ async function hydrateVehicles(
       `&pickup_at=lt.${encodeURIComponent(availabilityWindow.returnAt)}`
     : `&return_at=gte.${encodeURIComponent(nowIso)}`;
 
+  // Reservation TTL, mirroring reserve_vehicle_unit_slot: a "Pending payment" booking
+  // older than 15 minutes with no money against it is an abandoned reservation and
+  // must stop counting as occupancy. Without this the RPC would happily re-reserve the
+  // unit while this read still reported it taken — the listing would show "0 left"
+  // forever, and createBooking()’s own status pre-check (which calls through here)
+  // would refuse the booking before the TTL-aware RPC ever ran.
+  //
+  // paid_amount is the guard rather than a payments-table lookup, which PostgREST
+  // cannot express inline: any booking carrying money keeps its unit, so a payment
+  // captured microseconds before its status flips can never have its unit freed.
+  const ttlCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const reservationTtlFilter =
+    `&or=(status.neq.${encodeURIComponent("Pending payment")},created_at.gte.${encodeURIComponent(ttlCutoff)},paid_amount.gt.0)`;
+
   // Same question, asked of availability_blocks instead of bookings: is this unit/vehicle
   // taken off sale during the window. Column names differ (starts_at/ends_at rather than
   // pickup_at/return_at) but the overlap logic is identical.
@@ -406,7 +420,7 @@ async function hydrateVehicles(
     ),
     sbSelect<{ vehicle_id: number; branch_id: number | null; vehicle_unit_id: number | null }>(
       "bookings",
-      `select=vehicle_id,branch_id,vehicle_unit_id&vehicle_id=${idPredicate}&status=${inList(HOLDING_STATUSES)}${holdsFilter}`
+      `select=vehicle_id,branch_id,vehicle_unit_id&vehicle_id=${idPredicate}&status=${inList(HOLDING_STATUSES)}${holdsFilter}${reservationTtlFilter}`
     ),
     sbSelect<{ id: number; vehicle_id: number; current_branch_id: number | null; status: string; registration_no?: string; unit_identifier?: string }>(
       "vehicle_units",

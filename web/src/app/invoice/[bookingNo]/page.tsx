@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 
 import { gatewayGet } from "@/lib/gateway";
 import { formatINR, formatDateTime } from "@/lib/utils";
-import { createClient } from "@supabase/supabase-js";
-import { cacheGet, cacheSet } from "@/lib/redis";
 import { InvoicePrintButton } from "@/components/customer/InvoicePrintButton";
 
 export const metadata: Metadata = { title: "Invoice", robots: { index: false, follow: false } };
@@ -21,128 +19,24 @@ export default async function InvoicePage(props: { params: Promise<{ bookingNo: 
   const params = await props.params;
   const bookingNo = params.bookingNo;
 
+  // An invoice is a customer-specific tax document. It is fetched ONLY through the
+  // authorized gateway route, which verifies the bearer session owns this booking.
+  //
+  // Removed from here, both of which bypassed that check entirely:
+  //   - a Redis read of `session:invoice:<bookingNo>` performed BEFORE any auth, keyed
+  //     only by booking number, holding the customer name/phone/email/address for 24h,
+  //     so anyone hitting /invoice/<any booking no> got the cached PII of whoever
+  //     viewed it last, with no session at all;
+  //   - a direct Supabase fallback that re-selected `customers(*)` with no ownership
+  //     check and matched on the raw sequential primary key, making /invoice/1,
+  //     /invoice/2, ... walk every customer PII record.
+  // Failing closed (redirect to the portal) is the correct behaviour for PII when the
+  // CRM is unreachable.
   let invoiceData: InvoiceResponse | null = null;
-
-  // 1. Try Upstash Redis Session Cache first
   try {
-    const cached = await cacheGet<InvoiceResponse>(`session:invoice:${bookingNo}`);
-    if (cached && cached.booking) {
-      invoiceData = cached;
-    }
+    const res = await gatewayGet<InvoiceResponse>(`/api/gateway/v1/customer/invoice/${encodeURIComponent(bookingNo)}`, { auth: true });
+    if (res && res.booking) invoiceData = res;
   } catch {}
-
-  // 2. Primary Gateway Attempt
-  if (!invoiceData) {
-    try {
-      const res = await gatewayGet<InvoiceResponse>(`/api/gateway/v1/customer/invoice/${encodeURIComponent(bookingNo)}`, { auth: true });
-      if (res && res.booking) {
-        invoiceData = res;
-      }
-    } catch {}
-  }
-
-  // 3. High-Availability Direct Supabase PostgreSQL Fallback
-  if (!invoiceData) {
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-    if (supabaseUrl && supabaseKey) {
-      try {
-        const supabase = createClient(supabaseUrl, supabaseKey);
-
-        let query = supabase.from("bookings").select("*, vehicles(*), customers(*)");
-        if (/^\d+$/.test(bookingNo)) {
-          query = query.eq("id", Number(bookingNo));
-        } else {
-          query = query.eq("booking_no", bookingNo);
-        }
-
-        const { data: b } = await query.single();
-
-        if (b) {
-          const cust = b.customers || {};
-          const veh = b.vehicles || {};
-
-          const bookingObj = {
-            id: b.id,
-            booking_no: b.booking_no || `BK-${b.id}`,
-            customer_name: cust.name || b.name || "Valued Customer",
-            customer_phone: cust.phone || b.phone || "",
-            customer_email: cust.email || b.email || "",
-            customer_address: cust.address || "",
-            vehicle_name: veh.name || `Vehicle #${b.vehicle_id || 1}`,
-            registration_no: veh.registration_no || "",
-            pickup_at: b.pickup_at,
-            return_at: b.return_at,
-            // PostgREST returns NUMERIC columns as STRINGS, so "0.00" is truthy and
-            // `a || b` silently picks the wrong field. Coerce with Number(x ?? 0)
-            // instead. Never default a money field to an invented figure — this is a
-            // tax document, and the previous ||1000 / ||60 defaults could print
-            // amounts the customer was never charged.
-            base_amount: Number(b.base_amount ?? 0),
-            other_fees_amount: Number(b.surcharge_amount ?? b.other_fees_amount ?? 0),
-            extra_km_amount: Number(b.extra_km_amount ?? 0),
-            late_fee_amount: Number(b.late_fee_amount ?? 0),
-            damage_amount: Number(b.damage_amount ?? 0),
-            gst_amount: Number(b.gst_amount ?? 0),
-            discount_amount: Number(b.discount_amount ?? 0),
-            total_amount: Number(b.total_amount ?? 0),
-            deposit_amount: Number(b.deposit_amount ?? 0),
-            paid_amount: Number(b.paid_amount ?? 0),
-          };
-
-          // A booking with no total is not renderable as an invoice. Fall through to
-          // the error path rather than presenting fabricated figures as a tax invoice.
-          if (!Number.isFinite(bookingObj.total_amount) || bookingObj.total_amount <= 0) {
-            throw new Error(`Booking ${bookingNo} has no usable total_amount for invoicing`);
-          }
-
-          const invoiceObj = {
-            invoice_no: `INV-${new Date().getFullYear()}-${String(b.id).padStart(5, "0")}`,
-            created_at: b.created_at || new Date().toISOString(),
-          };
-
-          // Read the real business details rather than hardcoding them. The literals
-          // here were "+91 98452 10001" / "support@darshhholiday.com", neither of
-          // which is the business's actual contact — so a customer whose invoice
-          // rendered through this fallback was given a phone number that does not
-          // reach anyone. Falls back to the settings row, then to the known-good
-          // values, and never to the stale pair.
-          let businessObj: Record<string, unknown> = {
-            name: "Darshh Holiday",
-            address: "Sakleshpura & Hassan, Hassan District, Karnataka",
-            phone: "+91 76768 75595",
-            email: "hello@darshhrentals.in",
-          };
-          try {
-            const { data: setting } = await supabase
-              .from("settings")
-              .select("value")
-              .eq("key", "business")
-              .single();
-            const parsed = typeof setting?.value === "string" ? JSON.parse(setting.value) : setting?.value;
-            if (parsed && typeof parsed === "object") businessObj = { ...businessObj, ...parsed };
-          } catch {
-            // Settings unavailable — the defaults above are still correct contact details.
-          }
-
-          invoiceData = {
-            booking: bookingObj,
-            invoice: invoiceObj,
-            business: businessObj,
-          };
-
-          // Cache in Redis for session
-          try {
-            await cacheSet(`session:invoice:${bookingNo}`, invoiceData, 86400);
-            await cacheSet(`session:invoice:${b.id}`, invoiceData, 86400);
-          } catch {}
-        }
-      } catch (err: any) {
-        console.error("Supabase direct invoice lookup error:", err?.message || err);
-      }
-    }
-  }
 
   if (!invoiceData || !invoiceData.booking) {
     redirect("/customer/portal");

@@ -10,7 +10,7 @@ import { getSetting, setSetting } from "./settings";
 import { calculateLateFee, calculateExtraKm } from "./pricing";
 import type { SessionUser } from "./auth";
 import { issueRazorpayRefund } from "./razorpay";
-import { sbSelect, sbSelectOne, sbInsert, sbUpdate, sbUpsert, sbDelete, sbRpc, num } from "./supabase-rest";
+import { sbSelect, sbSelectOne, sbInsert, sbUpdate, sbUpsert, sbDelete, sbRpc, sbCount, num } from "./supabase-rest";
 import type { RestResult } from "./supabase-rest";
 import { cacheInvalidatePrefix } from "./redis";
 import { withIdempotency } from "./idempotency";
@@ -1105,13 +1105,26 @@ export async function deletePricingRule(id: number) {
 /* -------------------------------- Bookings --------------------------------- */
 
 /** Shared tail for the several actions that flip a booking's status and log it. */
+/** Terminal statuses that mean this booking no longer holds a unit. Getting here via
+ * staff action (reject, cancel) previously left the booking's availability_blocks row
+ * and its vehicle_unit_id's static status untouched — the unit stayed permanently
+ * reserved for those exact dates, and if it had reached handover, stuck at "booked"
+ * forever, since the only code path that resets either of those is the payment-
+ * exhaustion release (online flow) or a formal return inspection. Neither applies to
+ * a staff-initiated reject/cancel. */
+const RELEASING_STATUSES = new Set(["Cancelled", "Rejected"]);
+
 async function setBookingStatus(
   bookingId: number,
   status: string,
   patch: Record<string, unknown>,
   history: { userId: number; action: string; detail: unknown }
 ): Promise<ActionError | null> {
-  const updated = await sbUpdate("bookings", `id=eq.${bookingId}`, { status, updated_at: nowIso(), ...patch });
+  const updated = await sbUpdate<{ vehicle_unit_id: number | null }>(
+    "bookings",
+    `id=eq.${bookingId}`,
+    { status, updated_at: nowIso(), ...patch }
+  );
   if (!updated.ok) return fail(updated, "Updating the booking");
   if (updated.data.length === 0) return { ok: false as const, error: `Booking ${bookingId} no longer exists.` };
 
@@ -1123,6 +1136,26 @@ async function setBookingStatus(
     created_at: nowIso(),
   });
   if (!logged.ok) return fail(logged, "Recording the booking history");
+
+  if (RELEASING_STATUSES.has(status)) {
+    const blockDel = await sbDelete("availability_blocks", `booking_id=eq.${bookingId}`);
+    if (!blockDel.ok) console.error(`[actions] booking ${bookingId}: could not release its availability hold — ${blockDel.error}`);
+
+    const unitId = updated.data[0]?.vehicle_unit_id;
+    if (unitId) {
+      // Never blindly flip a unit back to "available" — only if no OTHER active
+      // booking currently has it out (a reassignment could have moved this exact
+      // unit to a different booking in the meantime).
+      const stillHeld = await sbCount(
+        "bookings",
+        `vehicle_unit_id=eq.${unitId}&actual_pickup_at=not.is.null&actual_return_at=is.null&id=neq.${bookingId}`
+      );
+      if (stillHeld.ok && stillHeld.data === 0) {
+        const unitReset = await sbUpdate("vehicle_units", `id=eq.${unitId}`, { status: "available", updated_at: nowIso() });
+        if (!unitReset.ok) console.error(`[actions] booking ${bookingId}: could not reset unit ${unitId} status — ${unitReset.error}`);
+      }
+    }
+  }
 
   try {
     const { cacheInvalidatePrefix } = await import("./redis");
@@ -1136,6 +1169,16 @@ async function setBookingStatus(
 
 export async function updateBookingStatus(id: number, status: string) {
   const user = await staffUser();
+
+  // Same guard changeEnquiryStage() already applies to stages. This is the generic
+  // staff status-change entry point and it wrote whatever string it was handed
+  // straight into bookings.status — HOLDING_STATUSES, BLOCKING_STATUSES and the
+  // reservation RPC all match on exact strings, so an unrecognised status silently
+  // dropped the booking out of availability accounting while it still held a unit.
+  const allowedStatuses = await getSetting<string[]>("booking_statuses", []);
+  if (allowedStatuses.length > 0 && !allowedStatuses.includes(status)) {
+    return { ok: false as const, error: `Unknown booking status: ${status}` };
+  }
 
   const before = await sbSelectOne<{ status: string }>("bookings", `select=status&id=eq.${id}`);
   if (!before.ok) return fail(before, "Reading the booking");

@@ -15,9 +15,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ boo
     return NextResponse.json({ ok: false, error: "Missing booking number." }, { status: 400 });
   }
 
-  // Support matching booking_no verbatim or with/without BK- prefix or ID
+  // Support matching booking_no verbatim or with/without a BK- prefix. Deliberately
+  // never falls back to the raw numeric primary key: this endpoint is unauthenticated
+  // (anyone holding a booking number reaches it), and matching on `id` let anyone walk
+  // /track/1, /track/2, ... and pull up every booking's customer name, vehicle, dates
+  // and financial totals in the system. booking_no is long and non-sequential
+  // (BK-2026-XXXXXXX), so it isn't practically guessable the way a small integer is.
   const filter = /^\d+$/.test(rawRef)
-    ? `or=(booking_no.eq.${rawRef},booking_no.eq.BK-${rawRef},id.eq.${rawRef})`
+    ? `or=(booking_no.eq.${rawRef},booking_no.eq.BK-${rawRef})`
     : `or=(booking_no.eq.${encodeURIComponent(rawRef)},booking_no.eq.${encodeURIComponent(rawRef.replace(/^BK-/i, ""))})`;
 
   const bookingRes = await sbSelectOne<Record<string, any>>(
