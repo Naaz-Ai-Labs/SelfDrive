@@ -64,7 +64,6 @@ export function VehicleForm({
     mileage: vehicle?.mileage ?? "",
     includedKm: vehicle ? String(vehicle.included_km) : "100",
     extraKmRate: vehicle ? String(vehicle.extra_km_rate) : "8",
-    rate12h: vehicle ? String(vehicle.rate_12h) : "",
     rate24h: vehicle ? String(vehicle.rate_24h) : "",
     hourlyRate: vehicle ? String(vehicle.hourly_rate) : "",
     deposit: vehicle ? String(vehicle.deposit) : "2000",
@@ -214,7 +213,6 @@ export function VehicleForm({
           mileage: form.mileage || undefined,
           includedKm: Number(form.includedKm) || 100,
           extraKmRate: Number(form.extraKmRate) || 0,
-          rate12h: Number(form.rate12h) || 0,
           rate24h: Number(form.rate24h) || 0,
           hourlyRate: Number(form.hourlyRate) || 0,
           deposit: Number(form.deposit) || 0,
@@ -539,11 +537,7 @@ export function VehicleForm({
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div>
-            <label className="label">12-hour rate (₹)</label>
-            <input className="input" type="number" value={form.rate12h} onChange={(e) => setForm({ ...form, rate12h: e.target.value })} />
-          </div>
+        <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label className="label">24-hour rate (₹) *</label>
             <input className="input font-bold" type="number" value={form.rate24h} onChange={(e) => setForm({ ...form, rate24h: e.target.value })} />

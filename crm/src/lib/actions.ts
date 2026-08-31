@@ -296,7 +296,11 @@ export async function saveVehicle(input: {
       mileage: input.mileage ?? null,
       included_km: input.includedKm ?? 100,
       extra_km_rate: input.extraKmRate ?? 5,
-      rate_12h: input.rate12h ?? 0,
+      // The 12-hour rate was removed from the vehicle form: nothing in pricing ever
+      // read rate_12h, it was only collected and stored. The column is left in place
+      // (it holds historical values) and is simply no longer written — spreading an
+      // empty object rather than defaulting to 0 keeps existing rows intact on save.
+      ...(input.rate12h !== undefined ? { rate_12h: input.rate12h } : {}),
       rate_24h: input.rate24h ?? 0,
       hourly_rate: input.hourlyRate ?? 0,
       deposit: input.deposit ?? 0,
