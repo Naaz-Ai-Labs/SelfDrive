@@ -354,11 +354,36 @@ export async function saveVehicle(input: {
       const existingUnits = existingUnitsRes.ok ? existingUnitsRes.data : [];
       const prefix = UPPER_SLUG(input.name);
 
+      // uq_vehicle_unit_identifier is UNIQUE on (vehicle_id, unit_identifier) and does
+      // NOT exclude inactive rows, so a soft-deleted unit keeps owning its identifier.
+      // Generating the default "<PREFIX>-002" for a new unit therefore collided with a
+      // previously removed unit and the insert failed — silently, because the result was
+      // never checked. total_units saved as the new number while no unit row appeared,
+      // which is why raising the count in the CRM "did nothing" and the badge stayed at
+      // the old figure (unit rows, not total_units, are what availability counts).
+      const takenRes = await sbSelect<{ unit_identifier: string }>(
+        "vehicle_units",
+        `select=unit_identifier&vehicle_id=eq.${vehicleId}`
+      );
+      const takenIdentifiers = new Set(
+        (takenRes.ok ? takenRes.data : []).map((u) => String(u.unit_identifier).trim().toUpperCase())
+      );
+      const nextFreeIdentifier = (seq: number) => {
+        let n = seq;
+        let candidate = `${prefix}-${String(n).padStart(3, "0")}`;
+        while (takenIdentifiers.has(candidate.toUpperCase())) {
+          n += 1;
+          candidate = `${prefix}-${String(n).padStart(3, "0")}`;
+        }
+        takenIdentifiers.add(candidate.toUpperCase());
+        return candidate;
+      };
+
       if (input.physicalUnits && input.physicalUnits.length > 0) {
         // Save units from the explicit physical units list
         for (let i = 0; i < units; i++) {
           const uInput = input.physicalUnits[i];
-          const unitIdent = uInput?.unit_identifier?.trim() || `${prefix}-${String(i + 1).padStart(3, "0")}`;
+          const unitIdent = uInput?.unit_identifier?.trim() || nextFreeIdentifier(i + 1);
           const regNo = uInput?.registration_no?.trim() || (i === 0 ? input.registrationNo ?? null : null);
           const branch = uInput?.current_branch_id ?? input.branchId ?? null;
           const status = isVehicleUnavailableInput
@@ -369,13 +394,14 @@ export async function saveVehicle(input: {
             const existing = existingUnits[i];
             const branchChanged = existing.current_branch_id !== branch;
 
-            await sbUpdate("vehicle_units", `id=eq.${existing.id}`, {
+            const unitUpd = await sbUpdate("vehicle_units", `id=eq.${existing.id}`, {
               unit_identifier: unitIdent,
               registration_no: regNo,
               current_branch_id: branch,
               status,
               updated_at: nowIso(),
             });
+            if (!unitUpd.ok) return fail(unitUpd, `Updating unit ${unitIdent}`);
 
             if (branchChanged) {
               await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${existing.id}&ends_at=is.null`, { ends_at: nowIso() });
@@ -399,7 +425,9 @@ export async function saveVehicle(input: {
               active: 1,
             });
 
-            if (newUnit.ok && newUnit.data && branch) {
+            if (!newUnit.ok) return fail(newUnit, `Adding unit ${unitIdent}`);
+
+            if (newUnit.data && branch) {
               await sbInsert("branch_allocations", {
                 vehicle_unit_id: Number(newUnit.data.id),
                 branch_id: branch,
@@ -440,7 +468,9 @@ export async function saveVehicle(input: {
 
         if (existingUnits.length < units) {
           for (let i = existingUnits.length + 1; i <= units; i++) {
-            const unitIdent = `${prefix}-${String(i).padStart(3, "0")}`;
+            // Same collision guard as the explicit-units path above: a soft-deleted
+            // unit still owns its identifier under uq_vehicle_unit_identifier.
+            const unitIdent = nextFreeIdentifier(i);
             const newUnit = await sbInsert<{ id: number }>("vehicle_units", {
               vehicle_id: vehicleId,
               unit_identifier: unitIdent,
@@ -449,8 +479,9 @@ export async function saveVehicle(input: {
               current_branch_id: input.branchId ?? null,
               active: 1,
             });
+            if (!newUnit.ok) return fail(newUnit, `Adding unit ${unitIdent}`);
 
-            if (newUnit.ok && newUnit.data && input.branchId) {
+            if (newUnit.data && input.branchId) {
               await sbInsert("branch_allocations", {
                 vehicle_unit_id: Number(newUnit.data.id),
                 branch_id: input.branchId,
