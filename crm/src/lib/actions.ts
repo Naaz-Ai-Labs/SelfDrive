@@ -386,9 +386,20 @@ export async function saveVehicle(input: {
           const unitIdent = uInput?.unit_identifier?.trim() || nextFreeIdentifier(i + 1);
           const regNo = uInput?.registration_no?.trim() || (i === 0 ? input.registrationNo ?? null : null);
           const branch = uInput?.current_branch_id ?? input.branchId ?? null;
-          const status = isVehicleUnavailableInput
-            ? input.status!
-            : (uInput?.status || "available");
+          // The per-unit status the operator set in the form wins.
+          //
+          // This used to stamp input.status onto EVERY unit whenever the vehicle-level
+          // dropdown read unavailable/blocked. Because that dropdown loads from the
+          // stored vehicle status, a vehicle already marked unavailable forced all of
+          // its units unavailable on every subsequent save — including units the
+          // operator had just set to Available, and including brand new ones, which
+          // were born blocked. Adding capacity to such a vehicle could never make it
+          // bookable.
+          //
+          // Blanket propagation still happens in the fallback branch below, where no
+          // per-unit statuses were submitted and the vehicle-level choice is the only
+          // instruction available.
+          const status = uInput?.status || "available";
 
           if (i < existingUnits.length) {
             const existing = existingUnits[i];
