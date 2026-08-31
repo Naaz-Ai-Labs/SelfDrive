@@ -2137,9 +2137,27 @@ export async function createManualBooking(input: {
   /** Staff may collect cash at the counter; recorded through the normal payment path. */
   amountCollected?: number;
   paymentMethod?: string;
+  /**
+   * INSTANT booking: the customer is taking the vehicle right now, not booking for
+   * later. The booking is created, paid and handed over in one step, so it lands in
+   * "Vehicle handed over" with the unit already out — rather than sitting in
+   * "Pending verification" waiting for a handover that has physically happened.
+   */
+  instant?: boolean;
+  /** Required for an instant booking — see the note where the handover is recorded. */
+  startOdometer?: number;
+  fuelLevel?: string;
 }) {
   const user = await staffUser();
   assertCan(user, "staff");
+
+  // Checked before anything is written: recordInspection stores this as
+  // start_odometer, and the return leg only bills extra km when BOTH the start and
+  // end readings exist. Handing a vehicle over without it silently forfeits every
+  // extra-kilometre charge on that rental, with nothing to show why.
+  if (input.instant && (input.startOdometer === undefined || Number.isNaN(input.startOdometer))) {
+    return { ok: false as const, error: "Enter the odometer reading — an instant handover without it cannot bill extra km on return." };
+  }
 
   const { createBooking } = await import("./bookings");
 
@@ -2160,8 +2178,11 @@ export async function createManualBooking(input: {
   }
 
   // Out of the online payment lifecycle, before the TTL sweep can ever see it.
+  // An instant booking goes to Confirmed here and is moved to "Vehicle handed over"
+  // by recordInspection below, so it is never briefly visible as unverified while the
+  // customer is already riding away on the vehicle.
   const promoted = await sbUpdate("bookings", `id=eq.${created.bookingId}`, {
-    status: "Pending verification",
+    status: input.instant ? "Confirmed" : "Pending verification",
     source: "manual",
     payment_window_expires_at: null,
     updated_at: nowIso(),
@@ -2200,9 +2221,35 @@ export async function createManualBooking(input: {
     }
   }
 
-  await logActivity(user.id, "manual_booking_created", "booking", created.bookingId, {
+  // The vehicle is physically leaving now, so record the handover through the SAME
+  // action the scheduled flow uses. That is what sets actual_pickup_at, stores the
+  // start odometer, marks the physical unit as out, and writes the inspection row —
+  // duplicating any of it here would leave the two paths able to drift apart.
+  if (input.instant) {
+    const handover = await recordInspection({
+      bookingId: created.bookingId,
+      kind: "handover",
+      odometer: input.startOdometer,
+      fuelLevel: input.fuelLevel,
+      notes: "Instant counter booking — vehicle handed over at creation.",
+      photos: [],
+    });
+    if (!handover.ok) {
+      // The booking exists, is paid and holds its unit; only the handover leg failed.
+      // Report it rather than pretending the vehicle is still on the lot.
+      return {
+        ok: true as const,
+        bookingId: created.bookingId,
+        bookingNo: created.bookingNo,
+        warning: `Booking created and paid, but the handover was not recorded: ${handover.error}. Record the handover from the booking page before the vehicle leaves.`,
+      };
+    }
+  }
+
+  await logActivity(user.id, input.instant ? "instant_booking_created" : "manual_booking_created", "booking", created.bookingId, {
     booking_no: created.bookingNo,
     staff_name: user.name,
+    instant: Boolean(input.instant),
   });
   refresh();
 

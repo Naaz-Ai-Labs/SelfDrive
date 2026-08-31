@@ -21,6 +21,12 @@ type BranchOption = { id: number; name: string };
  * through the same reservation RPC the website uses, so two staff members (or a
  * staff member and a website customer) racing for the last unit cannot both win.
  * This form only collects what that call needs. */
+/** datetime-local wants local wall-clock, not an ISO/UTC string. */
+function toLocalInput(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+
 export function ManualBookingForm({
   vehicles,
   branches,
@@ -44,6 +50,10 @@ export function ManualBookingForm({
   const [notes, setNotes] = useState("");
   const [amountCollected, setAmountCollected] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [mode, setMode] = useState<"scheduled" | "instant">("scheduled");
+  const [startOdometer, setStartOdometer] = useState("");
+  const [fuelLevel, setFuelLevel] = useState("");
+  const instant = mode === "instant";
 
   const selected = useMemo(
     () => vehicles.find((v) => String(v.id) === vehicleId),
@@ -56,15 +66,20 @@ export function ManualBookingForm({
     setWarning("");
 
     if (!vehicleId) return setError("Select a vehicle.");
-    if (!pickupAt || !returnAt) return setError("Enter both pickup and return date/time.");
-    if (new Date(returnAt) <= new Date(pickupAt)) return setError("Return must be after pickup.");
+    // Instant: the customer is taking it now, so pickup is now by definition.
+    const effectivePickup = instant ? toLocalInput(new Date()) : pickupAt;
+    if (!effectivePickup || !returnAt) return setError("Enter the return date/time.");
+    if (new Date(returnAt) <= new Date(effectivePickup)) return setError("Return must be after pickup.");
+    if (instant && !startOdometer.trim()) {
+      return setError("Enter the odometer reading - without it, extra km cannot be billed when the vehicle comes back.");
+    }
     if (name.trim().length < 2) return setError("Enter the customer name.");
     if (!/^[+\d][\d\s-]{8,15}$/.test(phone.trim())) return setError("Enter a valid mobile number.");
 
     startTransition(async () => {
       const res = await createManualBooking({
         vehicleId: Number(vehicleId),
-        pickupAt,
+        pickupAt: effectivePickup,
         returnAt,
         branchId: branchId ? Number(branchId) : undefined,
         customer: {
@@ -76,6 +91,9 @@ export function ManualBookingForm({
         notes: notes.trim() || undefined,
         amountCollected: amountCollected ? Number(amountCollected) : undefined,
         paymentMethod,
+        instant,
+        startOdometer: startOdometer ? Number(startOdometer) : undefined,
+        fuelLevel: fuelLevel || undefined,
       });
 
       if (!res.ok) {
@@ -91,6 +109,24 @@ export function ManualBookingForm({
     <form onSubmit={submit} className="space-y-5">
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700">{error}</div>}
       {warning && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-800">{warning}</div>}
+
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => setMode("scheduled")} disabled={pending}
+          className={"rounded-full px-4 py-1.5 text-xs font-semibold transition " + (!instant ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200")}>
+          Scheduled booking
+        </button>
+        <button type="button" onClick={() => setMode("instant")} disabled={pending}
+          className={"rounded-full px-4 py-1.5 text-xs font-semibold transition " + (instant ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200")}>
+          Instant - vehicle leaving now
+        </button>
+      </div>
+      {instant && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          Pickup is set to now and the vehicle is handed over as soon as this is saved:
+          the unit is marked out and the booking goes straight to Vehicle handed over.
+          The odometer reading is required so extra km can be billed on return.
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
@@ -119,15 +155,35 @@ export function ManualBookingForm({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Pickup *</label>
-          <input className="input" type="datetime-local" value={pickupAt} onChange={(e) => setPickupAt(e.target.value)} disabled={pending} />
-        </div>
+        {instant ? (
+          <div>
+            <label className="label">Pickup</label>
+            <input className="input bg-ink-50" value="Now" readOnly disabled />
+          </div>
+        ) : (
+          <div>
+            <label className="label">Pickup *</label>
+            <input className="input" type="datetime-local" value={pickupAt} onChange={(e) => setPickupAt(e.target.value)} disabled={pending} />
+          </div>
+        )}
         <div>
           <label className="label">Return *</label>
           <input className="input" type="datetime-local" value={returnAt} onChange={(e) => setReturnAt(e.target.value)} disabled={pending} />
         </div>
       </div>
+
+      {instant && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">Odometer at handover *</label>
+            <input className="input" type="number" min="0" value={startOdometer} onChange={(e) => setStartOdometer(e.target.value)} disabled={pending} />
+          </div>
+          <div>
+            <label className="label">Fuel level</label>
+            <input className="input" value={fuelLevel} onChange={(e) => setFuelLevel(e.target.value)} placeholder="e.g. Half" disabled={pending} />
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
@@ -177,7 +233,7 @@ export function ManualBookingForm({
 
       <div className="flex justify-end">
         <button type="submit" disabled={pending} className="btn-primary text-sm font-semibold px-5 py-2">
-          {pending ? "Creating booking..." : "Create counter booking"}
+          {pending ? "Creating booking..." : instant ? "Create and hand over now" : "Create counter booking"}
         </button>
       </div>
     </form>

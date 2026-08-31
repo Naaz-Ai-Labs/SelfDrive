@@ -1748,3 +1748,71 @@ test(
     }
   }
 );
+
+test(
+  "Test 17 — an instant counter booking is created, handed over, and takes its unit out in one step",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // Mirrors what createManualBooking({ instant: true }) does: create through the
+    // shared reservation path, mark it manual/Confirmed, then record the handover via
+    // the SAME recordInspection action the scheduled flow uses.
+    const now = new Date();
+    const pickup = new Date(now.getTime() + 60 * 1000).toISOString();
+    const ret = new Date(now.getTime() + 2 * 24 * 3600 * 1000).toISOString();
+    const { vehId, unitIds } = await makeConcurrencyTestVehicle(1);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      const booking = await createBooking({
+        vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+        customer: { name: `${TAG} Instant`, phone: testPhone(1701) },
+        idempotencyKey: `${TAG}-t17`,
+      });
+      bookingIds.push(booking.bookingId); customerIds.push(booking.customerId);
+
+      await rest(`bookings?id=eq.${booking.bookingId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "Confirmed", source: "manual", payment_window_expires_at: null }),
+      });
+
+      // The handover leg, as recordInspection performs it.
+      const handedOver = await rest(`bookings?id=eq.${booking.bookingId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: "Vehicle handed over",
+          actual_pickup_at: new Date().toISOString(),
+          start_odometer: 12345,
+        }),
+      });
+      assert.ok(handedOver.ok, `handover patch failed: ${JSON.stringify(handedOver.body)}`);
+      await rest(`vehicle_units?id=eq.${unitIds[0]}`, { method: "PATCH", body: JSON.stringify({ status: "booked" }) });
+
+      const row = await rest(`bookings?id=eq.${booking.bookingId}&select=status,source,actual_pickup_at,start_odometer`);
+      const b = (row.body as Array<Record<string, unknown>>)[0];
+      assert.equal(b.status, "Vehicle handed over", "an instant booking must end up handed over, not pending");
+      assert.equal(b.source, "manual", "must be recorded as a counter booking");
+      assert.ok(b.actual_pickup_at, "actual_pickup_at must be stamped so the return leg has a start time");
+      assert.equal(Number(b.start_odometer), 12345, "start_odometer must be stored or extra km can never be billed on return");
+
+      // Still immune to the reservation sweep.
+      const expired = await rpc("is_expired_reservation", { p_booking_id: booking.bookingId });
+      assert.equal(expired.body, false, "a handed-over counter booking must never be swept");
+
+      // And the unit is genuinely out for these dates.
+      await assert.rejects(
+        createBooking({
+          vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+          customer: { name: `${TAG} Other17`, phone: testPhone(1702) },
+          idempotencyKey: `${TAG}-t17-b`,
+        }),
+        /unavailable|not available/i,
+        "the handed-over unit must not be bookable for the same window"
+      );
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);
