@@ -2256,6 +2256,208 @@ export async function createManualBooking(input: {
   return { ok: true as const, bookingId: created.bookingId, bookingNo: created.bookingNo };
 }
 
+/** Statuses where the vehicle has not physically left yet, so the rental can still be
+ * changed. Once handed over the customer is on the road: changing dates or swapping the
+ * vehicle then is a return-and-rebook, not an edit. */
+const CHANGEABLE_BEFORE_PICKUP = new Set([
+  "Pending verification",
+  "Pending payment",
+  "Payment received",
+  "Confirmed",
+  "Ready for pickup",
+]);
+
+/**
+ * Changes a booking at the counter, before handover: the customer is standing there and
+ * wants a different vehicle, different dates, or their details corrected.
+ *
+ * Ordering is the whole correctness story.
+ *
+ *  1. Claim the NEW slot first, through the same atomic RPC everything else uses, and
+ *     release the old hold only once that has succeeded. Releasing first would mean a
+ *     failed claim leaves the customer with NO reservation — their original vehicle
+ *     given away while they stand at the counter.
+ *  2. Pass p_exclude_booking_id so the booking cannot block itself. Without it, any date
+ *     change on the same vehicle always fails, because its own hold overlaps the window
+ *     it is asking for.
+ *  3. Re-price through calculateQuote, the same function the website and createBooking
+ *     use, never by adjusting the old figure.
+ *
+ * Money is deliberately NOT moved. The new total and the difference are returned for
+ * staff to settle.
+ */
+export async function changeBookingAtPickup(input: {
+  bookingId: number;
+  vehicleId?: number;
+  pickupAt?: string;
+  returnAt?: string;
+  branchId?: number | null;
+  customer?: { name?: string; phone?: string; email?: string; address?: string };
+  reason?: string;
+}) {
+  const user = await staffUser();
+  assertCan(user, "staff");
+
+  const bookingRes = await sbSelectOne<{
+    id: number; status: string; vehicle_id: number; vehicle_unit_id: number | null;
+    branch_id: number | null; pickup_at: string; return_at: string;
+    customer_id: number | null; total_amount: string | number | null; paid_amount: string | number | null;
+  }>(
+    "bookings",
+    `select=id,status,vehicle_id,vehicle_unit_id,branch_id,pickup_at,return_at,customer_id,total_amount,paid_amount&id=eq.${input.bookingId}`
+  );
+  if (!bookingRes.ok) return fail(bookingRes, "Reading the booking");
+  if (!bookingRes.data) return { ok: false as const, error: `Booking ${input.bookingId} no longer exists.` };
+  const booking = bookingRes.data;
+
+  if (!CHANGEABLE_BEFORE_PICKUP.has(booking.status)) {
+    return {
+      ok: false as const,
+      error: `This booking is "${booking.status}" — the vehicle has already gone out or the booking is closed. Record a return first, then create a new booking.`,
+    };
+  }
+
+  // Customer corrections are independent of availability and pricing.
+  if (input.customer && booking.customer_id) {
+    const patch: Record<string, unknown> = { updated_at: nowIso() };
+    if (input.customer.name) patch.name = input.customer.name;
+    if (input.customer.phone) { patch.phone = normalizePhone(input.customer.phone); patch.whatsapp = patch.phone; }
+    if (input.customer.email) patch.email = input.customer.email.toLowerCase().trim();
+    if (input.customer.address) patch.address = input.customer.address;
+    if (Object.keys(patch).length > 1) {
+      const cust = await sbUpdate("customers", `id=eq.${booking.customer_id}`, patch);
+      if (!cust.ok) return fail(cust, "Updating the customer details");
+    }
+  }
+
+  const newVehicleId = input.vehicleId ?? booking.vehicle_id;
+  const newPickupRaw = input.pickupAt ?? booking.pickup_at;
+  const newReturnRaw = input.returnAt ?? booking.return_at;
+  const vehicleChanged = newVehicleId !== booking.vehicle_id;
+  const datesChanged = Boolean(input.pickupAt || input.returnAt);
+
+  if (!vehicleChanged && !datesChanged) {
+    refresh();
+    return { ok: true as const, changed: false as const, message: "Customer details updated." };
+  }
+
+  const { toCanonicalIstIso, parseIstInstant } = await import("./rental-clock");
+  const pickup = parseIstInstant(newPickupRaw);
+  const ret = parseIstInstant(newReturnRaw);
+  if (!pickup || !ret || pickup.getTime() >= ret.getTime()) {
+    return { ok: false as const, error: "Return must be after pickup." };
+  }
+  const canonicalPickup = toCanonicalIstIso(newPickupRaw) || newPickupRaw;
+  const canonicalReturn = toCanonicalIstIso(newReturnRaw) || newReturnRaw;
+
+  const { getVehicleById } = await import("./data");
+  const vehicle = await getVehicleById(newVehicleId, true, { pickupAt: canonicalPickup, returnAt: canonicalReturn });
+  if (!vehicle) return { ok: false as const, error: "Vehicle not found." };
+
+  const branchId = input.branchId !== undefined ? input.branchId : booking.branch_id;
+
+  // 1. Claim the new slot BEFORE giving up the old one.
+  let newBlockId: number | null = null;
+  let newUnitId: number | null = null;
+  const unitClaim = await sbRpc<Array<{ block_id: number; unit_id: number | null }>>("reserve_vehicle_unit_slot", {
+    p_vehicle_id: newVehicleId,
+    p_pickup_at: canonicalPickup,
+    p_return_at: canonicalReturn,
+    p_branch_id: branchId ?? null,
+    p_exclude_booking_id: input.bookingId,
+  });
+  if (unitClaim.ok && Array.isArray(unitClaim.data) && unitClaim.data.length > 0) {
+    newBlockId = Number(unitClaim.data[0].block_id);
+    newUnitId = unitClaim.data[0].unit_id ? Number(unitClaim.data[0].unit_id) : null;
+  }
+  if (!newBlockId) {
+    const claim = await sbRpc<number | null>("reserve_vehicle_slot", {
+      p_vehicle_id: newVehicleId,
+      p_pickup_at: canonicalPickup,
+      p_return_at: canonicalReturn,
+      p_exclude_booking_id: input.bookingId,
+    });
+    if (!claim.ok) return { ok: false as const, error: `Could not check availability: ${claim.error}` };
+    if (claim.data) newBlockId = Number(claim.data);
+  }
+  if (!newBlockId) {
+    // Nothing was released, so the original booking still holds its unit.
+    return { ok: false as const, error: "That vehicle is not free for those dates and branch. The original booking is unchanged." };
+  }
+
+  // 2. Re-price with the authoritative quote, never by adjusting the old total.
+  const { calculateQuote } = await import("./pricing");
+  const quote = await calculateQuote(vehicle, pickup, ret);
+  if (quote.belowWeekendMinimum) {
+    await sbDelete("availability_blocks", `id=eq.${newBlockId}`);
+    return { ok: false as const, error: `Weekend bookings need a minimum of ${quote.weekendMinDays} days for this vehicle.` };
+  }
+
+  const previousTotal = num(booking.total_amount);
+  const newTotal = num(quote.totalAmount);
+
+  const updated = await sbUpdate("bookings", `id=eq.${input.bookingId}`, {
+    vehicle_id: newVehicleId,
+    vehicle_unit_id: newUnitId,
+    branch_id: branchId ?? null,
+    pickup_at: canonicalPickup,
+    return_at: canonicalReturn,
+    base_amount: num(quote.baseAmount),
+    gst_amount: num(quote.gstAmount),
+    deposit_amount: num(quote.depositAmount),
+    other_fees_amount: num(quote.offSchedulePickupFee) + num(quote.gatewayFeeAmount),
+    included_km: num(quote.includedKm),
+    total_amount: newTotal,
+    updated_at: nowIso(),
+  });
+  if (!updated.ok) {
+    await sbDelete("availability_blocks", `id=eq.${newBlockId}`);
+    return fail(updated, "Applying the change to the booking");
+  }
+
+  // 3. Only now is the old hold safe to drop, and the new one is linked.
+  const oldBlocks = await sbDelete("availability_blocks", `booking_id=eq.${input.bookingId}&id=neq.${newBlockId}`);
+  if (!oldBlocks.ok) console.error(`[bookings] ${input.bookingId}: previous hold not released — ${oldBlocks.error}`);
+
+  const linked = await sbUpdate("availability_blocks", `id=eq.${newBlockId}`, {
+    booking_id: input.bookingId,
+    vehicle_unit_id: newUnitId,
+    expires_at: null,
+    notes: null,
+  });
+  if (!linked.ok) console.error(`[bookings] ${input.bookingId}: new hold ${newBlockId} not linked — ${linked.error}`);
+
+  await sbInsert("booking_history", {
+    booking_id: input.bookingId,
+    user_id: user.id,
+    action: "changed_at_pickup",
+    detail: JSON.stringify({
+      staff_name: user.name,
+      reason: input.reason ?? null,
+      from: { vehicle_id: booking.vehicle_id, pickup_at: booking.pickup_at, return_at: booking.return_at, total: previousTotal },
+      to: { vehicle_id: newVehicleId, pickup_at: canonicalPickup, return_at: canonicalReturn, total: newTotal },
+    }),
+    created_at: nowIso(),
+  });
+
+  await logActivity(user.id, "booking_changed_at_pickup", "booking", input.bookingId, {
+    vehicle_changed: vehicleChanged,
+    dates_changed: datesChanged,
+  });
+  refresh();
+
+  // The difference is reported, not charged or refunded — staff settles it.
+  return {
+    ok: true as const,
+    changed: true as const,
+    previousTotal,
+    newTotal,
+    difference: Math.round((newTotal - previousTotal) * 100) / 100,
+    paidSoFar: num(booking.paid_amount),
+    unitId: newUnitId,
+  };
+}
+
 export async function quickApproveBooking(input: { bookingId: number; approve: boolean; notes?: string }) {
   const staff = await staffUser();
 

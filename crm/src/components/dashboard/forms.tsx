@@ -6,7 +6,7 @@ import {
   createManualEnquiry, changeEnquiryStage, assignEnquiry, addEnquiryNote,
   updateBookingStatus, assignBookingManager, approveAfterHours, addManualAdjustment,
   recordInspection, addDamageReport, addPayment, markPaymentPaid,
-  decideRefund, completeRefund, updateProblemTicket,
+  decideRefund, completeRefund, updateProblemTicket, changeBookingAtPickup,
 } from "@/lib/actions";
 import { compressImageFile } from "@/lib/image-compression";
 import { VehicleCameraScanner, type CapturedPhoto } from "./VehicleCameraScanner";
@@ -320,6 +320,92 @@ export function ManualAdjustmentForm({ bookingId }: { bookingId: number }) {
       </div>
       {error && <p className="field-error">{error}</p>}
       <button type="submit" disabled={pending} className="btn-secondary px-4 py-2 text-xs">Record adjustment</button>
+    </form>
+  );
+}
+
+/** Vehicle swap / date change / detail correction at the counter, before handover.
+ * Blank vehicle/date fields mean "keep current" — only what the customer actually
+ * wants changed needs to be touched. */
+export function ChangeBookingForm({
+  bookingId,
+  vehicles,
+}: {
+  bookingId: number;
+  vehicles: Array<{ id: number; name: string }>;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<{ previousTotal: number; newTotal: number; difference: number } | null>(null);
+
+  const [vehicleId, setVehicleId] = useState("");
+  const [pickupAt, setPickupAt] = useState("");
+  const [returnAt, setReturnAt] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [reason, setReason] = useState("");
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setResult(null);
+    startTransition(async () => {
+      const res = await changeBookingAtPickup({
+        bookingId,
+        vehicleId: vehicleId ? Number(vehicleId) : undefined,
+        pickupAt: pickupAt || undefined,
+        returnAt: returnAt || undefined,
+        customer: (name || phone) ? { name: name || undefined, phone: phone || undefined } : undefined,
+        reason: reason.trim() || undefined,
+      });
+      if (!res.ok) { setError(res.error); return; }
+      if (res.changed) setResult({ previousTotal: res.previousTotal, newTotal: res.newTotal, difference: res.difference });
+      router.refresh();
+    });
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="btn-secondary px-4 py-2 text-xs">
+        Change vehicle / dates / details
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-2 rounded-lg border border-ink-200 p-3">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <select className="input" value={vehicleId} onChange={(e) => setVehicleId(e.target.value)}>
+          <option value="">Keep current vehicle</option>
+          {vehicles.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+        </select>
+        <input className="input" type="datetime-local" placeholder="New pickup" value={pickupAt} onChange={(e) => setPickupAt(e.target.value)} />
+        <input className="input" type="datetime-local" placeholder="New return" value={returnAt} onChange={(e) => setReturnAt(e.target.value)} />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <input className="input" placeholder="Correct name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="input" placeholder="Correct phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <input className="input" placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+      </div>
+      {error && <p className="field-error">{error}</p>}
+      {result && (
+        <p className="text-xs font-medium text-ink-700">
+          New total ₹{result.newTotal.toLocaleString("en-IN")} (was ₹{result.previousTotal.toLocaleString("en-IN")}) —{" "}
+          {result.difference > 0 ? `collect ₹${result.difference.toLocaleString("en-IN")} more` :
+            result.difference < 0 ? `refund ₹${Math.abs(result.difference).toLocaleString("en-IN")}` :
+            "no change to the total"}.
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button type="submit" disabled={pending} className="btn-secondary px-4 py-2 text-xs">
+          {pending ? "Checking availability…" : "Apply change"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs text-ink-500 hover:text-ink-900">
+          Cancel
+        </button>
+      </div>
     </form>
   );
 }

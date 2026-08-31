@@ -1692,6 +1692,93 @@ test(
 );
 
 test(
+  "Test 18 — changing a booking's dates: new slot is claimable via exclusion, old hold releasable, re-price is authoritative",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // Mirrors changeBookingAtPickup()'s own sequence exactly (staffUser() needs a
+    // request session, so this drives the same RPC/pricing calls it makes rather than
+    // the action itself): claim the NEW slot with p_exclude_booking_id set to the
+    // booking being changed — without that exclusion, a booking always collides with
+    // its own existing hold on the same vehicle — THEN release the old hold, and
+    // re-price via calculateQuote rather than touching the original total by hand.
+    const oldWindow = { pickup: "2033-06-10T08:00:00+05:30", ret: "2033-06-12T08:00:00+05:30" };
+    const newWindow = { pickup: "2033-06-15T08:00:00+05:30", ret: "2033-06-18T08:00:00+05:30" }; // 3 days, not 2
+    const { vehId, unitIds } = await makeConcurrencyTestVehicle(1);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      const booking = await createBooking({
+        vehicleId: vehId, pickupAt: oldWindow.pickup, returnAt: oldWindow.ret,
+        customer: { name: `${TAG} Change`, phone: testPhone(1801) },
+        idempotencyKey: `${TAG}-t18`,
+      });
+      bookingIds.push(booking.bookingId); customerIds.push(booking.customerId);
+
+      // Without exclusion, the booking's own hold on the SAME dates would still block
+      // this — confirm that first, since it is the whole reason exclusion exists.
+      const withoutExclusion = await rpc("reserve_vehicle_unit_slot", {
+        p_vehicle_id: vehId, p_pickup_at: oldWindow.pickup, p_return_at: oldWindow.ret, p_branch_id: null,
+      });
+      assert.equal(
+        (Array.isArray(withoutExclusion.body) ? withoutExclusion.body : []).length, 0,
+        "sanity check: the vehicle's only unit is legitimately held by the booking's own dates"
+      );
+
+      // The actual sequence: claim new (excluding this booking) BEFORE releasing old.
+      const newClaim = await rpc("reserve_vehicle_unit_slot", {
+        p_vehicle_id: vehId, p_pickup_at: newWindow.pickup, p_return_at: newWindow.ret,
+        p_branch_id: null, p_exclude_booking_id: booking.bookingId,
+      });
+      const newRows = Array.isArray(newClaim.body) ? newClaim.body : [];
+      assert.equal(newRows.length, 1, "the new window must be claimable even though the booking still holds the old one");
+      const newBlockId = newRows[0].block_id;
+
+      // Old booking is UNTOUCHED at this point — exactly the safety property that",
+      // matters if anything below fails.
+      const stillOld = await rest(`bookings?id=eq.${booking.bookingId}&select=pickup_at,return_at`);
+      assert.equal((stillOld.body as Array<{ pickup_at: string }>)[0].pickup_at, "2033-06-10T02:30:00+00:00");
+
+      // Re-price with the real function, not a hand-adjusted total.
+      const vehicle = await getVehicleById(vehId, true, { pickupAt: newWindow.pickup, returnAt: newWindow.ret });
+      assert.ok(vehicle, "vehicle must resolve for the new window");
+      const quote = await calculateQuote(vehicle!, parseIstInstant(newWindow.pickup)!, parseIstInstant(newWindow.ret)!);
+      assert.equal(quote.days, 3, "3-day window must price as 3 days, not carry over the original 2-day total");
+
+      // Apply the change (what the UPDATE + hold-swap in the action does).
+      await rest(`bookings?id=eq.${booking.bookingId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          vehicle_unit_id: newRows[0].unit_id, pickup_at: newWindow.pickup, return_at: newWindow.ret,
+          total_amount: quote.totalAmount,
+        }),
+      });
+      await rest(`availability_blocks?booking_id=eq.${booking.bookingId}&id=neq.${newBlockId}`, { method: "DELETE" });
+      await rest(`availability_blocks?id=eq.${newBlockId}`, {
+        method: "PATCH", body: JSON.stringify({ booking_id: booking.bookingId, expires_at: null }),
+      });
+
+      // Old dates are free again; new dates are genuinely held.
+      const oldFreeAgain = await rpc("reserve_vehicle_unit_slot", {
+        p_vehicle_id: vehId, p_pickup_at: oldWindow.pickup, p_return_at: oldWindow.ret, p_branch_id: null,
+      });
+      const oldFreeRows = Array.isArray(oldFreeAgain.body) ? oldFreeAgain.body : [];
+      assert.equal(oldFreeRows.length, 1, "the original dates must be free once the change is applied");
+      await rest(`availability_blocks?id=eq.${oldFreeRows[0].block_id}`, { method: "DELETE" }); // clean up the probe hold
+
+      const finalRow = await rest(`bookings?id=eq.${booking.bookingId}&select=pickup_at,return_at,total_amount,vehicle_unit_id`);
+      const fb = (finalRow.body as Array<Record<string, unknown>>)[0];
+      assert.equal(Number(fb.total_amount), quote.totalAmount, "stored total must equal the authoritative quote, not an ad-hoc adjustment");
+      assert.equal(Number(fb.vehicle_unit_id), unitIds[0]);
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);
+
+test(
   "Test 16 — a manual counter booking holds its unit and is immune to the 15-minute sweep",
   {
     skip: !CONFIGURED && "not configured",

@@ -3,13 +3,13 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { sbSelect, num } from "@/lib/supabase-rest";
 import { getSetting } from "@/lib/settings";
-import { getStaff } from "@/lib/data";
+import { getStaff, getVehicles } from "@/lib/data";
 import { formatDateTime, formatINR, waLink, timeAgo } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui";
 import { calculateBookingFinancials } from "@/lib/pricing";
 import {
   BookingStatusSelect, BookingManagerSelect, AfterHoursApproval, InspectionForm,
-  ManualAdjustmentForm, DamageReportForm, PaymentForm, MarkPaidButton,
+  ManualAdjustmentForm, DamageReportForm, PaymentForm, MarkPaidButton, ChangeBookingForm,
 } from "@/components/dashboard/forms";
 import { DocumentVerifier } from "@/components/dashboard/DocumentVerifier";
 import { BookingHeaderActions } from "@/components/dashboard/BookingHeaderActions";
@@ -71,10 +71,11 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
   };
   const id = Number(booking.id);
 
-  const [statusSetting, staff, historyRes, inspectionsRes, damagesRes, adjustmentsRes, paymentsRes, documentsRes] =
+  const [statusSetting, staff, activeVehicles, historyRes, inspectionsRes, damagesRes, adjustmentsRes, paymentsRes, documentsRes] =
     await Promise.all([
       getSetting<string[]>("booking_statuses", []),
       getStaff(),
+      getVehicles({}, true),
       sbSelect<Record<string, unknown>>("booking_history", `select=*,users(name)&booking_id=eq.${id}&order=created_at.desc`),
       sbSelect<Record<string, unknown>>("inspections", `select=*&booking_id=eq.${id}&order=created_at.asc`),
       sbSelect<Record<string, unknown>>("damage_reports", `select=*&booking_id=eq.${id}`),
@@ -337,7 +338,14 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
                 <SignedDocumentUploader bookingId={id} existingSignedDocs={signedDocs} />
               </div>
             ) : (
-              <div className="mt-2">
+              <div className="mt-2 space-y-3">
+                {/* Vehicle has not left yet — the rental can still be changed at the
+                   counter. Gone once handover is recorded below (server enforces this
+                   too; the vehicle has physically left by then). */}
+                <ChangeBookingForm
+                  bookingId={id}
+                  vehicles={activeVehicles.map((v) => ({ id: v.id, name: v.name }))}
+                />
                 <InspectionForm bookingId={id} kind="handover" />
               </div>
             )}
