@@ -60,7 +60,7 @@ export function VehicleForm({
     cc: vehicle?.cc ? String(vehicle.cc) : "",
     fuelType: vehicle?.fuel_type ?? "Petrol",
     transmission: vehicle?.transmission ?? "Manual",
-    seats: vehicle ? String(vehicle.seats) : "5",
+    seats: vehicle ? String(vehicle.seats) : "",
     mileage: vehicle?.mileage ?? "",
     includedKm: vehicle ? String(vehicle.included_km) : "100",
     extraKmRate: vehicle ? String(vehicle.extra_km_rate) : "8",
@@ -351,7 +351,16 @@ export function VehicleForm({
             <select
               className="input"
               value={form.categoryId}
-              onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+              onChange={(e) => {
+                // A blanket default of "5" put five seats on every scooter and bike
+                // added through this form. Seat count is a property of the category,
+                // so seed it from the chosen one — and only when the operator has not
+                // already typed a value, so an Ertiga (7) or a Thar (4) is never
+                // overwritten.
+                const catName = (categories.find((c) => String(c.id) === String(e.target.value))?.name ?? "").toLowerCase();
+                const presetSeats = /scooter|bike/.test(catName) ? "2" : /tempo|van/.test(catName) ? "12" : "5";
+                setForm((prev) => ({ ...prev, categoryId: e.target.value, seats: prev.seats || presetSeats }));
+              }}
             >
               <option value="">— Select Category —</option>
               {categories.map((c) => (
