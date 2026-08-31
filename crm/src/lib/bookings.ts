@@ -370,7 +370,19 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
       p_pickup_at: canonicalPickupAt,
       p_return_at: canonicalReturnAt,
     });
-    if (!claim.ok || !claim.data) {
+
+    // claim.ok === false means the RPC call itself failed (a connection-pool
+    // squeeze, a killed PostgREST thread, a network blip) — the RPC never actually
+    // ran to completion, so it has said nothing about whether a unit is free.
+    // claim.ok === true with claim.data === null means it DID run and genuinely
+    // found nothing. These were previously conflated into the same "not available"
+    // message, which dresses up a transient infrastructure hiccup as a false
+    // stock-out and gives the customer no reason to just try again.
+    if (!claim.ok) {
+      throw new Error("We couldn't check availability right now. Please try again in a moment.");
+    }
+
+    if (!claim.data) {
       // Found no free unit. Before treating this as a genuine "sold out", check
       // whether a concurrent caller sharing the SAME idempotency key already won —
       // this caller never got a unit at all (someone else took the last one), but if
