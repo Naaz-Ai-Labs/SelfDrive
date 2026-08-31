@@ -396,9 +396,15 @@ async function hydrateVehicles(
   // paid_amount is the guard rather than a payments-table lookup, which PostgREST
   // cannot express inline: any booking carrying money keeps its unit, so a payment
   // captured microseconds before its status flips can never have its unit freed.
-  const ttlCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  //
+  // Compares against the STORED bookings.payment_window_expires_at — the same single
+  // value is_expired_reservation() and can_start_payment_attempt() use. This used to
+  // recompute the deadline here as Date.now() - 15min, i.e. a second deadline derived
+  // from the Vercel lambda clock while the database derived its own from the Postgres
+  // clock; skew between them meant this read and the reservation RPC could disagree
+  // about whether a reservation was still alive.
   const reservationTtlFilter =
-    `&or=(status.neq.${encodeURIComponent("Pending payment")},created_at.gte.${encodeURIComponent(ttlCutoff)},paid_amount.gt.0)`;
+    `&or=(status.neq.${encodeURIComponent("Pending payment")},payment_window_expires_at.gt.${encodeURIComponent(nowIso)},paid_amount.gt.0)`;
 
   // Same question, asked of availability_blocks instead of bookings: is this unit/vehicle
   // taken off sale during the window. Column names differ (starts_at/ends_at rather than

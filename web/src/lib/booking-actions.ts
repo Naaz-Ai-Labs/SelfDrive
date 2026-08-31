@@ -88,7 +88,7 @@ export async function submitBooking(input: {
    * SAME attempt (double-click, network retry), regenerated only when the customer
    * restarts the flow after abandoning it. Passed straight through to the CRM. */
   idempotencyKey?: string;
-}): Promise<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }> {
+}): Promise<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; paymentWindowExpiresAt?: string | null; error?: string }> {
   // Terms and mandatory documents are enforced here as well as in the CRM, so the
   // emergency path below cannot be used to skip them.
   if (!input.termsAccepted) {
@@ -101,7 +101,7 @@ export async function submitBooking(input: {
 
   // 1. Primary CRM Gateway API Proxy Submission
   try {
-    const res = await gatewayPost<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }>("/api/gateway/v1/booking/submit", input);
+    const res = await gatewayPost<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; paymentWindowExpiresAt?: string | null; error?: string }>("/api/gateway/v1/booking/submit", input);
     if (res && res.ok && res.bookingId) {
       try {
         const { cacheInvalidatePrefix } = await import("./redis");

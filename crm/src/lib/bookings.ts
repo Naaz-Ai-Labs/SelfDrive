@@ -263,12 +263,12 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * quote + insert. A short bounded wait catches the winner reliably without polling
  * indefinitely; if nothing shows up, this genuinely isn't a race, just no availability.
  */
-async function findBookingByIdempotencyKey(key: string): Promise<{ id: number; booking_no: string; customer_id: number } | null> {
+async function findBookingByIdempotencyKey(key: string): Promise<{ id: number; booking_no: string; customer_id: number; payment_window_expires_at: string | null } | null> {
   for (let attempt = 0; attempt < 4; attempt++) {
     if (attempt > 0) await sleep(250);
-    const found = await sbSelectOne<{ id: number; booking_no: string; customer_id: number }>(
+    const found = await sbSelectOne<{ id: number; booking_no: string; customer_id: number; payment_window_expires_at: string | null }>(
       "bookings",
-      `select=id,booking_no,customer_id&idempotency_key=eq.${encodeURIComponent(key)}`
+      `select=id,booking_no,customer_id,payment_window_expires_at&idempotency_key=eq.${encodeURIComponent(key)}`
     );
     if (found.ok && found.data) return found.data;
   }
@@ -279,18 +279,18 @@ async function findBookingByIdempotencyKey(key: string): Promise<{ id: number; b
  * Creates or reuses a customer, computes the quote, and inserts a booking in
  * 'Pending verification' with atomic unit-level slot reservation.
  */
-export async function createBooking(payload: BookingPayload): Promise<{ bookingId: number; bookingNo: string; customerId: number }> {
+export async function createBooking(payload: BookingPayload): Promise<{ bookingId: number; bookingNo: string; customerId: number; paymentWindowExpiresAt: string | null }> {
   // Fast path for a sequential retry of the same logical request (the common case —
   // double-click, browser auto-retry, a client that resubmits after a timeout). The
   // insert loop below additionally handles the true CONCURRENT race, where two
   // callers with the same key both pass this check before either has inserted yet.
   if (payload.idempotencyKey) {
-    const existing = await sbSelectOne<{ id: number; booking_no: string; customer_id: number }>(
+    const existing = await sbSelectOne<{ id: number; booking_no: string; customer_id: number; payment_window_expires_at: string | null }>(
       "bookings",
-      `select=id,booking_no,customer_id&idempotency_key=eq.${encodeURIComponent(payload.idempotencyKey)}`
+      `select=id,booking_no,customer_id,payment_window_expires_at&idempotency_key=eq.${encodeURIComponent(payload.idempotencyKey)}`
     );
     if (existing.ok && existing.data) {
-      return { bookingId: existing.data.id, bookingNo: existing.data.booking_no, customerId: existing.data.customer_id };
+      return { bookingId: existing.data.id, bookingNo: existing.data.booking_no, customerId: existing.data.customer_id, paymentWindowExpiresAt: existing.data.payment_window_expires_at };
     }
   }
 
@@ -402,7 +402,7 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
       // through to the real "not available" error below.
       if (payload.idempotencyKey) {
         const raced = await findBookingByIdempotencyKey(payload.idempotencyKey);
-        if (raced) return { bookingId: raced.id, bookingNo: raced.booking_no, customerId: raced.customer_id };
+        if (raced) return { bookingId: raced.id, bookingNo: raced.booking_no, customerId: raced.customer_id, paymentWindowExpiresAt: raced.payment_window_expires_at };
       }
       throw new Error("This vehicle is not available for the selected dates and branch.");
     }
@@ -451,9 +451,11 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   let bookingNo = "";
   let lastError = "";
   let racedCustomerId: number | null = null;
+  let racedWindowExpiresAt: string | null = null;
+  let windowExpiresAt: string | null = null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const candidate = makeBookingNo();
-    const inserted = await sbInsert<{ id: number; booking_no: string }>("bookings", {
+    const inserted = await sbInsert<{ id: number; booking_no: string; payment_window_expires_at: string | null }>("bookings", {
       ...row,
       booking_no: candidate,
       idempotency_key: payload.idempotencyKey ?? null,
@@ -461,6 +463,9 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
     if (inserted.ok) {
       bookingId = Number(inserted.data?.id);
       bookingNo = String(inserted.data?.booking_no ?? candidate);
+      // Written by the column DEFAULT from the database clock, read back here so the
+      // customer counts down against the exact value the RPC and the attempt gate use.
+      windowExpiresAt = inserted.data?.payment_window_expires_at ?? null;
       break;
     }
     lastError = inserted.error;
@@ -475,6 +480,7 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
         bookingId = raced.id;
         bookingNo = raced.booking_no;
         racedCustomerId = raced.customer_id;
+        racedWindowExpiresAt = raced.payment_window_expires_at;
         break;
       }
     }
@@ -485,7 +491,7 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   // holds one), so release it rather than stranding a phantom hold on the vehicle.
   if (racedCustomerId !== null) {
     await sbDelete("availability_blocks", `id=eq.${claimedBlockId}`);
-    return { bookingId, bookingNo, customerId: racedCustomerId };
+    return { bookingId, bookingNo, customerId: racedCustomerId, paymentWindowExpiresAt: racedWindowExpiresAt };
   }
 
   if (!bookingId || !Number.isFinite(bookingId)) {
@@ -534,7 +540,7 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
     // best-effort
   }
 
-  return { bookingId, bookingNo, customerId };
+  return { bookingId, bookingNo, customerId, paymentWindowExpiresAt: windowExpiresAt };
 }
 
 export async function acceptBookingTerms(bookingId: number, termsVersionId: number): Promise<{ ok: boolean; error?: string }> {

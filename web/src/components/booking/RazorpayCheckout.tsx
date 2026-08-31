@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createBookingPaymentOrder, verifyBookingPayment, reportPaymentAttemptFailed } from "@/lib/payment-actions";
 import { submitBooking } from "@/lib/booking-actions";
 import { formatINR } from "@/lib/utils";
@@ -74,6 +74,23 @@ export function RazorpayCheckout({
   const [reservedBookingId, setReservedBookingId] = useState<number | undefined>(undefined);
   const [reservedBookingNo, setReservedBookingNo] = useState<string | undefined>(undefined);
 
+  // THE deadline, as issued by the database when the reservation was created. Never
+  // recomputed here: a countdown that started its own 15-minute timer on mount would
+  // be a second, drifting deadline, and would keep counting after the server had
+  // already closed the window (or after attempt 3 released the unit early).
+  const [windowExpiresAt, setWindowExpiresAt] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!windowExpiresAt) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [windowExpiresAt]);
+
+  const msLeft = windowExpiresAt ? new Date(windowExpiresAt).getTime() - now : null;
+  const windowClosed = msLeft !== null && msLeft <= 0;
+  const attemptsLeft = MAX_ATTEMPTS - attemptNumber;
+
   /** Idempotent: submitBooking() with the same reservationKey always returns the SAME
    * booking, so calling this again on a later attempt is a no-op fast path once the
    * first call has succeeded. */
@@ -88,10 +105,18 @@ export function RazorpayCheckout({
     }
     setReservedBookingId(res.bookingId);
     setReservedBookingNo(res.bookingNo);
+    setWindowExpiresAt(res.paymentWindowExpiresAt ?? null);
     return res.bookingId;
   }
 
   async function payNow() {
+    // Client-side stop only; the server refuses independently via
+    // can_start_payment_attempt(), which is the actual authority.
+    if (windowClosed) {
+      setStatus("error");
+      setError("The 15-minute payment window for this reservation has expired. Please start a new booking.");
+      return;
+    }
     if (attemptNumber >= MAX_ATTEMPTS) {
       setStatus("error");
       setError("Maximum payment attempts reached for this booking.");
@@ -259,6 +284,13 @@ export function RazorpayCheckout({
       </div>
 
       {error && <p className="field-error" role="alert">{error}</p>}
+      {msLeft !== null && (
+        <p className={`text-xs font-semibold ${windowClosed ? "text-rose-600" : msLeft < 2 * 60 * 1000 ? "text-amber-700" : "text-ink-500"}`}>
+          {windowClosed
+            ? "This reservation has expired — please start a new booking."
+            : `Reservation held for ${Math.floor(msLeft / 60000)}:${String(Math.floor((msLeft % 60000) / 1000)).padStart(2, "0")} · ${attemptsLeft} payment ${attemptsLeft === 1 ? "attempt" : "attempts"} left`}
+        </p>
+      )}
       {attemptNumber > 0 && attemptNumber < MAX_ATTEMPTS && status !== "error" && (
         <p className="text-xs text-ink-500">Attempt {attemptNumber} of {MAX_ATTEMPTS} did not complete — you can try again.</p>
       )}
@@ -267,7 +299,7 @@ export function RazorpayCheckout({
         <button
           type="button"
           onClick={payNow}
-          disabled={status === "loading" || status === "reserving" || attemptNumber >= MAX_ATTEMPTS}
+          disabled={status === "loading" || status === "reserving" || attemptNumber >= MAX_ATTEMPTS || windowClosed}
           className="btn-shine inline-flex w-full items-center justify-center gap-2 rounded-full bg-brand-500 px-8 py-4 text-sm font-bold uppercase tracking-wide text-ink-950 shadow-lift transition hover:bg-brand-400 active:scale-[0.98] disabled:opacity-60"
         >
           {status === "reserving" ? "Reserving your vehicle…" : status === "loading" ? "Opening secure checkout…" : "Pay with Razorpay"}

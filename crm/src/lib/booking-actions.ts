@@ -115,7 +115,7 @@ export async function submitBooking(input: {
   /** See BookingPayload.idempotencyKey in bookings.ts — not schema-validated (it's an
    * internal correctness mechanism, not user input), just threaded through as-is. */
   idempotencyKey?: string;
-}): Promise<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; error?: string }> {
+}): Promise<{ ok: boolean; bookingNo?: string; bookingId?: number; customerId?: number; paymentWindowExpiresAt?: string | null; error?: string }> {
   const parsed = submitSchema.safeParse(input);
   if (!parsed.success) {
     const first = parsed.error.issues[0]?.message ?? "Please complete all required fields.";
@@ -141,7 +141,7 @@ export async function submitBooking(input: {
   }
 
   try {
-    const { bookingNo, bookingId, customerId } = await createBooking({
+    const { bookingNo, bookingId, customerId, paymentWindowExpiresAt } = await createBooking({
       vehicleId: parsed.data.vehicleId,
       pickupAt: parsed.data.pickupAt,
       returnAt: parsed.data.returnAt,
@@ -185,7 +185,9 @@ export async function submitBooking(input: {
       revalidatePath("/dashboard/bookings", "page");
     } catch {}
 
-    return { ok: true, bookingNo, bookingId, customerId };
+    // The authoritative deadline travels with the reservation so the customer's
+    // countdown shows the database's value rather than starting its own clock.
+    return { ok: true, bookingNo, bookingId, customerId, paymentWindowExpiresAt };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Could not create booking. Please try again." };
   }

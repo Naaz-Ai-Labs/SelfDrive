@@ -92,6 +92,36 @@ export async function createBookingPaymentOrder(
     const due = overrideAmount && overrideAmount > 0 ? overrideAmount : Math.max(1, onlinePayable - paidAmount);
     if (due <= 0) return { ok: false, error: "This booking is already fully paid." };
 
+    // The reservation/payment window and the 3-attempt limit are constraints on the
+    // SAME lifecycle, so both are evaluated together, database-side, against the
+    // database clock and the one stored payment_window_expires_at.
+    //
+    // This gate did not exist: only the attempt count and "already fully paid" were
+    // checked. Once the window closed, is_expired_reservation() had already freed the
+    // unit to other customers, yet this function would still mint attempt 2 or 3 and
+    // open a live Razorpay order — so a customer could pay, in full, for a vehicle
+    // that was no longer held for them.
+    const gate = await sbRpc<string>("can_start_payment_attempt", { p_booking_id: bookingId });
+    if (!gate.ok) {
+      return { ok: false, error: "Could not verify this booking's payment window: " + gate.error };
+    }
+    switch (gate.data) {
+      case "ok":
+        break;
+      case "already_paid":
+        return { ok: false, error: "This booking is already paid." };
+      case "window_closed":
+        return { ok: false, error: "The 15-minute payment window for this reservation has expired. Please start a new booking." };
+      case "attempts_exhausted":
+        return { ok: false, error: "This booking has already reached the maximum of 3 payment attempts. Please start a new booking." };
+      case "not_active":
+        return { ok: false, error: "This reservation is no longer active. Please start a new booking." };
+      case "not_found":
+        return { ok: false, error: "Booking not found." };
+      default:
+        return { ok: false, error: "This reservation cannot take a payment right now." };
+    }
+
     const duePaise = Math.max(100, toPaise(due));
     const breakdownJson = JSON.stringify({
       baseAmount: booking.base_amount != null ? num(booking.base_amount) : Math.max(0, due - num(booking.gst_amount)),

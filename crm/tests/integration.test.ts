@@ -1468,10 +1468,11 @@ test(
         "a reservation inside its 15-minute TTL must still hold the unit"
       );
 
-      // Backdate past the TTL. Nothing else changes — no sweep has run yet.
-      const backdated = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+      // Close the authoritative window. created_at is deliberately NOT touched: the
+      // deadline is the stored payment_window_expires_at, not a value derived from it.
+      const backdated = new Date(Date.now() - 60 * 1000).toISOString();
       const aged = await rest(`bookings?id=eq.${first.bookingId}`, {
-        method: "PATCH", body: JSON.stringify({ created_at: backdated }),
+        method: "PATCH", body: JSON.stringify({ payment_window_expires_at: backdated }),
       });
       assert.ok(aged.ok, `could not backdate the reservation: ${JSON.stringify(aged.body)}`);
 
@@ -1491,6 +1492,96 @@ test(
       assert.ok(swept.ok, `release_expired_reservations must exist: ${JSON.stringify(swept.body)}`);
       const after = await rest(`bookings?id=eq.${first.bookingId}&select=status`);
       assert.equal((after.body as Array<{ status: string }>)[0].status, "Rejected", "the swept reservation must end up Rejected");
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);
+
+test(
+  "Test 13 — the payment window and the 3-attempt limit gate the SAME reservation lifecycle",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    const pickup = "2033-07-10T08:00:00+05:30";
+    const ret = "2033-07-12T08:00:00+05:30";
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      const booking = await createBooking({
+        vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+        customer: { name: `${TAG} Window`, phone: testPhone(1301) },
+        idempotencyKey: `${TAG}-t13`,
+      });
+      bookingIds.push(booking.bookingId); customerIds.push(booking.customerId);
+
+      // The reservation carries ONE authoritative deadline, issued by the database.
+      assert.ok(booking.paymentWindowExpiresAt, "a reservation must be issued a payment window deadline");
+      const deadline = new Date(booking.paymentWindowExpiresAt as string).getTime();
+      const fromNow = deadline - Date.now();
+      assert.ok(fromNow > 10 * 60 * 1000 && fromNow <= 16 * 60 * 1000, `deadline should be ~15 min out, got ${Math.round(fromNow / 60000)} min`);
+
+      // Inside the window, attempts are allowed.
+      const gateOpen = await rpc("can_start_payment_attempt", { p_booking_id: booking.bookingId });
+      assert.equal(gateOpen.body, "ok", "an active reservation inside its window must accept an attempt");
+
+      // Three attempts consume the allowance; the 4th is refused on attempt count
+      // alone, while the window is still open.
+      for (let i = 1; i <= 3; i++) {
+        const ins = await rest("payments", {
+          method: "POST",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify({
+            payment_no: `${TAG}-PY-${i}-${Date.now()}`, booking_id: booking.bookingId,
+            amount: 1, currency: "INR", kind: "full", status: "Pending", attempt_number: i,
+            created_at: new Date().toISOString(),
+          }),
+        });
+        assert.ok(ins.ok, `attempt ${i} row must insert: ${JSON.stringify(ins.body)}`);
+      }
+      const gate4 = await rpc("can_start_payment_attempt", { p_booking_id: booking.bookingId });
+      assert.equal(gate4.body, "attempts_exhausted", "a 4th attempt must be refused even with time left on the clock");
+
+      // A fresh reservation, expired by moving its authoritative deadline into the
+      // past, is refused on the window instead — with attempts still available.
+      const second = await createBooking({
+        vehicleId: vehId, pickupAt: "2033-08-10T08:00:00+05:30", returnAt: "2033-08-12T08:00:00+05:30",
+        customer: { name: `${TAG} Window2` , phone: testPhone(1302) },
+        idempotencyKey: `${TAG}-t13-b`,
+      });
+      bookingIds.push(second.bookingId); customerIds.push(second.customerId);
+      const expire = await rest(`bookings?id=eq.${second.bookingId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ payment_window_expires_at: new Date(Date.now() - 60 * 1000).toISOString() }),
+      });
+      assert.ok(expire.ok, "could not close the payment window");
+      const gateClosed = await rpc("can_start_payment_attempt", { p_booking_id: second.bookingId });
+      assert.equal(gateClosed.body, "window_closed", "no attempt may start once the authoritative window has closed");
+
+      // And the order-creation path itself refuses, not just the raw gate — this is
+      // what previously let a customer pay after the unit had been released.
+      const order = await createBookingPaymentOrder(second.bookingId);
+      assert.equal(order.ok, false, "createBookingPaymentOrder must refuse an expired reservation");
+      if (!order.ok) assert.match(order.error, /expired|window/i, `unexpected refusal reason: ${order.error}`);
+
+      // A verified payment outranks both limits.
+      const paidRow = await rest("payments", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          payment_no: `${TAG}-PY-PAID-${Date.now()}`, booking_id: second.bookingId,
+          amount: 1, currency: "INR", kind: "full", status: "Paid", attempt_number: 1,
+          created_at: new Date().toISOString(),
+        }),
+      });
+      assert.ok(paidRow.ok, "paid row must insert");
+      const gatePaid = await rpc("can_start_payment_attempt", { p_booking_id: second.bookingId });
+      assert.equal(gatePaid.body, "already_paid", "a verified payment must stop further attempts, outranking the closed window");
+      const stillExpired = await rpc("is_expired_reservation", { p_booking_id: second.bookingId });
+      assert.equal(stillExpired.body, false, "a reservation with a verified payment must never be treated as expired");
     } finally {
       await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
     }
