@@ -725,8 +725,13 @@ export async function transferVehicleUnit(input: {
 
     const effDate = new Date(input.effectiveDate).toISOString();
 
-    // Close previous open allocation
-    await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${unit.id}&ends_at=is.null`, { ends_at: effDate });
+    // branch_allocations and vehicle_units.current_branch_id must agree: the
+    // reservation RPC decides branch eligibility from branch_allocations while the
+    // public listing reads current_branch_id, so a half-applied transfer shows the
+    // vehicle at one branch and refuses to book it there. Unit 1401 was found in
+    // exactly that state in production. None of these writes were checked.
+    const closedPrev = await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${unit.id}&ends_at=is.null`, { ends_at: effDate });
+    if (!closedPrev.ok) return fail(closedPrev, "Closing the previous branch allocation");
 
     // Insert new allocation
     const newAlloc = await sbInsert("branch_allocations", {
@@ -738,14 +743,16 @@ export async function transferVehicleUnit(input: {
     });
     if (!newAlloc.ok) return fail(newAlloc, "Creating branch allocation");
 
-    // Update current branch on unit
-    await sbUpdate("vehicle_units", `id=eq.${unit.id}`, {
+    // The allocation row is already written at this point, so a failure here is the
+    // drift case: surface it rather than reporting a clean transfer.
+    const movedUnit = await sbUpdate("vehicle_units", `id=eq.${unit.id}`, {
       current_branch_id: input.toBranchId,
       updated_at: nowIso(),
     });
+    if (!movedUnit.ok) return fail(movedUnit, "Moving the unit to the new branch");
 
     // Write audit record
-    await sbInsert("branch_transfers", {
+    const transferLog = await sbInsert("branch_transfers", {
       vehicle_unit_id: unit.id,
       from_branch_id: unit.current_branch_id,
       to_branch_id: input.toBranchId,
@@ -753,6 +760,7 @@ export async function transferVehicleUnit(input: {
       reason: input.reason || null,
       performed_by: user.id,
     });
+    if (!transferLog.ok) console.error(`[fleet] unit ${unit.id}: transfer audit row not written — ${transferLog.error}`);
 
     await logActivity(user.id, "unit_transferred", "vehicle_unit", unit.id, {
       unit_identifier: unit.unit_identifier,
@@ -811,18 +819,20 @@ export async function updateVehicleFleetAllocations(input: {
       for (let q = 0; q < qty && unitIdx < units.length; q++, unitIdx++) {
         const u = units[unitIdx];
         if (u.current_branch_id !== alloc.branchId) {
-          // Close previous open allocation
-          await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${u.id}&ends_at=is.null`, { ends_at: effDate });
-          // Insert new allocation
-          await sbInsert("branch_allocations", {
+          // Same allocation/current_branch_id pair as transferVehicleUnit — a partial
+          // apply here silently splits a unit across two branches.
+          const closed = await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${u.id}&ends_at=is.null`, { ends_at: effDate });
+          if (!closed.ok) return fail(closed, `Closing the branch allocation for unit ${u.id}`);
+          const opened = await sbInsert("branch_allocations", {
             vehicle_unit_id: u.id,
             branch_id: alloc.branchId,
             starts_at: effDate,
             ends_at: null,
             notes: input.reason || "Fleet re-allocation update",
           });
-          // Update unit
-          await sbUpdate("vehicle_units", `id=eq.${u.id}`, { current_branch_id: alloc.branchId, updated_at: nowIso() });
+          if (!opened.ok) return fail(opened, `Allocating unit ${u.id} to its new branch`);
+          const moved = await sbUpdate("vehicle_units", `id=eq.${u.id}`, { current_branch_id: alloc.branchId, updated_at: nowIso() });
+          if (!moved.ok) return fail(moved, `Moving unit ${u.id} to its new branch`);
           // Audit
           await sbInsert("branch_transfers", {
             vehicle_unit_id: u.id,
@@ -840,8 +850,10 @@ export async function updateVehicleFleetAllocations(input: {
     while (unitIdx < units.length) {
       const u = units[unitIdx++];
       if (u.current_branch_id !== null) {
-        await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${u.id}&ends_at=is.null`, { ends_at: effDate });
-        await sbUpdate("vehicle_units", `id=eq.${u.id}`, { current_branch_id: null, updated_at: nowIso() });
+        const closedAlloc = await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${u.id}&ends_at=is.null`, { ends_at: effDate });
+        if (!closedAlloc.ok) return fail(closedAlloc, `Closing the branch allocation for unit ${u.id}`);
+        const unallocated = await sbUpdate("vehicle_units", `id=eq.${u.id}`, { current_branch_id: null, updated_at: nowIso() });
+        if (!unallocated.ok) return fail(unallocated, `Unallocating unit ${u.id}`);
         await sbInsert("branch_transfers", {
           vehicle_unit_id: u.id,
           from_branch_id: u.current_branch_id,
@@ -892,16 +904,20 @@ export async function updateVehicleUnitDetails(input: {
 
     // If branch changed
     if (input.branchId !== undefined && input.branchId !== unit.current_branch_id) {
-      // Close previous allocation
-      await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${unit.id}&ends_at=is.null`, { ends_at: effDate });
+      // Same allocation/current_branch_id pair as the other reassignment paths: the
+      // unit row itself is updated further below, so an unchecked failure here leaves
+      // the two disagreeing about which branch holds this unit.
+      const closedAlloc = await sbUpdate("branch_allocations", `vehicle_unit_id=eq.${unit.id}&ends_at=is.null`, { ends_at: effDate });
+      if (!closedAlloc.ok) return fail(closedAlloc, "Closing the previous branch allocation");
       if (input.branchId !== null) {
-        await sbInsert("branch_allocations", {
+        const openedAlloc = await sbInsert("branch_allocations", {
           vehicle_unit_id: unit.id,
           branch_id: input.branchId,
           starts_at: effDate,
           ends_at: null,
           notes: input.notes || "Unit branch assignment edit",
         });
+        if (!openedAlloc.ok) return fail(openedAlloc, "Allocating the unit to its new branch");
       }
       await sbInsert("branch_transfers", {
         vehicle_unit_id: unit.id,

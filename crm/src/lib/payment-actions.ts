@@ -337,7 +337,10 @@ export async function releaseBookingReservation(
     return { ok: true, released: false };
   }
 
-  await sbDelete("availability_blocks", `booking_id=eq.${bookingId}`);
+  // Not fatal to the caller, but if this fails the unit stays held by a booking that
+  // has just been rejected — the exact "reservation stuck" state. Must be visible.
+  const releasedBlocks = await sbDelete("availability_blocks", `booking_id=eq.${bookingId}`);
+  if (!releasedBlocks.ok) console.error(`[payments] booking ${bookingId}: hold not released — ${releasedBlocks.error}`);
 
   await sbInsert("booking_history", {
     booking_id: bookingId,
@@ -377,7 +380,8 @@ export async function recordFailedPaymentAttempt(
 
   // Compare-and-swap: only the first caller to see this row as Pending flips it, same
   // pattern as the Paid transition below in verifyBookingPayment.
-  await sbUpdate("payments", `id=eq.${paymentId}&status=eq.Pending`, { status: "Failed" });
+  const markedFailed = await sbUpdate("payments", `id=eq.${paymentId}&status=eq.Pending`, { status: "Failed" });
+  if (!markedFailed.ok) console.error(`[payments] payment ${paymentId}: not marked Failed — ${markedFailed.error}`);
 
   if (!payment.booking_id) {
     return { ok: true, bookingId: null, attemptNumber: payment.attempt_number, released: false, attemptsExhausted: false };
@@ -832,17 +836,31 @@ export async function verifyBookingPayment(input: {
             });
             if (insBooking.ok && insBooking.data) {
               bookingId = insBooking.data.id;
-              await sbUpdate("payments", `id=eq.${payment.id}`, { booking_id: bookingId });
-              await sbUpdate("enquiries", `id=eq.${enq.id}`, { status: "converted", stage: "Converted" });
+              // Money is already captured here. These must never fail the response —
+              // that would tell a paying customer the payment failed — but a silent
+              // failure orphans the payment or strands the hold, so log loudly.
+              const linkedPayment = await sbUpdate("payments", `id=eq.${payment.id}`, { booking_id: bookingId });
+              if (!linkedPayment.ok) console.error(`[payments] booking ${bookingId}: payment ${payment.id} not linked — ${linkedPayment.error}`);
+              const convertedEnq = await sbUpdate("enquiries", `id=eq.${enq.id}`, { status: "converted", stage: "Converted" });
+              if (!convertedEnq.ok) console.error(`[payments] enquiry ${enq.id}: not marked converted — ${convertedEnq.error}`);
               // Link the claimed hold to the real booking — mirrors createBooking()'s own
               // linking step, so this booking shows up consistently everywhere the other
               // creation path's bookings do (Gantt, unit blocking, etc).
-              await sbUpdate("availability_blocks", `id=eq.${claimedBlockId}`, {
+              // The most consequential write in this path: it converts the 10-minute
+              // claim into a permanent hold. If it fails silently the hold expires and
+              // the unit is handed to someone else while this paid, Confirmed booking
+              // still points at it — a double booking with money on both sides.
+              const linkedHold = await sbUpdate("availability_blocks", `id=eq.${claimedBlockId}`, {
                 booking_id: bookingId,
                 vehicle_unit_id: claimedUnitId,
                 expires_at: null,
                 notes: null,
               });
+              if (!linkedHold.ok) {
+                console.error(
+                  `[payments] booking ${bookingId}: hold ${claimedBlockId} NOT linked — the unit may be released while this booking is paid. ${linkedHold.error}`
+                );
+              }
 
               // This path builds the booking straight from the draft enquiry, bypassing
               // submitBooking() entirely — the ONE thing that used to write
