@@ -1022,7 +1022,11 @@ export async function getVehicle(slug: string, onlyActive = true): Promise<Vehic
   return hydrated[0] ?? null;
 }
 
-export async function getVehicleById(idOrSlug: number | string, onlyActive = true): Promise<Vehicle | null> {
+export async function getVehicleById(
+  idOrSlug: number | string,
+  onlyActive = true,
+  availabilityWindow?: { pickupAt: string; returnAt: string }
+): Promise<Vehicle | null> {
   const asText = String(idOrSlug);
   const asNumber = Number(idOrSlug);
 
@@ -1043,7 +1047,7 @@ export async function getVehicleById(idOrSlug: number | string, onlyActive = tru
 
   const res = await sbSelect<RawVehicle>("vehicles", parts.join("&"));
   if (!res.ok) throw new Error(`Could not load vehicle "${asText}": ${res.error}`);
-  const hydrated = await hydrateVehicles(res.data);
+  const hydrated = await hydrateVehicles(res.data, availabilityWindow);
   return hydrated[0] ?? null;
 }
 

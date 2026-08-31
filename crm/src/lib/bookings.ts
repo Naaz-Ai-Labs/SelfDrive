@@ -294,7 +294,26 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
     }
   }
 
-  const vehicle = await getVehicleById(payload.vehicleId);
+  // Parsed and canonicalized before the vehicle lookup below because that lookup
+  // now needs the requested window to judge availability correctly (see comment
+  // at the status check).
+  const pickup = parseIstInstant(payload.pickupAt);
+  const ret = parseIstInstant(payload.returnAt);
+  if (!pickup || !ret || !(pickup.getTime() < ret.getTime())) {
+    throw new Error("Return time must be after pickup time");
+  }
+
+  const canonicalPickupAt = toCanonicalIstIso(payload.pickupAt) || payload.pickupAt;
+  const canonicalReturnAt = toCanonicalIstIso(payload.returnAt) || payload.returnAt;
+
+  // getVehicleById's `status`/`active` reflect availability WITHIN THE GIVEN WINDOW
+  // when one is passed — without it, "is this vehicle out" means "is it out at any
+  // point from now on", which is wrong here: a single-unit vehicle with an unrelated
+  // booking next month would fail this check for a request next week, even though
+  // the reservation RPC below (which correctly checks only the requested dates)
+  // would find it free. Same bug, same fix, as hydrateVehicles' own listing-page
+  // window fix — just never threaded through this second call site until now.
+  const vehicle = await getVehicleById(payload.vehicleId, true, { pickupAt: canonicalPickupAt, returnAt: canonicalReturnAt });
   if (!vehicle) throw new Error("Vehicle not found");
 
   // Enforce vehicle availability status invariant
@@ -308,15 +327,6 @@ export async function createBooking(payload: BookingPayload): Promise<{ bookingI
   ) {
     throw new Error("This vehicle is currently unavailable for booking.");
   }
-
-  const pickup = parseIstInstant(payload.pickupAt);
-  const ret = parseIstInstant(payload.returnAt);
-  if (!pickup || !ret || !(pickup.getTime() < ret.getTime())) {
-    throw new Error("Return time must be after pickup time");
-  }
-
-  const canonicalPickupAt = toCanonicalIstIso(payload.pickupAt) || payload.pickupAt;
-  const canonicalReturnAt = toCanonicalIstIso(payload.returnAt) || payload.returnAt;
 
   // Resolve target branch ID: explicit branchId -> location string match -> vehicle.branch_id
   let branchId = payload.branchId;
