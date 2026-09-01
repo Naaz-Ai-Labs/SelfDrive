@@ -1903,3 +1903,56 @@ test(
     }
   }
 );
+
+test(
+  "Test 19 — a counter booking's licence and government ID are saved pre-verified",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // Mirrors what createManualBooking() now does after createBooking(): a counter
+    // booking is not exempt from the same licence + govt ID requirement submitBooking()
+    // enforces at web checkout, and since staff is physically holding the documents at
+    // the counter (not reviewing an uploaded photo later), they land already verified.
+    const pickup = "2033-10-10T08:00:00+05:30";
+    const ret = "2033-10-12T08:00:00+05:30";
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      const booking = await createBooking({
+        vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+        customer: { name: `${TAG} Docs`, phone: testPhone(1901) },
+        idempotencyKey: `${TAG}-t19`,
+      });
+      bookingIds.push(booking.bookingId); customerIds.push(booking.customerId);
+
+      const docs = [
+        { kind: "licence", url: "/api/files/doc?p=documents/2033/licence.jpg" },
+        { kind: "govt_id", url: "/api/files/doc?p=documents/2033/govt_id.jpg" },
+      ];
+      const rows = docs.map((d) => ({
+        customer_id: booking.customerId,
+        booking_id: booking.bookingId,
+        kind: d.kind,
+        file_path: d.url,
+        verified: 1,
+        verified_by: null,
+        created_at: new Date().toISOString(),
+      }));
+      const ins = await rest("customer_documents", { method: "POST", body: JSON.stringify(rows) });
+      assert.ok(ins.ok, `documents insert failed: ${JSON.stringify(ins.body)}`);
+
+      const stored = await rest(`customer_documents?booking_id=eq.${booking.bookingId}&select=kind,verified,file_path`);
+      const storedRows = stored.body as Array<{ kind: string; verified: number; file_path: string }>;
+      assert.equal(storedRows.length, 2, "both documents must be saved");
+      assert.ok(storedRows.every((r) => Number(r.verified) === 1), "counter-booking documents must land pre-verified, not pending review");
+      assert.ok(storedRows.some((r) => r.kind === "licence"), "licence must be recorded");
+      assert.ok(storedRows.some((r) => r.kind === "govt_id"), "government ID must be recorded");
+    } finally {
+      await rest(`customer_documents?booking_id=eq.${bookingIds[0]}`, { method: "DELETE" });
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);

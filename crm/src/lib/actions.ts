@@ -2210,6 +2210,10 @@ export async function createManualBooking(input: {
   /** Required for an instant booking — see the note where the handover is recorded. */
   startOdometer?: number;
   fuelLevel?: string;
+  /** Same requirement the web checkout enforces (submitBooking in booking-actions.ts) —
+   * a counter booking is not exempt from having a licence and a government ID on file
+   * just because staff took it in person. */
+  documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }>;
 }) {
   const user = await staffUser();
   assertCan(user, "staff");
@@ -2220,6 +2224,15 @@ export async function createManualBooking(input: {
   // extra-kilometre charge on that rental, with nothing to show why.
   if (input.instant && (input.startOdometer === undefined || Number.isNaN(input.startOdometer))) {
     return { ok: false as const, error: "Enter the odometer reading — an instant handover without it cannot bill extra km on return." };
+  }
+
+  // Mirrors submitBooking's own gate — a booking taken at the counter still needs the
+  // customer's licence and a government ID on file before the vehicle can go out.
+  const docs = input.documents ?? [];
+  const hasLicence = docs.some((d) => (d.kind === "licence" || d.kind === "driver_licence") && d.url);
+  const hasGovtId = docs.some((d) => (d.kind === "govt_id" || d.kind === "driver_govt_id") && d.url);
+  if (!hasLicence || !hasGovtId) {
+    return { ok: false as const, error: "Upload the customer's driving licence and a government ID before creating the booking." };
   }
 
   const { createBooking } = await import("./bookings");
@@ -2251,6 +2264,23 @@ export async function createManualBooking(input: {
     updated_at: nowIso(),
   });
   if (!promoted.ok) return fail(promoted, "Marking the booking as a counter booking");
+
+  // Staff is physically holding the customer's documents at the counter — unlike the
+  // web flow's photo uploaded for later remote review, there is nothing to verify
+  // after the fact, so these land pre-verified.
+  const docRows = docs.map((d) => ({
+    customer_id: created.customerId,
+    booking_id: created.bookingId,
+    kind: d.kind === "driver_licence" ? "licence" : d.kind === "driver_govt_id" ? "govt_id" : d.kind,
+    number: d.number ?? null,
+    expiry_date: d.expiry ?? null,
+    file_path: d.url,
+    verified: 1,
+    verified_by: user.id,
+    created_at: nowIso(),
+  }));
+  const docsIns = await sbInsert("customer_documents", docRows);
+  if (!docsIns.ok) console.error(`[bookings] ${created.bookingNo}: customer documents not saved — ${docsIns.error}`);
 
   const history = await sbInsert("booking_history", {
     booking_id: created.bookingId,

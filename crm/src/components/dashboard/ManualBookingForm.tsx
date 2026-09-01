@@ -55,6 +55,21 @@ export function ManualBookingForm({
   const [fuelLevel, setFuelLevel] = useState("");
   const instant = mode === "instant";
 
+  // Same requirement the website enforces at checkout — a counter booking is not
+  // exempt just because staff took it in person.
+  const [licenceFile, setLicenceFile] = useState<File | null>(null);
+  const [govtIdFile, setGovtIdFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  async function uploadDoc(file: File, kind: string): Promise<{ kind: string; url: string }> {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("folder", "documents");
+    const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
+    if (!res.ok || !res.path) throw new Error(res.error || `Could not upload the ${kind === "licence" ? "licence" : "ID"}.`);
+    return { kind, url: res.path };
+  }
+
   const selected = useMemo(
     () => vehicles.find((v) => String(v.id) === vehicleId),
     [vehicles, vehicleId]
@@ -75,8 +90,23 @@ export function ManualBookingForm({
     }
     if (name.trim().length < 2) return setError("Enter the customer name.");
     if (!/^[+\d][\d\s-]{8,15}$/.test(phone.trim())) return setError("Enter a valid mobile number.");
+    if (!licenceFile || !govtIdFile) return setError("Upload the customer's driving licence and a government ID.");
 
     startTransition(async () => {
+      setUploading(true);
+      let documents: Array<{ kind: string; url: string }>;
+      try {
+        documents = await Promise.all([
+          uploadDoc(licenceFile, "licence"),
+          uploadDoc(govtIdFile, "govt_id"),
+        ]);
+      } catch (err) {
+        setUploading(false);
+        setError(err instanceof Error ? err.message : "Could not upload the documents.");
+        return;
+      }
+      setUploading(false);
+
       const res = await createManualBooking({
         vehicleId: Number(vehicleId),
         pickupAt: effectivePickup,
@@ -94,6 +124,7 @@ export function ManualBookingForm({
         instant,
         startOdometer: startOdometer ? Number(startOdometer) : undefined,
         fuelLevel: fuelLevel || undefined,
+        documents,
       });
 
       if (!res.ok) {
@@ -205,6 +236,32 @@ export function ManualBookingForm({
         </div>
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="label">Driving licence *</label>
+          <input
+            className="input"
+            type="file"
+            accept=".pdf,image/jpeg,image/png,image/webp"
+            onChange={(e) => setLicenceFile(e.target.files?.[0] || null)}
+            disabled={pending}
+          />
+        </div>
+        <div>
+          <label className="label">Government ID *</label>
+          <input
+            className="input"
+            type="file"
+            accept=".pdf,image/jpeg,image/png,image/webp"
+            onChange={(e) => setGovtIdFile(e.target.files?.[0] || null)}
+            disabled={pending}
+          />
+        </div>
+      </div>
+      <p className="text-[11px] text-ink-500 -mt-2">
+        Photograph or scan both documents — required before the vehicle can go out, same as an online booking.
+      </p>
+
       <div className="grid gap-3 sm:grid-cols-3">
         <div>
           <label className="label">Collected now (Rs)</label>
@@ -233,7 +290,9 @@ export function ManualBookingForm({
 
       <div className="flex justify-end">
         <button type="submit" disabled={pending} className="btn-primary text-sm font-semibold px-5 py-2">
-          {pending ? "Creating booking..." : instant ? "Create and hand over now" : "Create counter booking"}
+          {pending
+            ? (uploading ? "Uploading documents..." : "Creating booking...")
+            : instant ? "Create and hand over now" : "Create counter booking"}
         </button>
       </div>
     </form>
