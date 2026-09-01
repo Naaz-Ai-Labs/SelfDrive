@@ -11,6 +11,10 @@ const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: "M3 12l9-9 9 9M5 10v10h5v-6h4v6h5V10" },
   { href: "/dashboard/enquiries", label: "Enquiries", icon: "M9 12h6M9 8h6M9 16h4M4 21V5a2 2 0 012-2h12a2 2 0 012 2v16l-4-2-4 2-4-2-4 2z" },
   { href: "/dashboard/bookings", label: "Bookings", icon: "M8 7V3m8 4V3M3 11h18M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
+  // Same "bookings" scope as above (pathToScope prefix-matches /dashboard/bookings), so
+  // no permission change needed — this just gives the walk-in/phone flow its own direct
+  // entry point instead of only a "+ Counter booking" link buried on the Bookings page.
+  { href: "/dashboard/bookings/new", label: "Counter Booking", icon: "M12 4v16m8-8H4" },
   { href: "/dashboard/vehicles", label: "Vehicles", icon: "M5 17h14M5 17a2 2 0 104 0M5 17V9l2-4h10l2 4v8M15 17a2 2 0 104 0" },
   // Fleet operations. These were previously reachable only by opening a vehicle and
   // scrolling inside its edit form, which made day-to-day work ("which plate is where",

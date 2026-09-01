@@ -11,16 +11,27 @@ import { LogoutButton } from "@/components/dashboard/TopBar";
 type NavItem = { href: string; label: string; icon: string };
 type User = { id: number; name: string; email?: string; role: string };
 
-function isActive(pathname: string, href: string) {
+function matches(pathname: string, href: string) {
   return href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+}
+
+/** The single nav item that actually owns this page — the LONGEST matching href, not
+ * just any prefix match. Bookings ("/dashboard/bookings") and Counter Booking
+ * ("/dashboard/bookings/new") both match on /dashboard/bookings/new; without this,
+ * both items lit up as active at once, since each used to check itself in isolation. */
+function activeHref(pathname: string, items: NavItem[]): string | undefined {
+  return items
+    .filter((i) => matches(pathname, i.href))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
 }
 
 export function SidebarNav({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
+  const current = activeHref(pathname, items);
   return (
     <nav className="flex flex-col gap-0.5 px-2.5 py-1" aria-label="CRM navigation">
       {items.map((item) => {
-        const active = isActive(pathname, item.href);
+        const active = item.href === current;
         return (
           <Link
             key={item.href}
@@ -73,7 +84,8 @@ export function MobileNav({ items, user }: { items: NavItem[]; user?: User }) {
     };
   }, [isOpen]);
 
-  const activeItem = items.find((i) => isActive(pathname, i.href)) || items[0];
+  const current = activeHref(pathname, items);
+  const activeItem = items.find((i) => i.href === current) || items[0];
   const isAdmin = user?.role === "admin";
 
   return (
@@ -143,7 +155,7 @@ export function MobileNav({ items, user }: { items: NavItem[]; user?: User }) {
             {/* Drawer Scrollable Navigation Links */}
             <nav className="flex-1 overflow-y-auto p-3 space-y-1" aria-label="Mobile CRM modules">
               {items.map((item) => {
-                const active = isActive(pathname, item.href);
+                const active = item.href === current;
                 return (
                   <Link
                     key={item.href}
