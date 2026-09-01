@@ -395,6 +395,12 @@ export function FleetGanttCalendar({
                                   📝 Offline booking
                                 </Link>
                                 <Link
+                                  href={`/dashboard/fleet/blocking?vehicleId=${v.id}`}
+                                  className="block w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
+                                >
+                                  📅 Block a range…
+                                </Link>
+                                <Link
                                   href={`/dashboard/vehicles/${v.id}`}
                                   className="block w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink-600 hover:bg-ink-50"
                                 >

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useTransition, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { Vehicle, VehicleUnit, Branch } from "@/lib/data";
 import type { FleetBlock } from "@/lib/fleet-page-data";
 import { bulkUpdateUnitStatus, bulkUpdateVehicleStatus, blockVehicleDates, unblockVehicleDates } from "@/lib/actions";
@@ -31,6 +31,7 @@ export function FleetUnitBlockManager({
   blocks: FleetBlock[];
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
   const [selectedUnitIds, setSelectedUnitIds] = useState<number[]>([]);
   const [selectedVehicleIds, setSelectedVehicleIds] = useState<number[]>([]);
@@ -51,6 +52,20 @@ export function FleetUnitBlockManager({
   const [blockEnd, setBlockEnd] = useState(todayKey());
   const [blockReasonKind, setBlockReasonKind] = useState<"maintenance" | "manual_block">("maintenance");
   const [blockNotes, setBlockNotes] = useState("");
+
+  // Arrived from the Fleet Timeline's "Block a range…" link for one specific vehicle —
+  // pre-select its active units and open the panel so staff don't have to search/filter
+  // for the vehicle they just clicked.
+  useEffect(() => {
+    const vehicleId = Number(searchParams.get("vehicleId"));
+    if (!vehicleId) return;
+    const unitIds = units.filter((u) => u.vehicle_id === vehicleId && u.active !== 0).map((u) => u.id);
+    if (unitIds.length === 0) return;
+    setActiveTab("units");
+    setSelectedUnitIds(unitIds);
+    setShowBlockPanel(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function submitDurationBlock() {
     const endKey = blockDuration === "1day" ? blockStart : blockEnd;
