@@ -347,7 +347,7 @@ export function ChangeBookingForm({
   const [phone, setPhone] = useState("");
   const [reason, setReason] = useState("");
 
-  function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent, reassignUnit = false) {
     e.preventDefault();
     setError("");
     setResult(null);
@@ -359,6 +359,7 @@ export function ChangeBookingForm({
         returnAt: returnAt || undefined,
         customer: (name || phone) ? { name: name || undefined, phone: phone || undefined } : undefined,
         reason: reason.trim() || undefined,
+        reassignUnit,
       });
       if (!res.ok) { setError(res.error); return; }
       if (res.changed) setResult({ previousTotal: res.previousTotal, newTotal: res.newTotal, difference: res.difference });
@@ -398,9 +399,18 @@ export function ChangeBookingForm({
             "no change to the total"}.
         </p>
       )}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button type="submit" disabled={pending} className="btn-secondary px-4 py-2 text-xs">
           {pending ? "Checking availability…" : "Apply change"}
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={(e) => submit(e as unknown as React.FormEvent, true)}
+          title="The assigned unit is unavailable (stuck out, needs maintenance) — claim a different unit of the SAME vehicle for these dates."
+          className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+        >
+          {pending ? "Checking…" : "Reassign to a different unit"}
         </button>
         <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs text-ink-500 hover:text-ink-900">
           Cancel

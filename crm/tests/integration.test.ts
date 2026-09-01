@@ -1956,3 +1956,68 @@ test(
     }
   }
 );
+
+test(
+  "Test 20 — reassigning at pickup claims a DIFFERENT unit of the SAME vehicle when the assigned one is stuck",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // Mirrors what changeBookingAtPickup(reassignUnit: true) does: picking the SAME
+    // vehicle from the dropdown used to be a no-op (vehicleChanged is false), so a
+    // booking stuck on a unit that's out on an overdue return had no way to move to
+    // the vehicle's other free unit without changing the vehicle model. reassignUnit
+    // forces the claim/release sequence to run anyway.
+    const pickup = "2033-07-10T08:00:00+05:30";
+    const ret = "2033-07-12T08:00:00+05:30";
+    const { vehId, unitIds } = await makeConcurrencyTestVehicle(2);
+    const bookingIds: number[] = [];
+    const customerIds: number[] = [];
+
+    try {
+      const booking = await createBooking({
+        vehicleId: vehId, pickupAt: pickup, returnAt: ret,
+        customer: { name: `${TAG} Reassign`, phone: testPhone(2001) },
+        idempotencyKey: `${TAG}-t20`,
+      });
+      bookingIds.push(booking.bookingId); customerIds.push(booking.customerId);
+
+      const before = await rest(`bookings?id=eq.${booking.bookingId}&select=vehicle_unit_id`);
+      const originalUnitId = Number((before.body as Array<{ vehicle_unit_id: number }>)[0].vehicle_unit_id);
+      assert.ok(unitIds.includes(originalUnitId), "the booking must hold one of this vehicle's own units");
+
+      // Simulate the original unit actually going bad — needs maintenance, not just
+      // "held by this booking". p_exclude_booking_id only ignores THIS booking's own
+      // availability_blocks row; it does not override the unit's own status flag, so
+      // the RPC must still skip a unit flagged maintenance and land on the other one.
+      const flagged = await rest(`vehicle_units?id=eq.${originalUnitId}`, {
+        method: "PATCH", body: JSON.stringify({ status: "maintenance" }),
+      });
+      assert.ok(flagged.ok, `could not flag the original unit for maintenance: ${JSON.stringify(flagged.body)}`);
+
+      const claim = await rpc("reserve_vehicle_unit_slot", {
+        p_vehicle_id: vehId, p_pickup_at: pickup, p_return_at: ret,
+        p_branch_id: null, p_exclude_booking_id: booking.bookingId,
+      });
+      const rows = Array.isArray(claim.body) ? claim.body : [];
+      assert.equal(rows.length, 1, "the vehicle's other, healthy unit must still be claimable");
+      const newUnitId = Number(rows[0].unit_id);
+      assert.notEqual(newUnitId, originalUnitId, "reassignment must skip the maintenance-flagged unit and land on the other one");
+
+      await rest(`bookings?id=eq.${booking.bookingId}`, {
+        method: "PATCH", body: JSON.stringify({ vehicle_unit_id: newUnitId }),
+      });
+      await rest(`availability_blocks?booking_id=eq.${booking.bookingId}&id=neq.${rows[0].block_id}`, { method: "DELETE" });
+      await rest(`availability_blocks?id=eq.${rows[0].block_id}`, {
+        method: "PATCH", body: JSON.stringify({ booking_id: booking.bookingId, expires_at: null }),
+      });
+
+      const after = await rest(`bookings?id=eq.${booking.bookingId}&select=vehicle_unit_id,vehicle_id`);
+      const afterRow = (after.body as Array<{ vehicle_unit_id: number; vehicle_id: number }>)[0];
+      assert.equal(Number(afterRow.vehicle_id), vehId, "vehicle model is unchanged — only the physical unit moved");
+      assert.equal(Number(afterRow.vehicle_unit_id), newUnitId);
+    } finally {
+      await cleanupConcurrencyTestVehicle(vehId, bookingIds, customerIds);
+    }
+  }
+);

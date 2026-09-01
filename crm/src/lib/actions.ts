@@ -2402,6 +2402,12 @@ export async function changeBookingAtPickup(input: {
   branchId?: number | null;
   customer?: { name?: string; phone?: string; email?: string; address?: string };
   reason?: string;
+  /** The assigned unit itself is the problem (stuck out on an overdue return, needs
+   * maintenance) but the same vehicle model still has another free unit — force the
+   * reassignment path even though vehicleId and dates are otherwise unchanged.
+   * Without this, picking the SAME vehicle from the dropdown is a no-op: vehicleChanged
+   * is false, so the claim/release below never runs and the stuck unit stays attached. */
+  reassignUnit?: boolean;
 }) {
   const user = await staffUser();
   assertCan(user, "staff");
@@ -2443,8 +2449,9 @@ export async function changeBookingAtPickup(input: {
   const newReturnRaw = input.returnAt ?? booking.return_at;
   const vehicleChanged = newVehicleId !== booking.vehicle_id;
   const datesChanged = Boolean(input.pickupAt || input.returnAt);
+  const forceReassign = Boolean(input.reassignUnit);
 
-  if (!vehicleChanged && !datesChanged) {
+  if (!vehicleChanged && !datesChanged && !forceReassign) {
     refresh();
     return { ok: true as const, changed: false as const, message: "Customer details updated." };
   }
@@ -2551,6 +2558,7 @@ export async function changeBookingAtPickup(input: {
   await logActivity(user.id, "booking_changed_at_pickup", "booking", input.bookingId, {
     vehicle_changed: vehicleChanged,
     dates_changed: datesChanged,
+    unit_reassigned: newUnitId !== booking.vehicle_unit_id,
   });
   refresh();
 
