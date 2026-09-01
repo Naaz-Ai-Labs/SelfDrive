@@ -43,15 +43,23 @@ export function DocumentVerifier({ documents }: { documents: DocRow[] }) {
   const [brokenIds, setBrokenIds] = useState<Set<number>>(new Set());
   const markBroken = (id: number) => setBrokenIds((prev) => new Set(prev).add(id));
 
-  const docItems = documents.map(toDocItem);
+  // `documents` only reflects the click once router.refresh() completes its round
+  // trip — this override makes the grid card (Approve/Unverify swap, badge) flip the
+  // instant the button is pressed instead of waiting on that refresh.
+  const [verifiedOverrides, setVerifiedOverrides] = useState<Record<number, number>>({});
+
+  const docItems = documents.map(toDocItem).map((d) =>
+    d.id in verifiedOverrides ? { ...d, verified: verifiedOverrides[d.id] } : d
+  );
   const totalVerified = docItems.filter((d) => d.verified === 1).length;
 
   function handleVerify(documentId: number, approve: boolean) {
+    setVerifiedOverrides((prev) => ({ ...prev, [documentId]: approve ? 1 : 0 }));
+    if (selectedDoc?.id === documentId) {
+      setSelectedDoc((prev) => (prev ? { ...prev, verified: approve ? 1 : 0 } : null));
+    }
     startTransition(async () => {
       await verifyCustomerDocument({ documentId, approve });
-      if (selectedDoc?.id === documentId) {
-        setSelectedDoc((prev) => (prev ? { ...prev, verified: approve ? 1 : 0 } : null));
-      }
       router.refresh();
     });
   }

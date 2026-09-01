@@ -47,12 +47,14 @@ export async function loadFleetUnits() {
   });
 }
 
-/** Bookings that occupy fleet capacity. Draft and Cancelled hold nothing. */
+/** Bookings that occupy fleet capacity. Draft, Cancelled and Rejected hold nothing —
+ * a rejected booking never took the vehicle out, so it has no business appearing on
+ * the timeline as if it did; the vehicle should just look free for those dates. */
 export async function loadFleetBookings(): Promise<FleetBooking[]> {
   const res = await sbSelect<Record<string, unknown>>(
     "bookings",
     `select=id,booking_no,vehicle_id,pickup_at,return_at,status,customers(name)&status=not.${encodeURIComponent(
-      'in.("Cancelled","Draft")'
+      'in.("Cancelled","Draft","Rejected")'
     )}`
   );
   if (!res.ok) {

@@ -93,7 +93,7 @@ export function ManualBookingForm({
     setUploading(kind);
     setUploadErrors((e) => ({ ...e, [kind]: "" }));
     try {
-      const compressed = await compressImageFile(file, 1600, 0.8);
+      const compressed = await compressImageFile(file);
       const fd = new FormData();
       fd.append("file", compressed);
       fd.append("folder", "documents");
@@ -111,7 +111,7 @@ export function ManualBookingForm({
     setUploading("payment_proof");
     setPaymentProofError("");
     try {
-      const compressed = await compressImageFile(file, 1600, 0.8);
+      const compressed = await compressImageFile(file);
       const fd = new FormData();
       fd.append("file", compressed);
       fd.append("folder", "documents");

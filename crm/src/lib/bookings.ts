@@ -13,7 +13,7 @@ import { logActivity, pushNotification } from "./activity";
 import { sendTemplate } from "./messaging";
 import { calculateQuote } from "./pricing";
 import { parseIstInstant, toCanonicalIstIso } from "./rental-clock";
-import { getVehicleById, getActiveTermsVersion } from "./data";
+import { getVehicleById, getActiveTermsVersion, BLOCKING_STATUSES } from "./data";
 import { sbSelect, sbSelectOne, sbInsert, sbUpdate, sbDelete, sbRpc, num } from "./supabase-rest";
 
 export type BookingPayload = {
@@ -36,8 +36,9 @@ export type BookingPayload = {
   idempotencyKey?: string;
 };
 
-/** A booking in one of these states is holding a unit. Cancelled/Completed/Draft are not. */
-const BLOCKING_STATUSES = ["Cancelled", "Completed", "Draft", "Rejected"];
+// BLOCKING_STATUSES (statuses that do NOT hold a unit) now lives in ./data — every read
+// of "is this booking occupying a unit" shares that one deny-list instead of each
+// maintaining its own, which is what let a status slip out of sync in the first place.
 
 function inList(values: Array<string | number>): string {
   return `(${values.map((v) => (typeof v === "number" ? String(v) : `"${v}"`)).join(",")})`;

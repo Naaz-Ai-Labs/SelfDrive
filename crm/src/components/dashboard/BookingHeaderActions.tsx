@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { quickApproveBooking, rejectBooking, reopenBooking } from "@/lib/actions";
+import { ChangeBookingForm, RaiseRefundForm } from "@/components/dashboard/forms";
 
 const PRESET_REJECTION_REASONS = [
   "Invalid or expired Driving Licence",
@@ -19,10 +20,14 @@ export function BookingHeaderActions({
   bookingId,
   currentStatus,
   notes,
+  vehicles,
+  paidAmount,
 }: {
   bookingId: number;
   currentStatus: string;
   notes?: string | null;
+  vehicles: Array<{ id: number; name: string }>;
+  paidAmount: number;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -115,6 +120,10 @@ export function BookingHeaderActions({
             {pending ? "Saving..." : "Approve & Confirm Booking ✓"}
           </button>
         )}
+
+        <ChangeBookingForm bookingId={bookingId} vehicles={vehicles} />
+
+        {paidAmount > 0 && <RaiseRefundForm bookingId={bookingId} paidAmount={paidAmount} />}
       </div>
 
       {/* Rejection Modal */}

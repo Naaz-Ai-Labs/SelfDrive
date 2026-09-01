@@ -152,17 +152,16 @@ const DEFAULT_SLUG_PHOTOS: Record<string, string> = {
   "tempo-traveller-2days": "/vehicles/cta-tempo-banner.jpg",
 };
 
-/** A booking in one of these states is holding a unit, so it reduces availability. */
-const HOLDING_STATUSES = [
-  "Confirmed",
-  "Payment received",
-  "Pending payment",
-  "Vehicle handed over",
-  "Active rental",
-  "Pending verification",
-  "Enquiry",
-  "Draft",
-];
+/** A booking in any status OTHER than these is holding a unit — a deny-list, not an
+ * allow-list. bookings.ts's own reservation-conflict check (the authoritative "is this
+ * vehicle free" answer, run on every booking creation) has always worked this way; this
+ * used to be a separately-curated allow-list here that omitted "Ready for pickup" (and
+ * "Return pending", "Vehicle returned", …), so a booking sitting in one of those very
+ * normal mid-rental statuses didn't count as occupying its vehicle on the public
+ * availability listing — the vehicle showed fully available while actually booked. A
+ * deny-list can't go stale the same way: a newly-added status is occupying by default,
+ * and only these four terminal/non-committal ones need to be named. */
+export const BLOCKING_STATUSES = ["Cancelled", "Completed", "Draft", "Rejected"];
 
 /** Builds a PostgREST `in.(…)` predicate; values are quoted so spaces survive. */
 function inList(values: Array<string | number>): string {
@@ -434,7 +433,7 @@ async function hydrateVehicles(
     ),
     sbSelect<{ vehicle_id: number; branch_id: number | null; vehicle_unit_id: number | null }>(
       "bookings",
-      `select=vehicle_id,branch_id,vehicle_unit_id&vehicle_id=${idPredicate}&status=${inList(HOLDING_STATUSES)}${holdsFilter}${reservationTtlFilter}`
+      `select=vehicle_id,branch_id,vehicle_unit_id&vehicle_id=${idPredicate}&status=not.${inList(BLOCKING_STATUSES)}${holdsFilter}${reservationTtlFilter}`
     ),
     sbSelect<{ id: number; vehicle_id: number; current_branch_id: number | null; status: string; registration_no?: string; unit_identifier?: string }>(
       "vehicle_units",
@@ -989,7 +988,7 @@ export async function getGlobalFleetSummary(): Promise<GlobalFleetSummary> {
     getVehicleUnits(),
     sbSelect<{ id: number; vehicle_id: number; vehicle_unit_id: number | null }>(
       "bookings",
-      `select=id,vehicle_id,vehicle_unit_id&status=${encodeURIComponent(inList(HOLDING_STATUSES))}&return_at=gte.${encodeURIComponent(new Date().toISOString())}`
+      `select=id,vehicle_id,vehicle_unit_id&status=not.${encodeURIComponent(inList(BLOCKING_STATUSES))}&return_at=gte.${encodeURIComponent(new Date().toISOString())}`
     ),
     sbSelect<{ id: number; vehicle_id: number; vehicle_unit_id: number | null; reason: string }>(
       "availability_blocks",

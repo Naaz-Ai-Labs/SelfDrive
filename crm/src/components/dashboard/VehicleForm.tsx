@@ -262,7 +262,7 @@ export function VehicleForm({
     setUploading(true);
     setError("");
     try {
-      const compressed = await compressImageFile(file, 1600, 0.8);
+      const compressed = await compressImageFile(file);
       const fd = new FormData();
       fd.append("file", compressed);
       const res = await fetch("/api/upload", { method: "POST", body: fd });

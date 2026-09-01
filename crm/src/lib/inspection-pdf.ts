@@ -14,6 +14,45 @@ type Row = Record<string, unknown>;
 const str = (v: unknown, fallback = "—") =>
   v === null || v === undefined || v === "" ? fallback : String(v);
 
+/** Hard ceiling on a generated report. See generateInspectionPdf's retry logic below —
+ * this is checked, not assumed; a PDF over budget after every optimization step fails
+ * loudly (PdfTooLargeError) rather than being uploaded oversized or silently degraded. */
+export const MAX_PDF_BYTES = 800 * 1024;
+
+export class PdfTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PdfTooLargeError";
+  }
+}
+
+/** Each step is a deliberately modest degradation from the last — not a blind size
+ * chase — chosen so scratches, dents, the odometer and the fuel gauge stay legible.
+ * Every photo is always still embedded; only its resolution/quality steps down. */
+const PDF_EMBED_SHRINK_STEPS = [
+  { width: 1400, quality: 65 },
+  { width: 1100, quality: 50 },
+  { width: 900, quality: 40 },
+] as const;
+
+/**
+ * Recompresses an already-downloaded image buffer for PDF EMBEDDING ONLY — this never
+ * touches the Storage original, which stays at its uploaded quality for evidentiary
+ * purposes. Only called when a render already exceeded MAX_PDF_BYTES.
+ *
+ * pdfkit embeds JPEG bytes verbatim — it does not recompress on the way in — so the
+ * only way to shrink a PDF built from already-compressed evidence photos is to
+ * re-encode a second, smaller copy specifically for this PDF.
+ */
+async function shrinkForPdfEmbed(buf: Buffer, step: (typeof PDF_EMBED_SHRINK_STEPS)[number]): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  return sharp(buf)
+    .rotate() // apply EXIF orientation before the resize drops the EXIF block
+    .resize({ width: step.width, height: step.width, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: step.quality })
+    .toBuffer();
+}
+
 const DEFAULT_BOOKING_TERMS = [
   "1. Valid original Driving Licence & Government ID (Aadhaar/Passport) mandatory for vehicle handover.",
   "2. Included drive limit applies per 24-hour rental day. Driving beyond the limit is charged at extra km rates.",
@@ -165,6 +204,23 @@ async function loadPhotoBytes(url: string | null | undefined): Promise<Buffer | 
   }
 }
 
+function bookingRefFilter(bookingRef: number | string): string {
+  const rawRef = String(bookingRef).trim();
+  return /^\d+$/.test(rawRef)
+    ? `or=(id.eq.${rawRef},booking_no.eq.${rawRef},booking_no.eq.BK-${rawRef})`
+    : `or=(booking_no.eq.${encodeURIComponent(rawRef)},booking_no.eq.${encodeURIComponent(rawRef.replace(/^BK-/i, ""))})`;
+}
+
+/** Resolves a booking reference (numeric id OR booking_no, with/without the "BK-"
+ * prefix — same acceptance rules as generateInspectionPdf) to its real numeric id,
+ * with a single-column select. Lets the route check for an already-stored PDF
+ * artifact BEFORE paying for the full booking/inspection/photo load below. */
+export async function resolveBookingId(bookingRef: number | string): Promise<number | null> {
+  const res = await sbSelectOne<{ id: number }>("bookings", `select=id&${bookingRefFilter(bookingRef)}`);
+  if (!res.ok || !res.data) return null;
+  return Number(res.data.id);
+}
+
 /**
  * Generates an authoritative, print-ready Vehicle Handover or Return Inspection Report PDF.
  */
@@ -172,14 +228,9 @@ export async function generateInspectionPdf(
   bookingRef: number | string,
   mode: "handover" | "return" = "handover"
 ): Promise<Buffer> {
-  const rawRef = String(bookingRef).trim();
-  const filter = /^\d+$/.test(rawRef)
-    ? `or=(id.eq.${rawRef},booking_no.eq.${rawRef},booking_no.eq.BK-${rawRef})`
-    : `or=(booking_no.eq.${encodeURIComponent(rawRef)},booking_no.eq.${encodeURIComponent(rawRef.replace(/^BK-/i, ""))})`;
-
   const bookingRes = await sbSelectOne<Row>(
     "bookings",
-    `select=*,customers(name,phone,email,address,city),vehicles(name,brand,model,registration_no,included_km,extra_km_rate)&${filter}`
+    `select=*,customers(name,phone,email,address,city),vehicles(name,brand,model,registration_no,included_km,extra_km_rate)&${bookingRefFilter(bookingRef)}`
   );
 
   if (!bookingRes.ok) {
@@ -291,12 +342,11 @@ export async function generateInspectionPdf(
       String(d.file_path || "").toLowerCase().includes("signed_agreements")
   );
 
-  // Load photos and signature concurrently
-  const [
-    hFrontBytes, hRearBytes, hLeftBytes, hRightBytes, hOdoBytes, hFuelBytes,
-    rFrontBytes, rRearBytes, rLeftBytes, rRightBytes, rOdoBytes, rFuelBytes,
-    customerSigBytes,
-  ] = await Promise.all([
+  // Load photos and signature concurrently — a network-bound step, done ONCE regardless
+  // of whether the PDF needs a size-optimization retry below (only the pdfkit render
+  // and, if needed, an in-memory recompression of these already-downloaded bytes is
+  // repeated — never a second round of Storage downloads).
+  const rawPhotoBytes = await Promise.all([
     loadPhotoBytes(handoverSides.front),
     loadPhotoBytes(handoverSides.rear),
     loadPhotoBytes(handoverSides.left),
@@ -427,7 +477,18 @@ export async function generateInspectionPdf(
     pmtDetail = `Payment: ${methodDisplay} · Status: ${str(latestPayment.status, "Paid")} · Ref: ${txnRef}${pmtTime}`;
   }
 
-  return new Promise<Buffer>((resolve, reject) => {
+  // Renders the report from a given set of (already-downloaded) photo bytes. Called
+  // once normally; called a second time, with the SAME layout code, only when the
+  // first attempt comes back over MAX_PDF_BYTES — the retry passes in-memory
+  // recompressed copies of the same bytes, never re-fetching from Storage.
+  function render(photoBytes: Array<Buffer | null>): Promise<Buffer> {
+    const [
+      hFrontBytes, hRearBytes, hLeftBytes, hRightBytes, hOdoBytes, hFuelBytes,
+      rFrontBytes, rRearBytes, rLeftBytes, rRightBytes, rOdoBytes, rFuelBytes,
+      customerSigBytes,
+    ] = photoBytes;
+
+    return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
       margins: { top: 20, bottom: 20, left: 30, right: 30 },
@@ -817,5 +878,50 @@ export async function generateInspectionPdf(
     }
 
     doc.end();
-  });
+    });
+  }
+
+  const firstAttempt = await render(rawPhotoBytes);
+  const imageCount = rawPhotoBytes.filter(Boolean).length;
+
+  if (firstAttempt.length <= MAX_PDF_BYTES) {
+    console.log(JSON.stringify({
+      evt: "pdf_generated", bookingId, mode, bytes: firstAttempt.length, images: imageCount, optimized: false,
+    }));
+    return firstAttempt;
+  }
+
+  // Over budget: recompress the already-downloaded image bytes IN MEMORY (never the
+  // Storage originals, never the evidence copy) and re-render with the identical
+  // layout code above. Steps through progressively smaller/lower-quality copies —
+  // every photo stays embedded at every step, only its resolution/quality drops —
+  // until the render fits, or every step has been tried.
+  const optimizeStart = Date.now();
+  let lastAttempt = firstAttempt;
+  for (const step of PDF_EMBED_SHRINK_STEPS) {
+    let optimizedBytes: Array<Buffer | null>;
+    try {
+      optimizedBytes = await Promise.all(rawPhotoBytes.map((buf) => (buf ? shrinkForPdfEmbed(buf, step) : null)));
+    } catch (err) {
+      console.error(`[inspection-pdf] image optimization step ${step.width}px/q${step.quality} failed:`, err);
+      continue;
+    }
+    lastAttempt = await render(optimizedBytes);
+    if (lastAttempt.length <= MAX_PDF_BYTES) {
+      const optimizeMs = Date.now() - optimizeStart;
+      console.log(JSON.stringify({
+        evt: "pdf_generated", bookingId, mode, bytes: lastAttempt.length, images: imageCount,
+        optimized: true, step: `${step.width}px/q${step.quality}`, optimizeMs,
+      }));
+      return lastAttempt;
+    }
+  }
+
+  console.error(JSON.stringify({
+    evt: "pdf_too_large", bookingId, mode, bytes: lastAttempt.length, limit: MAX_PDF_BYTES, images: imageCount,
+  }));
+  throw new PdfTooLargeError(
+    `The ${mode} report for booking ${b.booking_no} is ${(lastAttempt.length / 1024).toFixed(0)}KB even after image optimization, ` +
+    `exceeding the ${(MAX_PDF_BYTES / 1024).toFixed(0)}KB limit. This booking may have unusually large source images — contact support.`
+  );
 }

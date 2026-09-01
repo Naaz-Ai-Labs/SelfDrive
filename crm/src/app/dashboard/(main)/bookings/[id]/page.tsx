@@ -9,7 +9,7 @@ import { StatusBadge } from "@/components/ui";
 import { calculateBookingFinancials } from "@/lib/pricing";
 import {
   BookingStatusSelect, BookingManagerSelect, AfterHoursApproval, InspectionForm,
-  ManualAdjustmentForm, DamageReportForm, PaymentForm, MarkPaidButton, ChangeBookingForm,
+  ManualAdjustmentForm, DamageReportForm, PaymentForm, MarkPaidButton,
 } from "@/components/dashboard/forms";
 import { DocumentVerifier } from "@/components/dashboard/DocumentVerifier";
 import { BookingHeaderActions } from "@/components/dashboard/BookingHeaderActions";
@@ -213,10 +213,19 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
         </div>
 
         <div className="mt-4">
+          {/* Staff/admin can still correct the assigned vehicle, pickup/return dates,
+             or customer details right up to the moment the vehicle physically
+             leaves. The server (changeBookingAtPickup) is the actual gate: once the
+             booking's status moves past CHANGEABLE_BEFORE_PICKUP (vehicle handed
+             over, active rental, etc.) it refuses the change, so this button staying
+             visible here is just convenience — it won't let anyone edit a booking
+             whose vehicle has already gone out. */}
           <BookingHeaderActions
             bookingId={id}
             currentStatus={String(booking.status)}
             notes={booking.notes as string | null}
+            vehicles={activeVehicles.map((v) => ({ id: v.id, name: v.name }))}
+            paidAmount={num(booking.paid_amount)}
           />
         </div>
       </div>
@@ -330,7 +339,7 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
             </div>
 
             {hasHandover ? (
-              <div className="space-y-4">
+              <div className="mt-4 space-y-4">
                 <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 font-semibold flex items-center gap-2">
                   <span>✓</span>
                   <span>Handover inspection photos and odometer readings recorded in CRM.</span>
@@ -338,14 +347,7 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
                 <SignedDocumentUploader bookingId={id} existingSignedDocs={signedDocs} />
               </div>
             ) : (
-              <div className="mt-2 space-y-3">
-                {/* Vehicle has not left yet — the rental can still be changed at the
-                   counter. Gone once handover is recorded below (server enforces this
-                   too; the vehicle has physically left by then). */}
-                <ChangeBookingForm
-                  bookingId={id}
-                  vehicles={activeVehicles.map((v) => ({ id: v.id, name: v.name }))}
-                />
+              <div className="mt-4">
                 <InspectionForm bookingId={id} kind="handover" />
               </div>
             )}

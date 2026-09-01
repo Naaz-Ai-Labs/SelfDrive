@@ -443,7 +443,15 @@ export const getContent = cache(async (availabilityWindow?: { pickupAt: string; 
     const path = availabilityWindow
       ? `/api/gateway/v1/content?pickupAt=${encodeURIComponent(availabilityWindow.pickupAt)}&returnAt=${encodeURIComponent(availabilityWindow.returnAt)}`
       : "/api/gateway/v1/content";
-    const data = await gatewayGet<Content & { error?: string }>(path, { revalidate: 0 });
+    // Only the dated (customer's own date search) call needs to bypass the cache —
+    // it's asking "is this specific window free right now". The plain undated call
+    // (every ordinary /vehicles page view) was ALSO forced through revalidate: 0,
+    // which disabled gatewayGet's own 60s Redis cache (web:gateway:*) for the
+    // highest-traffic public page — every visitor triggered a fresh fan-out of ~5
+    // Supabase queries in the CRM. Letting it fall through to that existing cache
+    // means a traffic spike hits Supabase at most once per 60s instead of once per
+    // visitor.
+    const data = await gatewayGet<Content & { error?: string }>(path, availabilityWindow ? { revalidate: 0 } : {});
     if (data && !("error" in data) && Array.isArray(data.vehicles)) {
       return {
         ...data,

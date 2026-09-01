@@ -15,3 +15,6 @@ next-env.d.ts
 
 # Large media files (exceeding GitHub's 100MB limit)
 *.mp4
+
+# Supabase CLI local cache
+supabase/.temp/

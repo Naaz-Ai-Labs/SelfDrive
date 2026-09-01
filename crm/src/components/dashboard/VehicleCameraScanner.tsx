@@ -43,6 +43,9 @@ export function VehicleCameraScanner({
   const [gpsStatus, setGpsStatus] = useState<"loading" | "active" | "denied" | "unavailable">("loading");
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
+  // Label of the side just captured, shown as a brief "✓ Captured" toast over the
+  // viewfinder then cleared — confirms the shot landed without blocking the next one.
+  const [justCaptured, setJustCaptured] = useState<string | null>(null);
   const [flashSupported, setFlashSupported] = useState(false);
   const [flashOn, setFlashOn] = useState(false);
 
@@ -256,7 +259,7 @@ export function VehicleCameraScanner({
       if (!blob) throw new Error("Failed to encode canvas image");
 
       const file = new File([blob], `vehicle_${side}_${Date.now()}.jpg`, { type: "image/jpeg" });
-      const compressed = await compressImageFile(file, 1600, 0.85);
+      const compressed = await compressImageFile(file);
 
       let savedUrl = canvas.toDataURL("image/jpeg", 0.85);
 
@@ -281,6 +284,9 @@ export function VehicleCameraScanner({
         lng: gpsLocation?.lng,
         timestamp: new Date().toISOString(),
       });
+
+      setJustCaptured(label);
+      setTimeout(() => setJustCaptured(null), 1500);
     } catch (err: unknown) {
       console.error("Geotag capture error:", err);
       alert("Failed to capture image frame. Please try again.");
@@ -542,6 +548,16 @@ export function VehicleCameraScanner({
                       {MANDATORY_SIDES.find((s) => s.key === activeSide)?.guide || "Align vehicle in frame"}
                     </div>
                   </div>
+
+                  {/* Brief "Captured" confirmation toast — auto-clears after 1.5s */}
+                  {justCaptured && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                      <div className="animate-in zoom-in-95 fade-in duration-150 flex items-center gap-2 rounded-full bg-emerald-600/95 px-5 py-2.5 text-sm font-bold text-white shadow-xl">
+                        <span>✓</span>
+                        <span>{justCaptured} Captured!</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Live Watermark Preview Badge */}
                   <div className="pointer-events-none absolute bottom-3 left-3 right-3 rounded-lg bg-slate-950/80 p-2.5 backdrop-blur border border-amber-500/30 text-[11px] font-mono">

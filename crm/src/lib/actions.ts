@@ -3,8 +3,8 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { requireUser, requireAdmin, assertCan } from "./auth";
-import { logActivity, pushNotification } from "./activity";
-import { slugify, normalizePhone } from "./utils";
+import { logActivity, pushNotification, notifyRoles } from "./activity";
+import { slugify, normalizePhone, nextNumber } from "./utils";
 import { sendTemplate } from "./messaging";
 import { getSetting, setSetting } from "./settings";
 import { calculateLateFee, calculateExtraKm } from "./pricing";
@@ -1696,17 +1696,89 @@ export async function markPaymentPaid(id: number, gatewayRef?: string) {
 
 /* --------------------------------- Refunds ----------------------------------- */
 
+/** Staff-raised refund — the counterpart to the customer's own self-service request
+ * in portal-actions.ts (customerRequestRefund), for when the customer can't or won't
+ * use the portal themselves (phone/WhatsApp complaint, walk-in, etc.) but a refund is
+ * genuinely owed. Lands as "Requested" — the same review pipeline (decideRefund,
+ * manager-only, then completeRefund, finance-only) applies either way, so a refund a
+ * staff member raises gets the same approval trail as one a customer raises. */
+export async function raiseRefund(input: { bookingId: number; reason: string; amount: number }) {
+  const user = await staffUser();
+  assertCan(user, "staff");
+
+  if (!input.reason.trim()) return { ok: false as const, error: "A reason is required." };
+  if (!(input.amount > 0)) return { ok: false as const, error: "Enter a refund amount greater than zero." };
+
+  const booking = await sbSelectOne<{ customer_id: number | null; paid_amount: string | number | null }>(
+    "bookings",
+    `select=customer_id,paid_amount&id=eq.${input.bookingId}`
+  );
+  if (!booking.ok) return fail(booking, "Reading the booking");
+  if (!booking.data) return { ok: false as const, error: `Booking ${input.bookingId} no longer exists.` };
+
+  const paidAmount = num(booking.data.paid_amount);
+  if (input.amount > paidAmount) {
+    return { ok: false as const, error: `Refund amount (₹${input.amount}) exceeds what was actually paid (₹${paidAmount}).` };
+  }
+
+  const refundNo = nextNumber("RF", null);
+  const inserted = await sbInsert("refunds", {
+    refund_no: refundNo,
+    booking_id: input.bookingId,
+    customer_id: booking.data.customer_id,
+    reason: input.reason.trim(),
+    requested_amount: input.amount,
+    status: "Requested",
+    requested_at: nowIso(),
+  });
+  if (!inserted.ok) return fail(inserted, "Raising the refund");
+
+  await logActivity(user.id, "refund_raised", "refund", input.bookingId, { amount: input.amount, reason: input.reason });
+  await notifyRoles(["admin", "finance"], `Refund to review — ${refundNo}`, input.reason, null, input.bookingId).catch(() => null);
+  refresh();
+  return { ok: true as const, refundNo };
+}
+
 export async function decideRefund(id: number, decision: "Approved" | "Rejected" | "Partially approved", approvedAmount?: number, notes?: string) {
   const user = await staffUser();
   assertCan(user, "manager");
 
-  const res = await sbUpdate("refunds", `id=eq.${id}`, {
+  const refund = await sbSelectOne<{ status: string; booking_id: number }>("refunds", `select=status,booking_id&id=eq.${id}`);
+  if (!refund.ok) return fail(refund, "Reading the refund");
+  if (!refund.data) return { ok: false as const, error: `Refund ${id} no longer exists.` };
+  if (refund.data.status === "Completed") {
+    return { ok: false as const, error: "This refund has already been completed — its decision can no longer be changed." };
+  }
+
+  // A refund can be raised for less than was paid, but never approved for more —
+  // whatever the customer originally requested. raiseRefund/customerRequestRefund
+  // already cap the initial ask against paid_amount; this closes the same hole at
+  // the approval step, where a manager could otherwise type in any number.
+  if (decision !== "Rejected" && approvedAmount) {
+    const booking = await sbSelectOne<{ paid_amount: string | number | null }>(
+      "bookings",
+      `select=paid_amount&id=eq.${refund.data.booking_id}`
+    );
+    if (!booking.ok) return fail(booking, "Reading the booking");
+    const paidAmount = num(booking.data?.paid_amount);
+    if (approvedAmount > paidAmount) {
+      return { ok: false as const, error: `Approved amount (₹${approvedAmount}) exceeds what was actually paid (₹${paidAmount}).` };
+    }
+  }
+
+  // The status filter (not just the earlier read) closes the race where two staff
+  // decide the same refund at once — same pattern as the Completed-claim below and
+  // processOnlineRazorpayRefund's claim update.
+  const res = await sbUpdate("refunds", `id=eq.${id}&status=not.eq.Completed`, {
     status: decision,
     approved_amount: approvedAmount ?? null,
     admin_notes: notes ?? null,
     approved_at: nowIso(),
   });
   if (!res.ok) return fail(res, "Recording the refund decision");
+  if (res.data.length === 0) {
+    return { ok: false as const, error: "This refund has already been completed — its decision can no longer be changed." };
+  }
 
   await logActivity(user.id, "refund_decision", "refund", id, { decision, approvedAmount });
   refresh();
@@ -1717,12 +1789,21 @@ export async function completeRefund(id: number, method: string, transactionRef:
   const user = await staffUser();
   assertCan(user, "finance");
 
+  if (!transactionRef.trim()) return { ok: false as const, error: "A transaction reference is required." };
+
+  // Only an Approved/Partially approved refund can be completed, and only once — the
+  // status filter on the update itself (not a separate read-then-write) is what
+  // actually closes the race between two staff completing the same refund at once.
+  const claimFilter = `id=eq.${id}&status=in.${encodeURIComponent('("Approved","Partially approved")')}`;
   const updated = await sbUpdate<{ booking_id: number; approved_amount: string | number | null; customer_id: number | null }>(
     "refunds",
-    `id=eq.${id}`,
+    claimFilter,
     { status: "Completed", method, transaction_ref: transactionRef, completed_at: nowIso() }
   );
   if (!updated.ok) return fail(updated, "Completing the refund");
+  if (updated.data.length === 0) {
+    return { ok: false as const, error: "This refund isn't in an approved state — it may already be completed, rejected, or not yet decided." };
+  }
 
   const refund = updated.data[0];
   if (refund?.customer_id) {

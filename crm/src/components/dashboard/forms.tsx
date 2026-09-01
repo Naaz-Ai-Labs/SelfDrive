@@ -6,7 +6,7 @@ import {
   createManualEnquiry, changeEnquiryStage, assignEnquiry, addEnquiryNote,
   updateBookingStatus, assignBookingManager, approveAfterHours, addManualAdjustment,
   recordInspection, addDamageReport, addPayment, markPaymentPaid,
-  decideRefund, completeRefund, updateProblemTicket, changeBookingAtPickup,
+  decideRefund, completeRefund, updateProblemTicket, changeBookingAtPickup, raiseRefund,
 } from "@/lib/actions";
 import { compressImageFile } from "@/lib/image-compression";
 import { VehicleCameraScanner, type CapturedPhoto } from "./VehicleCameraScanner";
@@ -346,6 +346,11 @@ export function ChangeBookingForm({
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [reason, setReason] = useState("");
+  // Optional on top of the automatic re-price above — e.g. a negotiated price match
+  // or a goodwill discount for the inconvenience of a reassignment. Recorded as its
+  // own manual adjustment (positive collects more, negative refunds), same as the
+  // Pricing breakdown card's adjustment tool.
+  const [priceOverride, setPriceOverride] = useState("");
 
   function submit(e: React.FormEvent, reassignUnit = false) {
     e.preventDefault();
@@ -363,6 +368,18 @@ export function ChangeBookingForm({
       });
       if (!res.ok) { setError(res.error); return; }
       if (res.changed) setResult({ previousTotal: res.previousTotal, newTotal: res.newTotal, difference: res.difference });
+
+      if (priceOverride.trim()) {
+        const adj = await addManualAdjustment({
+          bookingId,
+          type: "price_override",
+          amount: Number(priceOverride),
+          reason: reason.trim() || "Price adjustment on vehicle/date change",
+        });
+        if (!adj.ok) { setError(adj.error); return; }
+        setPriceOverride("");
+      }
+
       router.refresh();
     });
   }
@@ -382,13 +399,36 @@ export function ChangeBookingForm({
           <option value="">Keep current vehicle</option>
           {vehicles.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
         </select>
-        <input className="input" type="datetime-local" placeholder="New pickup" value={pickupAt} onChange={(e) => setPickupAt(e.target.value)} />
+        <div className="flex gap-1.5">
+          <input className="input" type="datetime-local" placeholder="New pickup" value={pickupAt} onChange={(e) => setPickupAt(e.target.value)} />
+          <button
+            type="button"
+            title="Set pickup to right now — for a customer taking the vehicle immediately"
+            onClick={() => {
+              const now = new Date();
+              now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+              setPickupAt(now.toISOString().slice(0, 16));
+            }}
+            className="shrink-0 rounded-lg border border-ink-300 bg-ink-50 px-2.5 text-xs font-semibold text-ink-700 hover:bg-ink-100"
+          >
+            Now
+          </button>
+        </div>
         <input className="input" type="datetime-local" placeholder="New return" value={returnAt} onChange={(e) => setReturnAt(e.target.value)} />
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
         <input className="input" placeholder="Correct name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
         <input className="input" placeholder="Correct phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} />
         <input className="input" placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+      </div>
+      <div>
+        <input
+          className="input"
+          type="number"
+          placeholder="Price difference override (₹, optional — negative to refund)"
+          value={priceOverride}
+          onChange={(e) => setPriceOverride(e.target.value)}
+        />
       </div>
       {error && <p className="field-error">{error}</p>}
       {result && (
@@ -495,21 +535,104 @@ export function MarkPaidButton({ id }: { id: number }) {
   );
 }
 
-export function RefundDecisionForm({ id, requested }: { id: number; requested: number }) {
-  const [amount, setAmount] = useState(String(requested));
+/** Staff-side counterpart to the customer's own self-service refund request — for a
+ * phone/WhatsApp complaint or walk-in where the customer can't or won't use the portal.
+ * Lands as "Requested" and goes through the same manager-decide / finance-complete
+ * pipeline as any customer-raised refund (see /dashboard/refunds). */
+export function RaiseRefundForm({ bookingId, paidAmount }: { bookingId: number; paidAmount: number }) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(String(paidAmount));
+  const [reason, setReason] = useState("");
+  const { pending, error, run, setError } = useAction();
+  const [refundNo, setRefundNo] = useState("");
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    // These used to fail silently (a bare `return`) — from the outside that looked
+    // exactly like "submitting doesn't work", with no clue why.
+    if (!reason.trim()) { setError("A reason is required."); return; }
+    const value = Number(amount);
+    if (!amount || !(value > 0)) { setError("Enter a refund amount greater than zero."); return; }
+    if (value > paidAmount) {
+      setError(`Refund amount can't exceed what was actually paid (₹${paidAmount.toLocaleString("en-IN")}).`);
+      return;
+    }
+    run(async () => {
+      const res = await raiseRefund({ bookingId, reason: reason.trim(), amount: value });
+      if (res.ok) {
+        setRefundNo(res.refundNo);
+        setReason("");
+        setOpen(false);
+      }
+      return res;
+    });
+  }
+
+  if (!open) {
+    return (
+      <div>
+        <button type="button" onClick={() => setOpen(true)} className="btn-secondary px-4 py-2 text-xs">
+          Raise Refund
+        </button>
+        {refundNo && (
+          <p className="mt-2 text-xs font-medium text-emerald-700">
+            ✓ {refundNo} raised — a manager needs to approve it on the Refunds page before it can be paid out.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-2 rounded-lg border border-ink-200 p-3">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <input
+          className="input"
+          type="number"
+          max={paidAmount}
+          placeholder={`Refund amount (max ₹${paidAmount.toLocaleString("en-IN")})`}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+        <input className="input" placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      </div>
+      {error && <p className="field-error">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={pending} className="btn-primary px-4 py-2 text-xs">
+          {pending ? "Raising…" : "Submit refund request"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs text-ink-500 hover:text-ink-900">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export function RefundDecisionForm({ id, requested, maxAmount }: { id: number; requested: number; maxAmount: number }) {
+  const [amount, setAmount] = useState(String(Math.min(requested, maxAmount)));
   const [notes, setNotes] = useState("");
-  const { pending, error, run } = useAction();
+  const { pending, error, run, setError } = useAction();
+
+  function decide(decision: "Approved" | "Partially approved" | "Rejected", value: number) {
+    if (decision !== "Rejected" && value > maxAmount) {
+      setError(`Approved amount can't exceed what was actually paid (₹${maxAmount.toLocaleString("en-IN")}).`);
+      return;
+    }
+    run(() => decideRefund(id, decision, value, notes || undefined));
+  }
+
   return (
     <div className="space-y-2">
       <div className="grid gap-2 sm:grid-cols-2">
-        <input className="input" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Approved amount" />
+        <input className="input" type="number" max={maxAmount} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`Approved amount (max ₹${maxAmount.toLocaleString("en-IN")})`} />
         <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Admin notes" />
       </div>
       {error && <p className="field-error">{error}</p>}
       <div className="flex gap-2">
-        <button type="button" disabled={pending} onClick={() => run(() => decideRefund(id, "Approved", Number(amount), notes || undefined))} className="btn-primary px-4 py-2 text-xs">Approve</button>
-        <button type="button" disabled={pending} onClick={() => run(() => decideRefund(id, "Partially approved", Number(amount), notes || undefined))} className="btn-secondary px-4 py-2 text-xs">Partial approve</button>
-        <button type="button" disabled={pending} onClick={() => run(() => decideRefund(id, "Rejected", 0, notes || undefined))} className="btn-secondary px-4 py-2 text-xs">Reject</button>
+        <button type="button" disabled={pending} onClick={() => decide("Approved", Number(amount))} className="btn-primary px-4 py-2 text-xs">Approve</button>
+        <button type="button" disabled={pending} onClick={() => decide("Partially approved", Number(amount))} className="btn-secondary px-4 py-2 text-xs">Partial approve</button>
+        <button type="button" disabled={pending} onClick={() => decide("Rejected", 0)} className="btn-secondary px-4 py-2 text-xs">Reject</button>
       </div>
     </div>
   );
@@ -518,10 +641,12 @@ export function RefundDecisionForm({ id, requested }: { id: number; requested: n
 export function CompleteRefundForm({ id }: { id: number }) {
   const [method, setMethod] = useState("UPI");
   const [ref, setRef] = useState("");
-  const { pending, error, run } = useAction();
+  const { pending, error, run, setError } = useAction();
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!ref.trim()) return;
+    // Same silent-return bug as the two refund forms above — a blank reference used
+    // to just do nothing, with no indication why.
+    if (!ref.trim()) { setError("A transaction reference is required."); return; }
     run(() => completeRefund(id, method, ref.trim()));
   }
   return (

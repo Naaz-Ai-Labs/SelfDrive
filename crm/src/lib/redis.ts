@@ -88,6 +88,40 @@ export async function cacheSet<T>(key: string, value: T, ttlSeconds = 3600): Pro
 }
 
 /**
+ * Fixed-window rate limit: allows at most `limit` calls per `windowSeconds` for a
+ * given key. Returns true if this call is allowed, false if the caller should be
+ * throttled. Same INCR-then-EXPIRE pattern whether backed by real Upstash Redis
+ * (shared across serverless instances — the only backing that's correct for this,
+ * per the file-level note above) or the in-memory fallback (per-instance only, so
+ * strictly a lower bound, but still better than nothing).
+ */
+export async function checkRateLimit(key: string, limit: number, windowSeconds: number): Promise<boolean> {
+  const redis = await getRedis();
+  const rlKey = `ratelimit:${key}`;
+
+  if (redis) {
+    try {
+      const count = await redis.incr(rlKey);
+      if (count === 1) await redis.expire(rlKey, windowSeconds);
+      return count <= limit;
+    } catch (err: any) {
+      console.warn("⚠️ Upstash Redis checkRateLimit error:", err?.message || err);
+      // A Redis hiccup must not itself block real customers from booking.
+      return true;
+    }
+  }
+
+  const now = Date.now();
+  const item = memoryCache.get(rlKey);
+  if (!item || now >= item.expiresAt) {
+    memoryCache.set(rlKey, { value: 1, expiresAt: now + windowSeconds * 1000 });
+    return true;
+  }
+  item.value += 1;
+  return item.value <= limit;
+}
+
+/**
  * Invalidates (deletes) a cache key or keys matching a pattern.
  */
 export async function cacheInvalidate(key: string): Promise<void> {

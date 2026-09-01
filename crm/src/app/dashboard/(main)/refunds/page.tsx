@@ -18,13 +18,14 @@ export default async function RefundsPage() {
 
   const refundsRes = await sbSelect<Record<string, unknown>>(
     "refunds",
-    "select=*,bookings(booking_no),customers(name)&order=requested_at.desc"
+    "select=*,bookings(booking_no,paid_amount),customers(name)&order=requested_at.desc"
   );
   if (!refundsRes.ok) throw new Error(`Could not load refunds: ${refundsRes.error}`);
 
   const refunds = refundsRes.data.map((r): Record<string, unknown> => ({
     ...r,
     booking_no: (r.bookings as { booking_no?: string } | null)?.booking_no ?? null,
+    paid_amount: num((r.bookings as { paid_amount?: unknown } | null)?.paid_amount),
     customer_name: (r.customers as { name?: string } | null)?.name ?? null,
     requested_amount: num(r.requested_amount),
     approved_amount: r.approved_amount === null || r.approved_amount === undefined ? null : num(r.approved_amount),
@@ -47,7 +48,7 @@ export default async function RefundsPage() {
               <StatusBadge status={String(r.status)} />
             </div>
             {["Requested", "Under review"].includes(String(r.status)) && (
-              <div className="mt-4 border-t border-ink-100 pt-4"><RefundDecisionForm id={Number(r.id)} requested={Number(r.requested_amount)} /></div>
+              <div className="mt-4 border-t border-ink-100 pt-4"><RefundDecisionForm id={Number(r.id)} requested={Number(r.requested_amount)} maxAmount={Number(r.paid_amount)} /></div>
             )}
             {["Approved", "Partially approved"].includes(String(r.status)) && (
               <div className="mt-4 border-t border-ink-100 pt-4"><CompleteRefundForm id={Number(r.id)} /></div>

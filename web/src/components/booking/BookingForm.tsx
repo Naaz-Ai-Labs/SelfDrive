@@ -687,7 +687,6 @@ export function BookingForm({
                   Track Booking Status 📍
                 </Link>
                 <a href={waLink(businessWhatsapp, `Hi, this is regarding my booking ${result?.bookingNo}`)} target="_blank" rel="noopener noreferrer" className="btn-secondary py-2 text-xs">Message us on WhatsApp 💬</a>
-                <Link href="/customer/portal" className="btn-secondary py-2 text-xs">Customer Portal ↗</Link>
               </div>
             </div>
 
