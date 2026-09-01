@@ -178,9 +178,10 @@ async function migrate() {
       const uniqueMismatch = Array.from(new Set(columnMismatches.map((c) => ` - ${c.table}.${c.column}`)));
       console.log(uniqueMismatch.join("\n"));
     }
+    const projectRef = new URL(SUPABASE_URL).hostname.split(".")[0];
     console.log("\n📋 MIGRATION SOLUTION:");
     console.log("1. Open your Supabase Dashboard SQL Editor:");
-    console.log("   👉 https://supabase.com/dashboard/project/puymlkdcoqpptajslucu/sql");
+    console.log(`   👉 https://supabase.com/dashboard/project/${projectRef}/sql`);
     console.log("2. Copy and execute the contents of 'supabase/migrations/20260809_fix_supabase_schema.sql'");
     console.log("3. Re-run this command: npm run migrate:supabase");
   } else {
