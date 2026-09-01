@@ -33,7 +33,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable}`}>
+    // suppressHydrationWarning only on this element: browser extensions (screen/session
+    // recorders, password managers, etc.) inject attributes like data-scribe-recorder-ready
+    // onto <html> before React hydrates. React has no control over that DOM mutation, so
+    // without this it throws "hydration mismatch" for an attribute the app never rendered
+    // in the first place. It does not hide real hydration bugs anywhere else in the tree.
+    <html lang="en" className={`${display.variable} ${sans.variable}`} suppressHydrationWarning>
       <body className="min-h-screen bg-ink-50">{children}</body>
     </html>
   );
