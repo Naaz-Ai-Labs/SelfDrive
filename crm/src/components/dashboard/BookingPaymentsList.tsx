@@ -57,6 +57,7 @@ export function BookingPaymentsList({
           notes: (raw.notes as string) ?? null,
           receipt_no: (raw.receipt_no as string) ?? null,
           created_at: (raw.created_at as string) ?? null,
+          proof_url: (raw.proof_url as string) ?? null,
         };
 
         const upi = p.upi_id || p.vpa;

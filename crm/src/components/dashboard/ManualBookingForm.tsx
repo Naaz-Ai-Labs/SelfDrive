@@ -83,6 +83,12 @@ export function ManualBookingForm({
 
   const kycComplete = Boolean(documents.licence?.url && documents.driver_govt_id?.url && documents.driver_photo?.url);
 
+  // A cash handover has no digital trail; UPI/card/bank transfer do, and staff must
+  // attach the screenshot rather than just typing an amount in.
+  const [paymentProofUrl, setPaymentProofUrl] = useState("");
+  const [paymentProofError, setPaymentProofError] = useState("");
+  const collectingNonCash = Boolean(amountCollected) && Number(amountCollected) > 0 && paymentMethod !== "Cash";
+
   async function upload(kind: string, file: File) {
     setUploading(kind);
     setUploadErrors((e) => ({ ...e, [kind]: "" }));
@@ -96,6 +102,24 @@ export function ManualBookingForm({
       setDocuments((d) => ({ ...d, [kind]: { ...d[kind], url: res.path } }));
     } catch (err) {
       setUploadErrors((e) => ({ ...e, [kind]: err instanceof Error ? err.message : "Upload failed. Please try again." }));
+    } finally {
+      setUploading(null);
+    }
+  }
+
+  async function uploadPaymentProof(file: File) {
+    setUploading("payment_proof");
+    setPaymentProofError("");
+    try {
+      const compressed = await compressImageFile(file, 1600, 0.8);
+      const fd = new FormData();
+      fd.append("file", compressed);
+      fd.append("folder", "documents");
+      const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
+      if (!res.ok || !res.path) throw new Error(res.error || "Upload failed. Please try again or use a smaller image.");
+      setPaymentProofUrl(res.path);
+    } catch (err) {
+      setPaymentProofError(err instanceof Error ? err.message : "Upload failed. Please try again.");
     } finally {
       setUploading(null);
     }
@@ -135,6 +159,9 @@ export function ManualBookingForm({
     if (dlExpiry < returnAt.slice(0, 10)) {
       return setError("The driver's licence expires before the return date. A licence valid through the rental is required.");
     }
+    if (collectingNonCash && !paymentProofUrl) {
+      return setError("Upload the payment screenshot as proof before creating the booking.");
+    }
 
     startTransition(async () => {
       const docPayload = Object.entries(documents)
@@ -155,6 +182,7 @@ export function ManualBookingForm({
         notes: notes.trim() || undefined,
         amountCollected: amountCollected ? Number(amountCollected) : undefined,
         paymentMethod,
+        paymentProofUrl: paymentProofUrl || undefined,
         instant,
         startOdometer: startOdometer ? Number(startOdometer) : undefined,
         fuelLevel: fuelLevel || undefined,
@@ -352,6 +380,35 @@ export function ManualBookingForm({
           <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} disabled={pending} />
         </div>
       </div>
+
+      {collectingNonCash && (
+        <div>
+          <label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-4 text-center text-xs text-ink-500 hover:border-brand-500">
+            {paymentProofUrl ? (
+              <span className="font-semibold text-emerald-700">✓ Payment proof uploaded</span>
+            ) : (
+              <span>{uploading === "payment_proof" ? "Uploading…" : `Upload ${paymentMethod} payment screenshot *`}</span>
+            )}
+            {paymentProofError && <span className="text-[11px] font-medium text-red-600">{paymentProofError} Tap to retry.</span>}
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              disabled={pending}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  uploadPaymentProof(file).catch(console.error);
+                  e.target.value = "";
+                }
+              }}
+            />
+          </label>
+          <p className="mt-1 text-[11px] text-ink-500">
+            Cash has no digital trail, but {paymentMethod} does — a screenshot of the completed transaction is required.
+          </p>
+        </div>
+      )}
 
       <p className="text-[11px] text-ink-500">
         The vehicle is reserved the moment this is saved, using the same atomic claim the

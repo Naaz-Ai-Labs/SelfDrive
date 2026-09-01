@@ -1615,7 +1615,7 @@ export async function addDamageReport(input: { bookingId: number; inspectionId?:
 
 /* --------------------------------- Payments --------------------------------- */
 
-export async function addPayment(input: { bookingId: number; amount: number; kind?: string; method?: string; dueDate?: string; notes?: string }) {
+export async function addPayment(input: { bookingId: number; amount: number; kind?: string; method?: string; dueDate?: string; notes?: string; proofUrl?: string }) {
   const user = await staffUser();
 
   const booking = await sbSelectOne<{ customer_id: number | null }>("bookings", `select=customer_id&id=eq.${input.bookingId}`);
@@ -1631,6 +1631,7 @@ export async function addPayment(input: { bookingId: number; amount: number; kin
     due_date: input.dueDate ?? null,
     status: "Pending",
     notes: input.notes ?? null,
+    proof_url: input.proofUrl ?? null,
   });
   if (!payment.ok) return fail(payment, "Creating the payment");
 
@@ -2200,6 +2201,9 @@ export async function createManualBooking(input: {
   /** Staff may collect cash at the counter; recorded through the normal payment path. */
   amountCollected?: number;
   paymentMethod?: string;
+  /** Required whenever amountCollected is set AND paymentMethod isn't Cash — a UPI/
+   * card/bank-transfer collection has a screenshot to prove it happened; cash doesn't. */
+  paymentProofUrl?: string;
   /**
    * INSTANT booking: the customer is taking the vehicle right now, not booking for
    * later. The booking is created, paid and handed over in one step, so it lands in
@@ -2242,6 +2246,14 @@ export async function createManualBooking(input: {
   }
   if (!licenceDoc.expiry || licenceDoc.expiry < input.returnAt.slice(0, 10)) {
     return { ok: false as const, error: "The driver's licence must be valid through the return date." };
+  }
+
+  // A cash handover has no digital trail to prove it happened; UPI, card and bank
+  // transfer all do, and staff must attach it rather than just typing an amount in.
+  const collectingPayment = Boolean(input.amountCollected && input.amountCollected > 0);
+  const isCash = (input.paymentMethod || "Cash") === "Cash";
+  if (collectingPayment && !isCash && !input.paymentProofUrl) {
+    return { ok: false as const, error: "Upload the payment screenshot as proof before creating the booking." };
   }
 
   const { createBooking } = await import("./bookings");
@@ -2313,6 +2325,7 @@ export async function createManualBooking(input: {
       kind: "full",
       method: input.paymentMethod || "Cash",
       notes: "Collected at the counter",
+      proofUrl: input.paymentProofUrl,
     });
     if (!payment.ok) {
       // The booking exists and holds its unit — do not fail the whole thing over the

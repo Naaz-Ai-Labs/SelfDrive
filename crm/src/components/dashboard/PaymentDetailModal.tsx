@@ -38,6 +38,7 @@ export type PaymentTransactionData = {
   notes?: string | null;
   receipt_no?: string | null;
   created_at?: string;
+  proof_url?: string | null;
 };
 
 const KIND_INFO: Record<string, { label: string; bg: string }> = {
@@ -333,6 +334,20 @@ export function PaymentDetailModal({
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {payment.proof_url && (
+            <div className="card p-4 space-y-2 bg-ink-50/50">
+              <h3 className="font-display font-semibold text-xs text-ink-700">Payment Proof</h3>
+              <a
+                href={payment.proof_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+              >
+                📎 View uploaded screenshot
+              </a>
             </div>
           )}
 
