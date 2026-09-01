@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 import { FleetUnitBlockManager } from "@/components/dashboard/FleetUnitBlockManager";
-import { loadFleetVehicles, loadFleetBranches, loadFleetUnits } from "@/lib/fleet-page-data";
+import { loadFleetVehicles, loadFleetBranches, loadFleetUnits, loadFleetBlocks } from "@/lib/fleet-page-data";
 
 export const metadata: Metadata = { title: "Plate Blocking", robots: { index: false, follow: false } };
 export const revalidate = 0;
 
 export default async function FleetBlockingPage() {
-  const [vehicles, branches, units] = await Promise.all([
+  const [vehicles, branches, units, blocks] = await Promise.all([
     loadFleetVehicles(),
     loadFleetBranches(),
     loadFleetUnits(),
+    loadFleetBlocks(),
   ]);
 
   return (
@@ -23,7 +24,7 @@ export default async function FleetBlockingPage() {
         </div>
       </div>
 
-      <FleetUnitBlockManager vehicles={vehicles} units={units} branches={branches} />
+      <FleetUnitBlockManager vehicles={vehicles} units={units} branches={branches} blocks={blocks} />
     </div>
   );
 }

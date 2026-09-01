@@ -601,6 +601,26 @@ export async function bulkUpdateUnitStatus(
   const effDate = nowIso();
   const idPredicate = `in.(${unitIds.join(",")})`;
 
+  // Bulk "Plate Blocking" was the one place a unit's status could be flipped with
+  // literally no reason prompt in the UI — the mechanism behind DIO-001/ACTIVA-001
+  // never even had a chance to require one, since this action never checked. Fires
+  // whenever ANY selected unit is transitioning into a blocked state; a mixed
+  // selection (some already blocked, some not) still needs one reason that covers
+  // the newly-blocked ones.
+  if (status !== "available") {
+    const existingRes = await sbSelect<{ id: number; status: string }>(
+      "vehicle_units",
+      `select=id,status&id=${encodeURIComponent(idPredicate)}`
+    );
+    // fail closed: cannot confirm every unit is already in this state, so require the reason
+    const anyTransitioning = existingRes.ok
+      ? (await Promise.all(existingRes.data.map((u) => unitStatusChangeNeedsReason(status, u.status, reason)))).some(Boolean)
+      : true;
+    if (anyTransitioning) {
+      return { ok: false as const, error: `Enter a reason for marking these unit(s) "${status}" — this removes them from every future date's availability.` };
+    }
+  }
+
   // 1. Update only the selected physical vehicle units
   const updateRes = await sbUpdate(
     "vehicle_units",

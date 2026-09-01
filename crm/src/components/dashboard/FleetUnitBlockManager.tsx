@@ -3,19 +3,32 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Vehicle, VehicleUnit, Branch } from "@/lib/data";
-import { bulkUpdateUnitStatus, bulkUpdateVehicleStatus } from "@/lib/actions";
+import type { FleetBlock } from "@/lib/fleet-page-data";
+import { bulkUpdateUnitStatus, bulkUpdateVehicleStatus, blockVehicleDates, unblockVehicleDates } from "@/lib/actions";
 import { formatINR } from "@/lib/utils";
 import Link from "next/link";
 import { getCategoryPresetPhoto } from "@/lib/data";
+
+/** Date-only input gives "YYYY-MM-DD"; a block needs the full IST day span. Same
+ * boundaries FleetGanttCalendar's click-a-day block uses, so a plate blocked here and
+ * one blocked from the timeline behave identically. */
+function istDayBounds(dayKey: string): { startsAt: string; endsAt: string } {
+  return { startsAt: `${dayKey}T00:00:00+05:30`, endsAt: `${dayKey}T23:59:59+05:30` };
+}
+function todayKey(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // en-CA = YYYY-MM-DD
+}
 
 export function FleetUnitBlockManager({
   vehicles,
   units,
   branches,
+  blocks,
 }: {
   vehicles: Vehicle[];
   units: VehicleUnit[];
   branches: Branch[];
+  blocks: FleetBlock[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -27,6 +40,64 @@ export function FleetUnitBlockManager({
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [actionError, setActionError] = useState<string>("");
   const [actionSuccess, setActionSuccess] = useState<string>("");
+
+  // Date-scoped blocking: the correct, self-clearing mechanism for "off the road for a
+  // known period" — a block that only affects the dates it names, and needs no one to
+  // remember to undo it. This is what "Block Selected" now opens, instead of the
+  // permanent, date-blind status flip bulkUpdateUnitStatus performs.
+  const [showBlockPanel, setShowBlockPanel] = useState(false);
+  const [blockDuration, setBlockDuration] = useState<"1day" | "custom">("1day");
+  const [blockStart, setBlockStart] = useState(todayKey());
+  const [blockEnd, setBlockEnd] = useState(todayKey());
+  const [blockReasonKind, setBlockReasonKind] = useState<"maintenance" | "manual_block">("maintenance");
+  const [blockNotes, setBlockNotes] = useState("");
+
+  function submitDurationBlock() {
+    const endKey = blockDuration === "1day" ? blockStart : blockEnd;
+    if (!blockStart || !endKey) return setActionError("Pick a start date.");
+    if (endKey < blockStart) return setActionError("End date must be on or after the start date.");
+    if (!blockNotes.trim()) return setActionError("Enter a reason — this takes each selected unit off every date in the range.");
+
+    const { startsAt } = istDayBounds(blockStart);
+    const { endsAt } = istDayBounds(endKey);
+    const targets = units.filter((u) => selectedUnitIds.includes(u.id));
+
+    setActionError("");
+    setActionSuccess("");
+    startTransition(async () => {
+      const results = await Promise.all(
+        targets.map((u) =>
+          blockVehicleDates({
+            vehicleId: u.vehicle_id,
+            vehicleUnitId: u.id,
+            startsAt,
+            endsAt,
+            reason: blockReasonKind,
+            notes: blockNotes.trim(),
+          })
+        )
+      );
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length > 0) {
+        setActionError(`${failed.length} of ${targets.length} unit(s) could not be blocked: ${failed[0].error}`);
+      } else {
+        setActionSuccess(`Blocked ${targets.length} unit(s) from ${blockStart}${endKey !== blockStart ? ` to ${endKey}` : ""}.`);
+      }
+      setSelectedUnitIds([]);
+      setShowBlockPanel(false);
+      setBlockNotes("");
+      router.refresh();
+    });
+  }
+
+  function handleUnblockDateRange(blockId: number) {
+    setActionError("");
+    startTransition(async () => {
+      const res = await unblockVehicleDates(blockId);
+      if (!res.ok) setActionError(res.error || "Could not lift that block.");
+      router.refresh();
+    });
+  }
 
   const branchMap = new Map(branches.map((b) => [b.id, b]));
 
@@ -281,10 +352,10 @@ export function FleetUnitBlockManager({
             <button
               type="button"
               disabled={pending}
-              onClick={() => (activeTab === "units" ? handleBulkUnits("unavailable") : handleBulkVehicles("unavailable"))}
+              onClick={() => (activeTab === "units" ? setShowBlockPanel(true) : handleBulkVehicles("unavailable"))}
               className="rounded-lg bg-red-600 hover:bg-red-700 text-white px-3.5 py-1.5 text-xs font-bold shadow-xs transition disabled:opacity-50"
             >
-              {pending ? "…" : "🚫 Block Selected (Mark Unavailable)"}
+              {pending ? "…" : activeTab === "units" ? "📅 Block Selected (Choose Dates)" : "🚫 Block Selected (Mark Unavailable)"}
             </button>
             <button
               type="button"
@@ -292,7 +363,7 @@ export function FleetUnitBlockManager({
               onClick={() => (activeTab === "units" ? handleBulkUnits("available") : handleBulkVehicles("available"))}
               className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 text-xs font-bold shadow-xs transition disabled:opacity-50"
             >
-              {pending ? "…" : "✅ Unblock Selected (Mark Available)"}
+              {pending ? "…" : "✅ Unblock Selected (Lift Permanent Flag)"}
             </button>
             <button
               type="button"
@@ -302,6 +373,123 @@ export function FleetUnitBlockManager({
               Clear Selection
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Duration block panel — the actual feature: a block that only affects the dates
+          it names, and clears itself instead of needing anyone to remember to undo it. */}
+      {showBlockPanel && activeTab === "units" && (
+        <div className="card p-4 space-y-3 border-2 border-red-200 bg-red-50/40">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-ink-900">
+              Block {selectedUnitIds.length} unit(s) for a period
+            </h3>
+            <button type="button" onClick={() => setShowBlockPanel(false)} className="text-xs text-ink-500 hover:text-ink-900">
+              ✕ Cancel
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setBlockDuration("1day")}
+              className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${blockDuration === "1day" ? "bg-brand-600 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
+            >
+              1 Day
+            </button>
+            <button
+              type="button"
+              onClick={() => setBlockDuration("custom")}
+              className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${blockDuration === "custom" ? "bg-brand-600 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
+            >
+              Custom Range
+            </button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="label text-[10px] uppercase font-bold text-ink-400">
+                {blockDuration === "1day" ? "Date" : "Start date"}
+              </label>
+              <input type="date" className="input text-xs py-1.5" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} />
+            </div>
+            {blockDuration === "custom" && (
+              <div>
+                <label className="label text-[10px] uppercase font-bold text-ink-400">End date</label>
+                <input type="date" className="input text-xs py-1.5" min={blockStart} value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} />
+              </div>
+            )}
+            <div>
+              <label className="label text-[10px] uppercase font-bold text-ink-400">Reason</label>
+              <select className="input text-xs py-1.5" value={blockReasonKind} onChange={(e) => setBlockReasonKind(e.target.value as "maintenance" | "manual_block")}>
+                <option value="maintenance">Maintenance</option>
+                <option value="manual_block">Manual block</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="label text-[10px] uppercase font-bold text-ink-400">Notes (required)</label>
+            <input
+              className="input text-xs py-1.5"
+              value={blockNotes}
+              placeholder="e.g. Engine service, back Friday"
+              onChange={(e) => setBlockNotes(e.target.value)}
+            />
+          </div>
+
+          <button type="button" disabled={pending} onClick={submitDurationBlock} className="rounded-lg bg-red-600 hover:bg-red-700 text-white px-4 py-1.5 text-xs font-bold shadow-xs transition disabled:opacity-50">
+            {pending ? "Blocking…" : "Confirm block"}
+          </button>
+        </div>
+      )}
+
+      {/* Active date-scoped blocks — the ones this panel creates, and the ones the Fleet
+          Timeline's click-a-day block creates. Both use the same table, so both show here. */}
+      {activeTab === "units" && blocks.length > 0 && (
+        <div className="card overflow-x-auto shadow-sm">
+          <div className="border-b border-ink-100 bg-ink-50/50 px-4 py-2 text-xs font-bold uppercase tracking-wider text-ink-500">
+            Active Temporary Blocks ({blocks.length})
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ink-100 text-left text-xs uppercase tracking-wider text-ink-400">
+                <th className="px-4 py-2 font-semibold">Plate / Unit</th>
+                <th className="px-4 py-2 font-semibold">Dates</th>
+                <th className="px-4 py-2 font-semibold">Reason</th>
+                <th className="px-4 py-2 font-semibold text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {blocks.map((b) => {
+                const unit = b.vehicleUnitId ? units.find((u) => u.id === b.vehicleUnitId) : null;
+                const vehicle = vehicles.find((v) => v.id === b.vehicleId);
+                return (
+                  <tr key={b.id} className="border-b border-ink-50">
+                    <td className="px-4 py-2 font-mono text-xs font-semibold text-ink-800">
+                      {unit ? `${unit.registration_no || unit.unit_identifier}` : `${vehicle?.name || "Vehicle"} (all units)`}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-ink-600">
+                      {new Date(b.startsAt).toLocaleDateString("en-GB", { timeZone: "Asia/Kolkata" })}
+                      {" – "}
+                      {new Date(b.endsAt).toLocaleDateString("en-GB", { timeZone: "Asia/Kolkata" })}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-ink-600">{b.notes || b.reason}</td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => handleUnblockDateRange(b.id)}
+                        className="px-2.5 py-1 rounded text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                      >
+                        Lift block
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -410,8 +598,13 @@ export function FleetUnitBlockManager({
                           type="button"
                           disabled={pending}
                           onClick={() => {
-                            setSelectedUnitIds([u.id]);
-                            handleBulkUnits(isUnavailable ? "available" : "unavailable");
+                            if (isUnavailable) {
+                              setSelectedUnitIds([u.id]);
+                              handleBulkUnits("available");
+                            } else {
+                              setSelectedUnitIds([u.id]);
+                              setShowBlockPanel(true);
+                            }
                           }}
                           className={`px-2.5 py-1 rounded text-xs font-semibold border transition ${
                             isUnavailable
