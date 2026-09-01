@@ -120,6 +120,24 @@ export function FleetGanttCalendar({
     }
   }
 
+  /** Every booking/block on this vehicle overlapping this specific day — not just the
+   * one a cell's own single-match display picks — so both the "free day" and the
+   * "booking day" popups can show the true count. Pure/local: takes the already
+   * per-vehicle-filtered arrays, doesn't touch component state. */
+  function dayOccupancy(vBookings: BookingBlock[], vBlocks: StaffBlock[], dayKey: string, totalUnits: number) {
+    const dayBookings = vBookings.filter((b) => {
+      const pickupDay = istDateKey(new Date(b.pickupAt));
+      const returnDay = istDateKey(new Date(b.returnAt));
+      return dayKey >= pickupDay && dayKey <= returnDay;
+    });
+    const dayBlocks = vBlocks.filter((b) => {
+      const startDay = istDateKey(new Date(b.startsAt));
+      const endDay = istDateKey(new Date(b.endsAt));
+      return dayKey >= startDay && dayKey <= endDay;
+    });
+    return { dayBookings, dayBlocks, available: Math.max(0, totalUnits - dayBookings.length - dayBlocks.length) };
+  }
+
   function handleBlockDay(vehicle: VehicleItem, dayKey: string) {
     setError("");
     const { startsAt, endsAt } = istDayBounds(dayKey);
@@ -339,17 +357,75 @@ export function FleetGanttCalendar({
                     return (
                       <div key={dayKey} className="px-1 text-center relative">
                         {matchingBooking ? (
-                          // A link, so the booking opens on click instead of only
-                          // revealing itself on hover.
-                          <Link
-                            href={`/dashboard/bookings/${matchingBooking.id}`}
-                            onMouseEnter={() => setHoveredBooking(matchingBooking)}
-                            onMouseLeave={() => setHoveredBooking(null)}
-                            title={`${matchingBooking.bookingNo} · ${matchingBooking.customerName} · open booking`}
-                            className={`block rounded-lg px-1.5 py-1 text-[10px] font-bold truncate border shadow-xs cursor-pointer transition-all hover:brightness-110 hover:shadow-md ${getStatusColor(matchingBooking.status)}`}
-                          >
-                            {matchingBooking.customerName.split(" ")[0]}
-                          </Link>
+                          // Opens the same kind of dropdown a free day does, rather than
+                          // navigating straight to the booking — this day can have more
+                          // than one booking on it (one per unit), and the cell's own
+                          // single-match display only ever picked the first. The dropdown
+                          // lists every booking on this day; picking one is what now
+                          // navigates to it. Backward compatible: the single-booking case
+                          // (by far the common one) still reaches the same booking page,
+                          // just one click later, and the hover preview is unchanged.
+                          <>
+                            <button
+                              type="button"
+                              onMouseEnter={() => setHoveredBooking(matchingBooking)}
+                              onMouseLeave={() => setHoveredBooking(null)}
+                              onClick={() => { setError(""); setActionCell(isOpen ? null : { vehicle: v, dayKey }); }}
+                              title={`${matchingBooking.bookingNo} · ${matchingBooking.customerName} · click for options`}
+                              className={`block w-full rounded-lg px-1.5 py-1 text-[10px] font-bold truncate border shadow-xs cursor-pointer transition-all hover:brightness-110 hover:shadow-md ${getStatusColor(matchingBooking.status)}`}
+                            >
+                              {matchingBooking.customerName.split(" ")[0]}
+                            </button>
+
+                            {isOpen && (() => {
+                              const { dayBookings, available: dayAvailable } = dayOccupancy(vBookings, vBlocks, dayKey, v.totalUnits);
+
+                              return (
+                                <div className="absolute z-20 mt-1 left-1/2 -translate-x-1/2 w-56 rounded-xl border border-ink-200 bg-white p-1.5 text-left shadow-lg">
+                                  <p className="px-2 py-1 text-[10px] font-semibold text-ink-500">
+                                    {v.name} · {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                                  </p>
+                                  {dayBookings.map((b) => (
+                                    <Link
+                                      key={b.id}
+                                      href={`/dashboard/bookings/${b.id}`}
+                                      className="block w-full truncate rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink-800 hover:bg-ink-50"
+                                    >
+                                      📄 {b.customerName} · {b.bookingNo}
+                                    </Link>
+                                  ))}
+                                  <Link
+                                    href={`/dashboard/bookings?new=1&vehicleId=${v.id}&pickup=${dayKey}`}
+                                    className="block w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink-800 hover:bg-ink-50"
+                                  >
+                                    📝 Offline booking
+                                  </Link>
+                                  <Link
+                                    href={`/dashboard/fleet/blocking?vehicleId=${v.id}`}
+                                    className="block w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
+                                  >
+                                    📅 Block a range…
+                                  </Link>
+                                  <Link
+                                    href={`/dashboard/vehicles/${v.id}`}
+                                    className="block w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink-600 hover:bg-ink-50"
+                                  >
+                                    🔧 Manage units
+                                  </Link>
+                                  <p className={`mt-0.5 border-t border-ink-100 px-2 pt-1.5 text-[10px] font-semibold ${dayAvailable > 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                                    📊 {dayAvailable}/{v.totalUnits} units available on {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setActionCell(null)}
+                                    className="block w-full rounded-lg px-2 py-1.5 text-left text-[11px] text-ink-400 hover:bg-ink-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              );
+                            })()}
+                          </>
                         ) : matchingBlock ? (
                           // A staff block. Its own cell, distinct from a paid booking, so
                           // "block a day" is visible on the very screen that created it —
@@ -376,21 +452,7 @@ export function FleetGanttCalendar({
                             </button>
 
                             {isOpen && (() => {
-                              // How many units are actually spoken for on THIS day —
-                              // counts every overlapping booking/block, not just the
-                              // one the cell's own single-match display picks.
-                              const dayOccupied =
-                                vBookings.filter((b) => {
-                                  const pickupDay = istDateKey(new Date(b.pickupAt));
-                                  const returnDay = istDateKey(new Date(b.returnAt));
-                                  return dayKey >= pickupDay && dayKey <= returnDay;
-                                }).length +
-                                vBlocks.filter((b) => {
-                                  const startDay = istDateKey(new Date(b.startsAt));
-                                  const endDay = istDateKey(new Date(b.endsAt));
-                                  return dayKey >= startDay && dayKey <= endDay;
-                                }).length;
-                              const dayAvailable = Math.max(0, v.totalUnits - dayOccupied);
+                              const { available: dayAvailable } = dayOccupancy(vBookings, vBlocks, dayKey, v.totalUnits);
 
                               return (
                               <div className="absolute z-20 mt-1 left-1/2 -translate-x-1/2 w-48 rounded-xl border border-ink-200 bg-white p-1.5 text-left shadow-lg">
