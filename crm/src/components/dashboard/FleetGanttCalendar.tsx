@@ -375,7 +375,24 @@ export function FleetGanttCalendar({
                               {isOpen ? "Choose…" : "Available"}
                             </button>
 
-                            {isOpen && (
+                            {isOpen && (() => {
+                              // How many units are actually spoken for on THIS day —
+                              // counts every overlapping booking/block, not just the
+                              // one the cell's own single-match display picks.
+                              const dayOccupied =
+                                vBookings.filter((b) => {
+                                  const pickupDay = istDateKey(new Date(b.pickupAt));
+                                  const returnDay = istDateKey(new Date(b.returnAt));
+                                  return dayKey >= pickupDay && dayKey <= returnDay;
+                                }).length +
+                                vBlocks.filter((b) => {
+                                  const startDay = istDateKey(new Date(b.startsAt));
+                                  const endDay = istDateKey(new Date(b.endsAt));
+                                  return dayKey >= startDay && dayKey <= endDay;
+                                }).length;
+                              const dayAvailable = Math.max(0, v.totalUnits - dayOccupied);
+
+                              return (
                               <div className="absolute z-20 mt-1 left-1/2 -translate-x-1/2 w-48 rounded-xl border border-ink-200 bg-white p-1.5 text-left shadow-lg">
                                 <p className="px-2 py-1 text-[10px] font-semibold text-ink-500">
                                   {v.name} · {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
@@ -406,6 +423,9 @@ export function FleetGanttCalendar({
                                 >
                                   🔧 Manage units
                                 </Link>
+                                <p className={`mt-0.5 border-t border-ink-100 px-2 pt-1.5 text-[10px] font-semibold ${dayAvailable > 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                                  📊 {dayAvailable}/{v.totalUnits} units available on {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                                </p>
                                 <button
                                   type="button"
                                   onClick={() => setActionCell(null)}
@@ -414,7 +434,8 @@ export function FleetGanttCalendar({
                                   Cancel
                                 </button>
                               </div>
-                            )}
+                              );
+                            })()}
                           </>
                         )}
                       </div>
