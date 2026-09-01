@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
-import { getVehicles, getVehicleCategories, getBranches } from "@/lib/data";
+import { getVehicles, getVehicleCategories, getBranches, getPricingRules } from "@/lib/data";
 import { toCanonicalIstIso } from "@/lib/rental-clock";
 import { formatINR, formatDate } from "@/lib/utils";
 import { EmptyState } from "@/components/ui";
@@ -68,7 +68,7 @@ export default async function VehiclesPage(
       }
     : undefined;
 
-  const [categories, branches, vehicles] = await Promise.all([
+  const [categories, branches, vehicles, pricingRules] = await Promise.all([
     getVehicleCategories(),
     getBranches(),
     getVehicles({
@@ -77,6 +77,7 @@ export default async function VehiclesPage(
       location: branchParam || undefined,
       availabilityWindow,
     }),
+    getPricingRules(),
   ]);
 
   const activeBranch = selectedBranchId ? branches.find((b) => b.id === selectedBranchId) : null;
@@ -85,7 +86,7 @@ export default async function VehiclesPage(
   const hasSearchQuery = Boolean(pickupDate && returnDate);
   const searchQuotes = hasSearchQuery
     ? await Promise.all(
-        vehicles.map((v) => getCachedVehicleSearchPrice(v, pickupDate, pickupTime, returnDate, returnTime))
+        vehicles.map((v) => getCachedVehicleSearchPrice(v, pickupDate, pickupTime, returnDate, returnTime, pricingRules))
       )
     : [];
 

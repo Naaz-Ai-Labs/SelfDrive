@@ -9,7 +9,7 @@ import { saveBookingDraft, getDraft, submitBooking, getAvailableVehicles, getQuo
 import { RazorpayCheckout } from "./RazorpayCheckout";
 import { InlineInvoiceCard } from "./InlineInvoiceCard";
 import type { Vehicle } from "@/lib/data";
-import { calculateRentalQuoteFromStrings, istInstantFrom } from "@/lib/pricing";
+import { calculateRentalQuoteFromStrings, istInstantFrom, type PricingRule } from "@/lib/pricing";
 import { computeRentalDays, toCanonicalIstIso } from "@/lib/rental-clock";
 import { compressImageFile } from "@/lib/image-compression";
 
@@ -110,10 +110,11 @@ function computeClientQuote(
   pickupDateStr: string | null,
   pickupTimeStr: string | null,
   returnDateStr: string | null,
-  returnTimeStr: string | null
+  returnTimeStr: string | null,
+  pricingRules: PricingRule[]
 ) {
   if (!vehicle) return null;
-  return calculateRentalQuoteFromStrings(vehicle, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr);
+  return calculateRentalQuoteFromStrings(vehicle, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr, pricingRules);
 }
 
 function formatDisplayDate(dateStr: string | null | undefined): string {
@@ -134,12 +135,14 @@ export function BookingForm({
   terms,
   initialVehicles = [],
   branches = [],
+  pricingRules = [],
 }: {
   categories: Category[];
   businessWhatsapp: string;
   terms: string[];
   initialVehicles?: Vehicle[];
   branches?: Array<{ id: number; name: string; city?: string | null; address?: string | null; phone?: string | null; active?: number; blocked?: number }>;
+  pricingRules?: PricingRule[];
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -445,8 +448,8 @@ export function BookingForm({
   }, [vehicleId, initialVehicles, availableVehicles, fetchedVehicle]);
 
   const clientQuote = useMemo(() => {
-    return computeClientQuote(selectedVehicle, pickupDate, pickupTime, returnDate, returnTime);
-  }, [selectedVehicle, pickupDate, pickupTime, returnDate, returnTime]);
+    return computeClientQuote(selectedVehicle, pickupDate, pickupTime, returnDate, returnTime, pricingRules);
+  }, [selectedVehicle, pickupDate, pickupTime, returnDate, returnTime, pricingRules]);
 
   const activeQuote = clientQuote ?? quote;
 
@@ -1087,7 +1090,7 @@ export function BookingForm({
                   ) : (
                     vehiclesToDisplay.map((v) => {
                     const isSelected = Number(vehicleId) === Number(v.id);
-                    const vQuote = computeClientQuote(v, pickupDate, pickupTime, returnDate, returnTime);
+                    const vQuote = computeClientQuote(v, pickupDate, pickupTime, returnDate, returnTime, pricingRules);
                     const isVehicleUnavailable =
                       v.status === "unavailable" ||
                       v.status === "blocked" ||

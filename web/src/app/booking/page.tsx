@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { getVehicleCategories, getActiveTermsVersion, getVehicles, getBranches } from "@/lib/data";
+import { getVehicleCategories, getActiveTermsVersion, getVehicles, getBranches, getPricingRules } from "@/lib/data";
 import { businessInfo } from "@/lib/settings";
 import { BookingForm } from "@/components/booking/BookingForm";
 
@@ -17,12 +17,13 @@ export const metadata: Metadata = {
 };
 
 export default async function BookingPage() {
-  const [categories, info, terms, vehicles, branches] = await Promise.all([
+  const [categories, info, terms, vehicles, branches, pricingRules] = await Promise.all([
     getVehicleCategories(),
     businessInfo(),
     getActiveTermsVersion(),
     getVehicles(),
     getBranches(),
+    getPricingRules(),
   ]);
 
   return (
@@ -35,6 +36,7 @@ export default async function BookingPage() {
           terms={terms?.content ?? []}
           initialVehicles={vehicles}
           branches={branches}
+          pricingRules={pricingRules}
         />
       </Suspense>
     </section>

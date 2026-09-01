@@ -266,16 +266,16 @@ export async function submitBooking(input: {
     let totalAmount: number | null = null;
 
     try {
-      const { getVehicles } = await import("./data");
+      const { getVehicles, getPricingRules } = await import("./data");
       const { calculateRentalQuoteFromStrings } = await import("./pricing");
-      const allVehicles = await getVehicles();
+      const [allVehicles, pricingRules] = await Promise.all([getVehicles(), getPricingRules()]);
       const v = allVehicles.find((item) => Number(item.id) === Number(input.vehicleId));
       if (v) {
         // Same shared calculation the site quoted from, so the row written here carries
         // the price the customer was actually shown.
         const [pickupDateStr, pickupTimeStr = "08:00"] = input.pickupAt.split("T");
         const [returnDateStr, returnTimeStr = "08:00"] = input.returnAt.split("T");
-        const quote = calculateRentalQuoteFromStrings(v, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr);
+        const quote = calculateRentalQuoteFromStrings(v, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr, pricingRules);
         if (quote) {
           baseAmount = quote.baseAmount + quote.offSchedulePickupFee;
           depositAmount = quote.depositPayableAtPickup;
@@ -440,10 +440,10 @@ export async function getAvailableVehicles(
 export async function getQuoteEstimate(vehicleId: number, pickupAt: string, returnAt: string): Promise<Quote | null> {
   // Reliable unified quote calculation synced with Redis search cache
   try {
-    const { getVehicles } = await import("@/lib/data");
+    const { getVehicles, getPricingRules } = await import("@/lib/data");
     const { getCachedVehicleSearchPrice } = await import("@/lib/search-pricing");
 
-    const all = await getVehicles();
+    const [all, pricingRules] = await Promise.all([getVehicles(), getPricingRules()]);
     const v = all.find((item) => Number(item.id) === Number(vehicleId));
 
     if (v && pickupAt && returnAt) {
@@ -459,7 +459,8 @@ export async function getQuoteEstimate(vehicleId: number, pickupAt: string, retu
         pickupDateStr,
         pickupTimeStr,
         returnDateStr,
-        returnTimeStr
+        returnTimeStr,
+        pricingRules
       );
 
       if (searchQuote) {

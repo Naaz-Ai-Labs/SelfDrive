@@ -2033,3 +2033,67 @@ test(
     }
   }
 );
+
+test(
+  "Test 21 — a special (seasonal) pricing rule overrides the standard rate; a weekend-typed rule is rejected, not silently ignored",
+  {
+    skip: !CONFIGURED && "not configured",
+  },
+  async () => {
+    // PricingRuleForm used to default to day_type "weekend", which findSeasonalRule has
+    // always excluded (its per-day rate would wrongly override weekdays in the range
+    // too) — so a staff member creating a rule with the default selection got a rule
+    // that silently never applied. The form no longer offers "weekend"; this locks in
+    // that a non-weekend rule DOES apply, and documents why weekend must not.
+    const { vehId } = await makeConcurrencyTestVehicle(1);
+    const ruleIds: number[] = [];
+
+    try {
+      const vehicle = await getVehicleById(vehId, true);
+      assert.ok(vehicle, "test vehicle must resolve");
+
+      const festival = await rest("pricing_rules", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          name: `${TAG} Festival`, vehicle_id: vehId, category_id: null, day_type: "festival",
+          start_date: "2033-10-01", end_date: "2033-10-05", rate_24h: 1500, min_days: 1, priority: 5, active: 1,
+        }),
+      });
+      assert.ok(festival.ok, `festival rule insert failed: ${JSON.stringify(festival.body)}`);
+      ruleIds.push(Number((festival.body as Array<{ id: number }>)[0].id));
+
+      const inRange = await calculateQuote(vehicle!, parseIstInstant("2033-10-02T08:00:00+05:30")!, parseIstInstant("2033-10-03T08:00:00+05:30")!);
+      assert.equal(inRange.appliedRuleName, `${TAG} Festival`, "the special rule must be picked up inside its date range");
+      assert.equal(inRange.baseAmount, 1500, "the special rate must replace the vehicle's standard rate_24h");
+
+      const outOfRange = await calculateQuote(vehicle!, parseIstInstant("2033-11-02T08:00:00+05:30")!, parseIstInstant("2033-11-03T08:00:00+05:30")!);
+      assert.equal(outOfRange.appliedRuleName, null, "outside its date range the rule must not apply");
+
+      // A weekend-typed rule must never surface as the applied rule, in the CRM's own
+      // quote OR in what the gateway exposes to the site — both read the same query.
+      const weekendRule = await rest("pricing_rules", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          name: `${TAG} WeekendTrap`, vehicle_id: vehId, category_id: null, day_type: "weekend",
+          start_date: "2033-10-01", end_date: "2033-10-05", rate_24h: 999, min_days: 1, priority: 99, active: 1,
+        }),
+      });
+      assert.ok(weekendRule.ok, `weekend-typed rule insert failed: ${JSON.stringify(weekendRule.body)}`);
+      ruleIds.push(Number((weekendRule.body as Array<{ id: number }>)[0].id));
+
+      const stillFestival = await calculateQuote(vehicle!, parseIstInstant("2033-10-02T08:00:00+05:30")!, parseIstInstant("2033-10-03T08:00:00+05:30")!);
+      assert.equal(stillFestival.appliedRuleName, `${TAG} Festival`, "a weekend-typed rule (even higher priority) must never win");
+      assert.equal(stillFestival.baseAmount, 1500);
+
+      const { getActivePricingRules } = await import("../src/lib/pricing");
+      const exposed = await getActivePricingRules();
+      assert.ok(!exposed.some((r) => r.day_type === "weekend"), "getActivePricingRules must never expose a weekend-typed rule to the gateway/site");
+      assert.ok(exposed.some((r) => r.name === `${TAG} Festival`), "the valid rule must be exposed for the site to mirror");
+    } finally {
+      for (const id of ruleIds) await rest(`pricing_rules?id=eq.${id}`, { method: "DELETE" });
+      await cleanupConcurrencyTestVehicle(vehId, [], []);
+    }
+  }
+);

@@ -77,6 +77,32 @@ export function getDynamicRate24h(baseRate: number, date: Date = new Date(), wee
   return Number.isFinite(weekend) && weekend > 0 ? weekend : baseRate;
 }
 
+/** Every active pricing rule, for the public site to mirror this file's own matching
+ * logic locally (see web/src/lib/pricing.ts) — the website has no direct DB access, so
+ * this is exposed through the gateway content payload instead. Small table; no date
+ * filtering here, the caller does its own overlap check same as findSeasonalRule. */
+export async function getActivePricingRules(): Promise<PricingRuleRow[]> {
+  const res = await sbSelect<Record<string, unknown>>("pricing_rules", "select=*&active=eq.1&day_type=neq.weekend&order=priority.desc");
+  if (!res.ok) return [];
+  return res.data.map((row) => ({
+    id: Number(row.id),
+    name: String(row.name),
+    vehicle_id: row.vehicle_id === null || row.vehicle_id === undefined ? null : Number(row.vehicle_id),
+    category_id: row.category_id === null || row.category_id === undefined ? null : Number(row.category_id),
+    day_type: String(row.day_type),
+    start_date: String(row.start_date),
+    end_date: String(row.end_date),
+    rate_24h: row.rate_24h === null || row.rate_24h === undefined ? null : num(row.rate_24h),
+    rate_12h: row.rate_12h === null || row.rate_12h === undefined ? null : num(row.rate_12h),
+    deposit: row.deposit === null || row.deposit === undefined ? null : num(row.deposit),
+    included_km: row.included_km === null || row.included_km === undefined ? null : num(row.included_km),
+    extra_km_rate: row.extra_km_rate === null || row.extra_km_rate === undefined ? null : num(row.extra_km_rate),
+    min_days: num(row.min_days, 1),
+    priority: num(row.priority),
+    active: num(row.active, 1),
+  }));
+}
+
 /** A seasonal/festival/long-weekend override that applies to the whole booking period, taking priority over standard weekday/weekend rates. */
 async function findSeasonalRule(vehicle: Vehicle, pickup: Date, ret: Date): Promise<PricingRuleRow | null> {
   const pickupDate = istDateKey(pickup);
@@ -92,6 +118,10 @@ async function findSeasonalRule(vehicle: Vehicle, pickup: Date, ret: Date): Prom
   const query = [
     "select=*",
     "active=eq.1",
+    // Excluded on purpose: this rule's rate applies to EVERY day in the range uniformly
+    // (see the loop below), so a day_type=weekend row would wrongly override weekdays
+    // too. PricingRuleForm no longer offers "weekend" as an option for the same reason —
+    // a genuinely weekend-only rate belongs on the vehicle's own weekend_rate_24h field.
     "day_type=neq.weekend",
     `or=${encodeURIComponent(`(${scopes.join(",")})`)}`,
     `end_date=gte.${pickupDate}`,

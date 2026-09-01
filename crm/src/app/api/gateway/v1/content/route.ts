@@ -5,6 +5,7 @@ import {
   getStaff, getActiveTermsVersion, getBlogPosts, getBlogPost, getBranches,
 } from "@/lib/data";
 import { businessInfo, rentalRules } from "@/lib/settings";
+import { getActivePricingRules } from "@/lib/pricing";
 
 /** One combined read model for everything the public site's static/semi-static pages
  * need (fleet, categories, testimonials, gallery, faqs, staff, terms, business info) —
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest) {
   // NextResponse.json serialises every one of them as `{}`.
   const [
     business, rules, categories, vehicles, branches,
-    testimonials, gallery, faqs, staff, terms, blogPosts,
+    testimonials, gallery, faqs, staff, terms, blogPosts, pricingRules,
   ] = await Promise.all([
     businessInfo(),
     rentalRules(),
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
     getStaff(),
     getActiveTermsVersion(),
     getBlogPosts(),
+    getActivePricingRules(),
   ]);
 
   return NextResponse.json({
@@ -53,6 +55,7 @@ export async function GET(req: NextRequest) {
     staff,
     terms,
     blogPosts,
+    pricingRules,
   });
 }
 

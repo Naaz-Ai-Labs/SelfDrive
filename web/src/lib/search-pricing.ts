@@ -1,5 +1,5 @@
 import { cacheGet, cacheSet } from "./redis";
-import { calculateRentalQuoteFromStrings, type RentalQuote } from "./pricing";
+import { calculateRentalQuoteFromStrings, type RentalQuote, type PricingRule } from "./pricing";
 import type { Vehicle } from "./data";
 
 /**
@@ -45,9 +45,10 @@ export function calculateVehicleSearchPrice(
   pickupDateStr?: string | null,
   pickupTimeStr?: string | null,
   returnDateStr?: string | null,
-  returnTimeStr?: string | null
+  returnTimeStr?: string | null,
+  pricingRules?: PricingRule[]
 ): SearchQuoteResult | null {
-  const quote = calculateRentalQuoteFromStrings(vehicle, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr);
+  const quote = calculateRentalQuoteFromStrings(vehicle, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr, pricingRules);
   if (!quote) return null;
 
   return {
@@ -86,7 +87,8 @@ export async function getCachedVehicleSearchPrice(
   pickupDateStr?: string | null,
   pickupTimeStr?: string | null,
   returnDateStr?: string | null,
-  returnTimeStr?: string | null
+  returnTimeStr?: string | null,
+  pricingRules?: PricingRule[]
 ): Promise<SearchQuoteResult | null> {
   if (!pickupDateStr || !returnDateStr) return null;
 
@@ -104,7 +106,7 @@ export async function getCachedVehicleSearchPrice(
     }
   }
 
-  const computed = calculateVehicleSearchPrice(vehicle, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr);
+  const computed = calculateVehicleSearchPrice(vehicle, pickupDateStr, pickupTimeStr, returnDateStr, returnTimeStr, pricingRules);
   if (computed && SEARCH_QUOTE_CACHE_TTL_SECONDS > 0) {
     try {
       await cacheSet(cacheKey, computed, SEARCH_QUOTE_CACHE_TTL_SECONDS);

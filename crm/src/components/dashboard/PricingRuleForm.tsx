@@ -9,7 +9,7 @@ type Rule = { id: number; name: string; day_type: string; start_date: string; en
 export function PricingRuleForm({ vehicleId, rules }: { vehicleId: number; rules: Rule[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [form, setForm] = useState({ name: "", dayType: "weekend", startDate: "", endDate: "", rate24h: "", deposit: "", priority: "1" });
+  const [form, setForm] = useState({ name: "", dayType: "festival", startDate: "", endDate: "", rate24h: "", deposit: "", priority: "1" });
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,7 +44,11 @@ export function PricingRuleForm({ vehicleId, rules }: { vehicleId: number; rules
         <div className="grid gap-2 sm:grid-cols-3">
           <input className="input" placeholder="Rule name (e.g. Dasara peak)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <select className="input" value={form.dayType} onChange={(e) => setForm({ ...form, dayType: e.target.value })}>
-            {["weekend", "long_weekend", "holiday", "festival", "peak", "off_season"].map((d) => <option key={d} value={d}>{d.replace("_", " ")}</option>)}
+            {/* "weekend" is deliberately not offered: this rate applies to EVERY day in the
+               range uniformly, including weekdays — a genuinely weekend-only override needs
+               the vehicle's own Weekend rate field instead, not a dated rule that would
+               silently never apply (findSeasonalRule excludes day_type=weekend). */}
+            {["long_weekend", "holiday", "festival", "peak", "off_season"].map((d) => <option key={d} value={d}>{d.replace("_", " ")}</option>)}
           </select>
           <input className="input" type="number" placeholder="Priority" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} />
         </div>

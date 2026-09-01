@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { getVehicle, getVehicles, getBranches, type Vehicle, type Branch } from "@/lib/data";
+import { getVehicle, getVehicles, getBranches, getPricingRules, type Vehicle, type Branch } from "@/lib/data";
 import { getActiveTermsVersion } from "@/lib/data";
 import { formatINR, formatDate, waLink } from "@/lib/utils";
 import { businessInfo } from "@/lib/settings";
@@ -84,11 +84,12 @@ export default async function VehicleDetailPage(props: {
 
   const vehicle = await getVehicle(params.slug, availabilityWindow);
   if (!vehicle) notFound();
-  const [similarAll, terms, info, branches] = await Promise.all([
+  const [similarAll, terms, info, branches, pricingRules] = await Promise.all([
     getVehicles({ categorySlug: vehicle.category_slug ?? undefined }),
     getActiveTermsVersion(),
     businessInfo(),
     getBranches(),
+    getPricingRules(),
   ]);
   const similar = similarAll.filter((v: Vehicle) => v.id !== vehicle.id).slice(0, 3);
 
@@ -104,7 +105,7 @@ export default async function VehicleDetailPage(props: {
   const isTargetBranchBlocked = targetBranch ? Number((targetBranch as any).blocked) === 1 : false;
 
   const searchQuote = Boolean(pickupDate && returnDate)
-    ? await getCachedVehicleSearchPrice(vehicle, pickupDate, pickupTime, returnDate, returnTime)
+    ? await getCachedVehicleSearchPrice(vehicle, pickupDate, pickupTime, returnDate, returnTime, pricingRules)
     : null;
 
   const branchQuery = branchParam ? `&location=${encodeURIComponent(branchParam)}` : "";

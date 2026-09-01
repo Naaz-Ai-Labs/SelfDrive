@@ -31,6 +31,7 @@ type Content = {
   terms: { id: number; version: number; content: string[] } | null;
   blogPosts: Array<Record<string, unknown>>;
   branches: Branch[];
+  pricingRules: import("./pricing").PricingRule[];
 };
 
 const FALLBACK_CATEGORIES: VehicleCategory[] = [
@@ -169,7 +170,7 @@ Get this sorted before you arrive and pickup genuinely takes a few minutes — i
 ];
 
 const EMPTY_CONTENT: Content = {
-  business: {}, rentalRules: {}, categories: FALLBACK_CATEGORIES, vehicles: FALLBACK_VEHICLES, testimonials: [], gallery: [], faqs: [], staff: [], terms: null, blogPosts: FALLBACK_BLOG_POSTS, branches: [],
+  business: {}, rentalRules: {}, categories: FALLBACK_CATEGORIES, vehicles: FALLBACK_VEHICLES, testimonials: [], gallery: [], faqs: [], staff: [], terms: null, blogPosts: FALLBACK_BLOG_POSTS, branches: [], pricingRules: [],
 };
 
 async function fetchContentFromSupabase(): Promise<Partial<Content> | null> {
@@ -447,6 +448,7 @@ export const getContent = cache(async (availabilityWindow?: { pickupAt: string; 
       return {
         ...data,
         blogPosts: data.blogPosts?.length ? data.blogPosts : FALLBACK_BLOG_POSTS,
+        pricingRules: Array.isArray(data.pricingRules) ? data.pricingRules : [],
       };
     }
   } catch (err) {
@@ -479,6 +481,11 @@ export async function getVehicleCategories(): Promise<VehicleCategory[]> {
 
 export async function getVehicleCategory(slug: string): Promise<VehicleCategory | null> {
   return (await getContent()).categories.find((c) => c.slug === slug) ?? null;
+}
+
+/** Active seasonal/festival pricing overrides — see findApplicablePricingRule in ./pricing. */
+export async function getPricingRules(): Promise<import("./pricing").PricingRule[]> {
+  return (await getContent()).pricingRules;
 }
 
 import { num } from "./pricing";

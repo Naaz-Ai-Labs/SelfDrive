@@ -69,7 +69,60 @@ export type QuoteVehicle = {
   included_km?: number | string | null;
   extra_km_rate?: number | string | null;
   category_kind?: string | null;
+  /** Needed to match a pricing rule scoped to this vehicle or its category. */
+  id?: number | null;
+  category_id?: number | null;
 };
+
+/** Mirrors crm/src/lib/pricing.ts's PricingRuleRow — a seasonal/festival override the
+ * CRM's gateway content payload exposes so the site's own quote matches what the CRM
+ * will actually charge. */
+export type PricingRule = {
+  id: number;
+  name: string;
+  vehicle_id: number | null;
+  category_id: number | null;
+  day_type: string;
+  start_date: string;
+  end_date: string;
+  rate_24h: number | null;
+  deposit: number | null;
+  included_km: number | null;
+  extra_km_rate: number | null;
+  min_days: number;
+  priority: number;
+  active: number;
+};
+
+/** Same matching rule as the CRM's findSeasonalRule: active, date-range overlap, scoped
+ * to this vehicle or its category (or neither, i.e. fleet-wide), highest priority wins,
+ * a vehicle-specific rule beats a category/fleet-wide one on a priority tie. The gateway
+ * payload already excludes day_type=weekend and inactive rows. */
+export function findApplicablePricingRule(
+  rules: PricingRule[] | undefined,
+  vehicle: Pick<QuoteVehicle, "id" | "category_id">,
+  pickupAt: Date,
+  returnAt: Date
+): PricingRule | null {
+  if (!rules || rules.length === 0) return null;
+  const pickupKey = istDateKey(pickupAt);
+  const returnKey = istDateKey(returnAt);
+
+  const candidates = rules.filter((r) => {
+    if (r.end_date < pickupKey || r.start_date > returnKey) return false;
+    if (r.vehicle_id !== null) return r.vehicle_id === vehicle.id;
+    if (r.category_id !== null) return vehicle.category_id != null && r.category_id === vehicle.category_id;
+    return true; // fleet-wide
+  });
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => {
+    const byPriority = b.priority - a.priority;
+    if (byPriority !== 0) return byPriority;
+    return (b.vehicle_id ? 1 : 0) - (a.vehicle_id ? 1 : 0);
+  });
+  return candidates[0];
+}
 
 export type RentalQuote = {
   days: number;
@@ -127,19 +180,22 @@ export function istInstantFrom(dateStr: string | null | undefined, timeHM?: stri
 /**
  * The one quote calculation used by every surface of the website — search results,
  * vehicle pages, the booking form and the server-side booking fallback. It is the
- * website's mirror of the CRM's `calculateQuote` (minus the seasonal-rule lookup, which
- * needs the CRM database; see the note on `appliedRuleName`).
+ * website's mirror of the CRM's `calculateQuote`, including seasonal pricing rules —
+ * pass the gateway content payload's `pricingRules` array so a special-pricing period
+ * shows the same total here that the CRM will actually charge.
  */
 export function calculateRentalQuote(
   vehicle: QuoteVehicle,
   pickupAt: Date,
   returnAt: Date,
   pickupTimeHM?: string | null,
-  returnTimeHM?: string | null
+  returnTimeHM?: string | null,
+  pricingRules?: PricingRule[]
 ): RentalQuote {
   const clock = computeRentalDays({ pickupAt, returnAt, pickupTimeHM, returnTimeHM });
   const days = clock.days;
   const weekdayRate = num(vehicle.rate_24h);
+  const seasonalRule = findApplicablePricingRule(pricingRules, vehicle, pickupAt, returnAt);
 
   let baseAmount = 0;
   let weekendDaysCount = 0;
@@ -148,7 +204,7 @@ export function calculateRentalQuote(
   for (const day of clock.dayDates) {
     const weekend = isWeekend(day);
     if (weekend) weekendDaysCount++;
-    const rate = weekend ? getDynamicRate24h(weekdayRate, day, vehicle.weekend_rate_24h) : weekdayRate;
+    const rate = seasonalRule ? num(seasonalRule.rate_24h, weekdayRate) : weekend ? getDynamicRate24h(weekdayRate, day, vehicle.weekend_rate_24h) : weekdayRate;
     dayBreakdown.push({ date: istDateKey(day), isWeekend: weekend, rate });
     baseAmount += rate;
   }
@@ -157,11 +213,13 @@ export function calculateRentalQuote(
   // rental-clock already added a whole extra day above, priced at that day's own rate.
   const timingFeeAmount = clock.earlyPickup ? EARLY_PICKUP_FEE : 0;
 
-  const rawKm = num(vehicle.included_km, 100);
+  const rawKm = seasonalRule?.included_km ?? num(vehicle.included_km, 100);
   const includedKm = rawKm >= 999 ? 999999 : rawKm * days;
   const twoWheeler = isTwoWheeler(vehicle);
-  const extraKmRate = num(vehicle.extra_km_rate, twoWheeler ? 4 : 8);
-  const deposit = depositForVehicle(vehicle);
+  const extraKmRate = seasonalRule?.extra_km_rate ?? num(vehicle.extra_km_rate, twoWheeler ? 4 : 8);
+  const configuredDeposit = num(seasonalRule?.deposit ?? vehicle.deposit);
+  const deposit = configuredDeposit > 0 ? configuredDeposit : depositForVehicle(vehicle);
+  const effectiveWeekendMin = seasonalRule?.min_days && seasonalRule.min_days > 1 ? seasonalRule.min_days : WEEKEND_MIN_DAYS;
 
   const taxableAmount = baseAmount + timingFeeAmount;
   const gstAmount = Math.round(taxableAmount * (GST_PCT / 100));
@@ -187,12 +245,9 @@ export function calculateRentalQuote(
     extraKmRate,
     afterHours: clock.earlyPickup,
     offSchedulePickup: timingFeeAmount > 0,
-    weekendMinDays: WEEKEND_MIN_DAYS,
-    belowWeekendMinimum: isWeekend(pickupAt) && days < WEEKEND_MIN_DAYS,
-    // Seasonal/festival overrides live in the CRM's `pricing_rules` table, which the
-    // public site cannot read. The CRM re-prices on confirmation, so a festival booking
-    // quoted here shows the standard rate until then.
-    appliedRuleName: null,
+    weekendMinDays: effectiveWeekendMin,
+    belowWeekendMinimum: isWeekend(pickupAt) && days < effectiveWeekendMin,
+    appliedRuleName: seasonalRule?.name ?? null,
     earlyPickup: clock.earlyPickup,
     lateDrop: clock.lateDrop,
     totalAmount,
@@ -207,14 +262,15 @@ export function calculateRentalQuoteFromStrings(
   pickupDateStr: string | null | undefined,
   pickupTimeStr: string | null | undefined,
   returnDateStr: string | null | undefined,
-  returnTimeStr: string | null | undefined
+  returnTimeStr: string | null | undefined,
+  pricingRules?: PricingRule[]
 ): RentalQuote | null {
   const pickupTime = pickupTimeStr || "08:00";
   const returnTime = returnTimeStr || "08:00";
   const pickupAt = istInstantFrom(pickupDateStr, pickupTime);
   const returnAt = istInstantFrom(returnDateStr, returnTime);
   if (!pickupAt || !returnAt) return null;
-  return calculateRentalQuote(vehicle, pickupAt, returnAt, pickupTime, returnTime);
+  return calculateRentalQuote(vehicle, pickupAt, returnAt, pickupTime, returnTime, pricingRules);
 }
 
 /**
