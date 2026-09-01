@@ -28,6 +28,7 @@ export type PhysicalUnitItem = {
   registration_no: string;
   current_branch_id: number | null;
   status: string;
+  notes: string;
 };
 
 export function VehicleForm({
@@ -71,6 +72,7 @@ export function VehicleForm({
     totalUnits: vehicle?.total_units ? String(vehicle.total_units) : "1",
     description: vehicle?.description ?? "",
     status: vehicle?.status ?? "available",
+    overallReason: "",
   });
 
   const [photoUrl, setPhotoUrl] = useState("");
@@ -89,6 +91,7 @@ export function VehicleForm({
         registration_no: u.registration_no || (i === 0 ? vehicle?.registration_no || "" : ""),
         current_branch_id: u.current_branch_id || defaultBranch,
         status: u.status || "available",
+        notes: u.notes || "",
       }));
     }
 
@@ -97,6 +100,7 @@ export function VehicleForm({
       registration_no: i === 0 ? vehicle?.registration_no || "" : "",
       current_branch_id: defaultBranch,
       status: "available",
+      notes: "",
     }));
   });
 
@@ -115,6 +119,7 @@ export function VehicleForm({
             registration_no: "",
             current_branch_id: defaultBranch,
             status: "available",
+            notes: "",
           });
         }
         return next;
@@ -186,6 +191,10 @@ export function VehicleForm({
     setSuccess("");
 
     const isEntireVehicleUnavailable = form.status === "unavailable" || form.status === "blocked";
+    if (isEntireVehicleUnavailable && !form.overallReason.trim()) {
+      setError("Enter a reason for taking the whole fleet offline — this affects every unit, on every future date.");
+      return;
+    }
 
     // With "No change" selected the vehicle's own status is derived from its units, so a
     // fleet with one free unit stays bookable on the public site instead of being pinned
@@ -229,6 +238,7 @@ export function VehicleForm({
             registration_no: u.registration_no?.trim() || undefined,
             current_branch_id: u.current_branch_id ?? Number(form.branchId),
             status: isEntireVehicleUnavailable ? form.status : u.status,
+            notes: isEntireVehicleUnavailable ? form.overallReason.trim() : u.notes?.trim() || undefined,
           })),
         });
 
@@ -517,6 +527,20 @@ export function VehicleForm({
                     <option value="transit">In Transit</option>
                   </select>
                 </div>
+
+                {unit.status !== "available" && (
+                  <div className="sm:col-span-12">
+                    <label className="label text-[10px] uppercase font-bold text-amber-700 mb-0.5">
+                      Reason (required) — this removes {unit.unit_identifier || "the unit"} from every future date, not just today
+                    </label>
+                    <input
+                      className="input text-xs py-1.5 border-amber-300"
+                      value={unit.notes}
+                      placeholder="e.g. Engine service, back Friday"
+                      onChange={(e) => handleUnitChange(idx, "notes", e.target.value)}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -568,6 +592,20 @@ export function VehicleForm({
             </select>
           </div>
         </div>
+
+        {(form.status === "unavailable" || form.status === "blocked") && (
+          <div>
+            <label className="label text-amber-700">
+              Reason (required) — takes every unit offline, on every future date, not just today
+            </label>
+            <input
+              className="input border-amber-300"
+              value={form.overallReason}
+              placeholder="e.g. Fleet-wide inspection"
+              onChange={(e) => setForm({ ...form, overallReason: e.target.value })}
+            />
+          </div>
+        )}
 
         <div>
           <label className="label">Description</label>

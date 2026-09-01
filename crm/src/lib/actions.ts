@@ -237,7 +237,7 @@ export async function saveVehicle(input: {
   photoUrl?: string;
   branchAllocations?: Array<{ branchId: number; quantity: number }>;
   unallocatedUnits?: number;
-  physicalUnits?: Array<{ id?: number; unit_identifier?: string; registration_no?: string; current_branch_id?: number | null; status?: string }>;
+  physicalUnits?: Array<{ id?: number; unit_identifier?: string; registration_no?: string; current_branch_id?: number | null; status?: string; notes?: string }>;
   idempotencyKey?: string;
 }) {
   return withIdempotency(input.idempotencyKey, "save_vehicle", input, async () => {
@@ -400,16 +400,30 @@ export async function saveVehicle(input: {
           // per-unit statuses were submitted and the vehicle-level choice is the only
           // instruction available.
           const status = uInput?.status || "available";
+          const unitNotes = uInput?.notes?.trim();
 
           if (i < existingUnits.length) {
             const existing = existingUnits[i];
             const branchChanged = existing.current_branch_id !== branch;
+
+            // A unit flipped to anything other than "available" silently subtracts it
+            // from every date's availability, forever, with nothing recorded about why —
+            // exactly how DIO-001 and ACTIVA-001 ended up stuck unavailable with no
+            // booking behind either. Requiring a reason only fires on the actual
+            // transition, so re-saving a unit that was already unavailable does not nag.
+            if (await unitStatusChangeNeedsReason(status, existing.status, unitNotes)) {
+              return {
+                ok: false as const,
+                error: `Enter a reason for marking ${unitIdent} "${status}" — this takes it out of every future date's availability.`,
+              };
+            }
 
             const unitUpd = await sbUpdate("vehicle_units", `id=eq.${existing.id}`, {
               unit_identifier: unitIdent,
               registration_no: regNo,
               current_branch_id: branch,
               status,
+              notes: unitNotes || null,
               updated_at: nowIso(),
             });
             if (!unitUpd.ok) return fail(unitUpd, `Updating unit ${unitIdent}`);
@@ -427,11 +441,19 @@ export async function saveVehicle(input: {
               }
             }
           } else {
+            if (await unitStatusChangeNeedsReason(status, "", unitNotes)) {
+              return {
+                ok: false as const,
+                error: `Enter a reason for adding ${unitIdent} as "${status}" — a new unit should not start out of service without one.`,
+              };
+            }
+
             const newUnit = await sbInsert<{ id: number }>("vehicle_units", {
               vehicle_id: vehicleId,
               unit_identifier: unitIdent,
               registration_no: regNo,
               status,
+              notes: unitNotes || null,
               current_branch_id: branch,
               active: 1,
             });
@@ -891,14 +913,24 @@ export async function updateVehicleUnitDetails(input: {
     const user = await staffUser();
     assertCan(user, "staff");
 
-    const unitRes = await sbSelectOne<{ id: number; vehicle_id: number; current_branch_id: number | null; unit_identifier: string }>(
+    const unitRes = await sbSelectOne<{ id: number; vehicle_id: number; current_branch_id: number | null; unit_identifier: string; status: string }>(
       "vehicle_units",
-      `select=id,vehicle_id,current_branch_id,unit_identifier&id=eq.${input.unitId}&active=eq.1`
+      `select=id,vehicle_id,current_branch_id,unit_identifier,status&id=eq.${input.unitId}&active=eq.1`
     );
     if (!unitRes.ok || !unitRes.data) {
       return { ok: false as const, error: "Vehicle unit not found." };
     }
     const unit = unitRes.data;
+
+    // Same guard as saveVehicle's unit loop, for the other place a unit's status is
+    // set. Only fires on the actual transition — re-saving an already-unavailable
+    // unit's other fields does not nag for a reason again.
+    if (input.status !== undefined && await unitStatusChangeNeedsReason(input.status, unit.status, input.notes)) {
+      return {
+        ok: false as const,
+        error: `Enter a reason for marking ${unit.unit_identifier} "${input.status}" — this takes it out of every future date's availability.`,
+      };
+    }
 
     const effDate = input.effectiveDate ? new Date(input.effectiveDate).toISOString() : nowIso();
 
@@ -935,6 +967,10 @@ export async function updateVehicleUnitDetails(input: {
     if (input.registrationNo !== undefined) updates.registration_no = input.registrationNo.trim().toUpperCase() || null;
     if (input.status !== undefined) updates.status = input.status;
     if (input.branchId !== undefined) updates.current_branch_id = input.branchId;
+    // Was collected but never actually written to the unit itself — only reused as a
+    // branch_transfers.reason when the branch also changed, so a plain status change
+    // with a reason silently dropped it.
+    if (input.notes !== undefined) updates.notes = input.notes.trim() || null;
 
     const res = await sbUpdate("vehicle_units", `id=eq.${unit.id}`, updates);
     if (!res.ok) return fail(res, "Updating vehicle unit");
@@ -2261,6 +2297,21 @@ export async function createManualBooking(input: {
   refresh();
 
   return { ok: true as const, bookingId: created.bookingId, bookingNo: created.bookingNo };
+}
+
+/** Every unit status except "available" removes that unit from EVERY future date's
+ * availability — it is a hard, date-blind block (see 20260901d). Setting one of these
+ * with no recorded reason is exactly how DIO-001 and ACTIVA-001 went stuck unavailable
+ * with no booking behind either, undetected for hours. A reason is required on the
+ * transition into any of these, from either place a unit's status can be set. */
+const UNIT_STATUS_REQUIRES_REASON = new Set(["unavailable", "blocked", "booked", "transit"]);
+
+/** The one predicate both status-change paths (saveVehicle's unit loop and
+ * updateVehicleUnitDetails) gate on, so the rule lives in exactly one place.
+ * async only because "use server" files require every export to be — every caller
+ * already sits inside an async function, so this costs nothing. */
+export async function unitStatusChangeNeedsReason(newStatus: string, previousStatus: string, notes: string | undefined): Promise<boolean> {
+  return UNIT_STATUS_REQUIRES_REASON.has(newStatus) && newStatus !== previousStatus && !notes?.trim();
 }
 
 /** Statuses where the vehicle has not physically left yet, so the rental can still be

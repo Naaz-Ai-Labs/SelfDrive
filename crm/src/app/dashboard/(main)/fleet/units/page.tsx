@@ -26,6 +26,10 @@ export default async function FleetUnitsPage() {
   }, {});
 
   const missingPlate = units.filter((u) => !u.registration_no?.trim()).length;
+  // Out of service with nothing explaining why — exactly how DIO-001 and ACTIVA-001
+  // went stuck unavailable for hours before anyone noticed. New unit edits now require
+  // a reason, but this catches anything already in that state.
+  const unavailableNoReason = units.filter((u) => u.status !== "available" && !u.notes?.trim());
 
   return (
     <div className="space-y-6">
@@ -54,6 +58,14 @@ export default async function FleetUnitsPage() {
         <p className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <strong>{missingPlate}</strong> unit{missingPlate === 1 ? "" : "s"} have no registration plate recorded.
           A unit without a plate cannot be identified at handover.
+        </p>
+      )}
+
+      {unavailableNoReason.length > 0 && (
+        <p className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+          <strong>{unavailableNoReason.length}</strong> unit{unavailableNoReason.length === 1 ? "" : "s"} out of
+          service with no reason recorded — invisible on the booking calendar, silently removed from every future
+          date: {unavailableNoReason.map((u) => u.unit_identifier).join(", ")}.
         </p>
       )}
 
@@ -96,6 +108,11 @@ export default async function FleetUnitsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={u.status} />
+                    {u.status !== "available" && (
+                      <p className="mt-1 text-[11px] text-ink-500">
+                        {u.notes?.trim() ? u.notes : <span className="text-amber-700">No reason recorded</span>}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link
