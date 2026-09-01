@@ -1220,9 +1220,16 @@ async function setBookingStatus(
       // Never blindly flip a unit back to "available" — only if no OTHER active
       // booking currently has it out (a reassignment could have moved this exact
       // unit to a different booking in the meantime).
+      //
+      // status=not.in.(...) matters: a booking that reached handover and was LATER
+      // rejected/cancelled still carries actual_pickup_at with no return recorded —
+      // that is precisely the stale-flag pattern this whole guard exists to clean up.
+      // Without excluding terminal statuses here, that same dead booking would block
+      // every future reset of its unit forever.
       const stillHeld = await sbCount(
         "bookings",
-        `vehicle_unit_id=eq.${unitId}&actual_pickup_at=not.is.null&actual_return_at=is.null&id=neq.${bookingId}`
+        `vehicle_unit_id=eq.${unitId}&actual_pickup_at=not.is.null&actual_return_at=is.null&id=neq.${bookingId}` +
+          `&status=not.in.${encodeURIComponent('("Cancelled","Completed","Rejected","Draft")')}`
       );
       if (stillHeld.ok && stillHeld.data === 0) {
         const unitReset = await sbUpdate("vehicle_units", `id=eq.${unitId}`, { status: "available", updated_at: nowIso() });

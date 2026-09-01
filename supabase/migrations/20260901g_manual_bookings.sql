@@ -56,7 +56,7 @@ BEGIN
    WHERE booking_id IS NULL AND expires_at IS NOT NULL AND expires_at < NOW();
 
   FOR v_booking IN
-    SELECT b.id FROM public.bookings b
+    SELECT b.id, b.vehicle_unit_id FROM public.bookings b
      WHERE b.status = 'Pending payment'
        AND COALESCE(b.source, 'online') <> 'manual'
        AND public.is_expired_reservation(b.id)
@@ -71,6 +71,23 @@ BEGIN
       DELETE FROM public.availability_blocks WHERE booking_id = v_booking.id;
       INSERT INTO public.booking_history (booking_id, action, detail, created_at)
       VALUES (v_booking.id, 'reservation_expired', '{"reason":"15-minute TTL exceeded, no payment"}', NOW());
+
+      -- A Pending-payment reservation normally never reached handover, so its unit's
+      -- static status is untouched — but a manual close of the window (staff or a
+      -- direct release) can happen after handover too. Same guard as
+      -- setBookingStatus() in actions.ts: only reset if no OTHER live booking
+      -- currently has this exact unit out.
+      IF v_booking.vehicle_unit_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM public.bookings b2
+         WHERE b2.vehicle_unit_id = v_booking.vehicle_unit_id
+           AND b2.id <> v_booking.id
+           AND b2.actual_pickup_at IS NOT NULL AND b2.actual_return_at IS NULL
+           AND b2.status NOT IN ('Cancelled', 'Completed', 'Rejected', 'Draft')
+      ) THEN
+        UPDATE public.vehicle_units SET status = 'available', updated_at = NOW()
+         WHERE id = v_booking.vehicle_unit_id AND status <> 'available';
+      END IF;
+
       v_count := v_count + 1;
     END IF;
   END LOOP;
