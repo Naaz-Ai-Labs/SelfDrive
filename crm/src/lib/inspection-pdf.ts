@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { sbSelect, sbSelectOne, sbUpdate, num } from "./supabase-rest";
 import { supabaseAdmin } from "./supabase";
-import { PRIVATE_DOCS_BUCKET, isSafeStoragePath } from "./storage-buckets";
+import { PRIVATE_DOCS_BUCKET, PUBLIC_MEDIA_BUCKET, isSafeStoragePath } from "./storage-buckets";
 import { getWritableUploadsDir } from "./uploads-dir";
 import { formatINR, formatDateTime } from "./utils";
 import { businessInfo } from "./settings";
@@ -68,7 +68,9 @@ async function loadPhotoBytes(url: string | null | undefined): Promise<Buffer | 
         const parsed = new URL(cleanUrl, "http://localhost");
         const key = parsed.searchParams.get("p") ?? "";
         if (key && isSafeStoragePath(key) && supabaseAdmin) {
-          const bucket = cleanUrl.includes("/doc") ? PRIVATE_DOCS_BUCKET : "media";
+          // "media" was a bucket that has never existed in this project — that branch
+          // always 404'd. The public bucket is the real counterpart to the private one.
+          const bucket = cleanUrl.includes("/doc") ? PRIVATE_DOCS_BUCKET : PUBLIC_MEDIA_BUCKET;
           const { data, error } = await supabaseAdmin.storage.from(bucket).download(key);
           if (!error && data) return Buffer.from(await data.arrayBuffer());
         }
@@ -102,9 +104,19 @@ async function loadPhotoBytes(url: string | null | undefined): Promise<Buffer | 
         } catch {}
       }
 
-      // Try Supabase Storage buckets
+      // Try Supabase Storage buckets.
+      //
+      // This used to walk ["vehicle-photos", "media", "customer-documents",
+      // "inspections", PRIVATE_DOCS_BUCKET] — five sequential download attempts, of
+      // which "media" and "inspections" are buckets that do not exist in this project
+      // (only vehicle-photos and customer-documents do), and PRIVATE_DOCS_BUCKET *is*
+      // "customer-documents", so it was tried twice. A single PDF embeds up to 13
+      // images, so a report could fire ~65 Storage round trips to fetch 13 files, each
+      // failed attempt still costing a request and a wait. Only the two real buckets
+      // are tried now, public first (inspection photos live there and are the common
+      // case), private second.
       if (supabaseAdmin) {
-        for (const b of ["vehicle-photos", "media", "customer-documents", "inspections", PRIVATE_DOCS_BUCKET]) {
+        for (const b of [PUBLIC_MEDIA_BUCKET, PRIVATE_DOCS_BUCKET]) {
           try {
             const { data, error } = await supabaseAdmin.storage.from(b).download(subPath);
             if (!error && data) return Buffer.from(await data.arrayBuffer());

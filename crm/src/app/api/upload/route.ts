@@ -8,7 +8,20 @@ import { getWritableUploadsDir } from "@/lib/uploads-dir";
 import { PUBLIC_MEDIA_BUCKET, PRIVATE_DOCS_BUCKET } from "@/lib/storage-buckets";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
-const MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * 4 MB, not 8 MB — this route runs as a Vercel Node serverless function, and the
+ * platform caps a function's REQUEST BODY at 4.5 MB. Anything above that was rejected
+ * by Vercel's edge with a bare 413 before this handler ever ran, so the app's own
+ * "max 8MB" message was unreachable and the user saw an opaque platform error instead.
+ * 4 MB leaves headroom for the multipart envelope around the file itself.
+ *
+ * This is not a practical restriction on real uploads: every image path compresses
+ * client-side first (compressImageFile, 1600px/JPEG — measured average 201 KB across
+ * 227 production inspection photos, largest 520 KB), and the largest PDF in production
+ * storage is 1.3 MB. Raising the ceiling requires moving off a request-body-proxied
+ * upload entirely (direct-to-Storage), not a bigger number here.
+ */
+const MAX_BYTES = 4 * 1024 * 1024;
 
 /** Folders that carry customer identity/agreement data and must never be public,
  * regardless of the request's own folder string. SignedDocumentUploader posts here
@@ -46,7 +59,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only JPG, PNG, WEBP or PDF files are allowed." }, { status: 400 });
   }
   if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: "File is too large (max 8MB)." }, { status: 400 });
+    return NextResponse.json({ error: "File is too large (max 4MB)." }, { status: 400 });
   }
 
   // Generate structured path: e.g. "inspections/2026-08/front_1723289000_abc123.jpg" or "documents/12/licence_1723289000.jpg"

@@ -3,7 +3,10 @@ import { getBaseUrl, getGatewayKey } from "@/lib/gateway";
 import { PUBLIC_MEDIA_BUCKET, PRIVATE_DOCS_BUCKET, sanitizeFolder } from "@/lib/storage-buckets";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
-const MAX_BYTES = 8 * 1024 * 1024;
+/** 4 MB, matching crm/src/app/api/upload/route.ts — Vercel caps a Node serverless
+ * function's request body at 4.5 MB, so an 8 MB app limit was unreachable and produced
+ * an opaque platform 413 instead of this route's own error. See that file for detail. */
+const MAX_BYTES = 4 * 1024 * 1024;
 
 /** High-availability direct Supabase Storage upload with secondary CRM gateway fallback.
  * Guarantees zero 502 Bad Gateway proxy errors on production Vercel deployments. */
@@ -21,7 +24,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Only JPG, PNG, WEBP or PDF files are allowed." }, { status: 400 });
     }
     if (file.size > MAX_BYTES) {
-      return NextResponse.json({ error: "File is too large (max 8MB)." }, { status: 400 });
+      return NextResponse.json({ error: "File is too large (max 4MB)." }, { status: 400 });
     }
 
     // 1. Direct Supabase Storage Upload with Structured Path

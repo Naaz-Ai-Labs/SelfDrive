@@ -7,7 +7,9 @@ import { getWritableUploadsDir } from "@/lib/uploads-dir";
 import { PUBLIC_MEDIA_BUCKET, PRIVATE_DOCS_BUCKET } from "@/lib/storage-buckets";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
-const MAX_BYTES = 8 * 1024 * 1024;
+/** 4 MB, matching the other two upload routes — Vercel caps a Node serverless
+ * function's request body at 4.5 MB. See crm/src/app/api/upload/route.ts for detail. */
+const MAX_BYTES = 4 * 1024 * 1024;
 
 /** This route's only caller is web's own /api/upload, falling back here when its
  * direct Supabase upload attempt throws. Its sole real use is customer document
@@ -36,7 +38,7 @@ export async function POST(req: NextRequest) {
 
   if (!file || !(file instanceof File)) return NextResponse.json({ error: "No file provided." }, { status: 400 });
   if (!ALLOWED.has(file.type)) return NextResponse.json({ error: "Only JPG, PNG, WEBP or PDF files are allowed." }, { status: 400 });
-  if (file.size > MAX_BYTES) return NextResponse.json({ error: "File is too large (max 8MB)." }, { status: 400 });
+  if (file.size > MAX_BYTES) return NextResponse.json({ error: "File is too large (max 4MB)." }, { status: 400 });
 
   const dateStr = new Date().toISOString().slice(0, 7);
   const ext = file.type === "application/pdf" ? "pdf" : file.type.split("/")[1] || "jpg";
