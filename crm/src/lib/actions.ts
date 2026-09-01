@@ -2210,9 +2210,10 @@ export async function createManualBooking(input: {
   /** Required for an instant booking — see the note where the handover is recorded. */
   startOdometer?: number;
   fuelLevel?: string;
-  /** Same requirement the web checkout enforces (submitBooking in booking-actions.ts) —
-   * a counter booking is not exempt from having a licence and a government ID on file
-   * just because staff took it in person. */
+  /** Same requirement the web checkout's step 4 enforces (BookingForm.tsx's
+   * kycComplete + validateStep(4)) — a counter booking is not exempt from the
+   * driver's three mandatory documents just because staff took it in person.
+   * Pillion documents (kind "pillion_id" / "pillion_photo") remain optional. */
   documents?: Array<{ kind: string; url: string; number?: string; expiry?: string }>;
 }) {
   const user = await staffUser();
@@ -2226,13 +2227,21 @@ export async function createManualBooking(input: {
     return { ok: false as const, error: "Enter the odometer reading — an instant handover without it cannot bill extra km on return." };
   }
 
-  // Mirrors submitBooking's own gate — a booking taken at the counter still needs the
-  // customer's licence and a government ID on file before the vehicle can go out.
+  // Mirrors the web checkout's kycComplete + validateStep(4) exactly: the driver's
+  // licence, government ID and passport-size photo are all mandatory, plus a
+  // licence number in the standard format and an expiry that covers the whole rental.
   const docs = input.documents ?? [];
-  const hasLicence = docs.some((d) => (d.kind === "licence" || d.kind === "driver_licence") && d.url);
+  const licenceDoc = docs.find((d) => (d.kind === "licence" || d.kind === "driver_licence") && d.url);
   const hasGovtId = docs.some((d) => (d.kind === "govt_id" || d.kind === "driver_govt_id") && d.url);
-  if (!hasLicence || !hasGovtId) {
-    return { ok: false as const, error: "Upload the customer's driving licence and a government ID before creating the booking." };
+  const hasDriverPhoto = docs.some((d) => d.kind === "driver_photo" && d.url);
+  if (!licenceDoc || !hasGovtId || !hasDriverPhoto) {
+    return { ok: false as const, error: "Upload the driver's licence, government ID and passport-size photo before creating the booking." };
+  }
+  if (!licenceDoc.number || !/^[A-Z]{2}\d{2} \d{11}$/.test(licenceDoc.number)) {
+    return { ok: false as const, error: "Enter the driver licence number in the format KA04 12345678901." };
+  }
+  if (!licenceDoc.expiry || licenceDoc.expiry < input.returnAt.slice(0, 10)) {
+    return { ok: false as const, error: "The driver's licence must be valid through the return date." };
   }
 
   const { createBooking } = await import("./bookings");
@@ -2268,10 +2277,14 @@ export async function createManualBooking(input: {
   // Staff is physically holding the customer's documents at the counter — unlike the
   // web flow's photo uploaded for later remote review, there is nothing to verify
   // after the fact, so these land pre-verified.
+  const { normalizeDocKind } = await import("./booking-actions");
   const docRows = docs.map((d) => ({
     customer_id: created.customerId,
     booking_id: created.bookingId,
-    kind: d.kind === "driver_licence" ? "licence" : d.kind === "driver_govt_id" ? "govt_id" : d.kind,
+    // customer_documents_kind_check only allows licence|govt_id|address_proof|photo|other —
+    // pillion_id/pillion_photo/driver_photo collapse the same way the web checkout's own
+    // insert does (booking-actions.ts submitBooking), or the insert below fails the check.
+    kind: normalizeDocKind(d.kind),
     number: d.number ?? null,
     expiry_date: d.expiry ?? null,
     file_path: d.url,

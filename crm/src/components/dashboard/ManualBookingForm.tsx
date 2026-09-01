@@ -3,6 +3,26 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createManualBooking } from "@/lib/actions";
+import { compressImageFile } from "@/lib/image-compression";
+
+/** Same format the web checkout enforces (BookingForm.tsx's formatDlNumber). */
+function formatDlNumber(val: string): string {
+  const clean = val.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (clean.length <= 4) return clean;
+  return `${clean.slice(0, 4)} ${clean.slice(4, 15)}`;
+}
+
+type DocState = Record<string, { url: string; number?: string; expiry?: string }>;
+
+/** The driver's three documents, exactly as the web checkout's step 4 requires them.
+ * Pillion documents stay optional — most rides are solo. */
+const DOC_FIELDS: Array<[string, string]> = [
+  ["licence", "Driver Driving licence photo *"],
+  ["driver_govt_id", "Driver Government ID (Aadhaar/Passport) *"],
+  ["driver_photo", "Driver Passport Size Photo *"],
+  ["pillion_id", "Pillion ID Proof (Aadhaar/Passport) — optional"],
+  ["pillion_photo", "Pillion Passport Size Photo — optional"],
+];
 
 type VehicleOption = {
   id: number;
@@ -55,19 +75,30 @@ export function ManualBookingForm({
   const [fuelLevel, setFuelLevel] = useState("");
   const instant = mode === "instant";
 
-  // Same requirement the website enforces at checkout — a counter booking is not
-  // exempt just because staff took it in person.
-  const [licenceFile, setLicenceFile] = useState<File | null>(null);
-  const [govtIdFile, setGovtIdFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
+  // Same requirement the website enforces at checkout (BookingForm.tsx step 4) — a
+  // counter booking is not exempt just because staff took it in person.
+  const [documents, setDocuments] = useState<DocState>({});
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
 
-  async function uploadDoc(file: File, kind: string): Promise<{ kind: string; url: string }> {
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("folder", "documents");
-    const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
-    if (!res.ok || !res.path) throw new Error(res.error || `Could not upload the ${kind === "licence" ? "licence" : "ID"}.`);
-    return { kind, url: res.path };
+  const kycComplete = Boolean(documents.licence?.url && documents.driver_govt_id?.url && documents.driver_photo?.url);
+
+  async function upload(kind: string, file: File) {
+    setUploading(kind);
+    setUploadErrors((e) => ({ ...e, [kind]: "" }));
+    try {
+      const compressed = await compressImageFile(file, 1600, 0.8);
+      const fd = new FormData();
+      fd.append("file", compressed);
+      fd.append("folder", "documents");
+      const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
+      if (!res.ok || !res.path) throw new Error(res.error || "Upload failed. Please try again or use a smaller image.");
+      setDocuments((d) => ({ ...d, [kind]: { ...d[kind], url: res.path } }));
+    } catch (err) {
+      setUploadErrors((e) => ({ ...e, [kind]: err instanceof Error ? err.message : "Upload failed. Please try again." }));
+    } finally {
+      setUploading(null);
+    }
   }
 
   const selected = useMemo(
@@ -90,22 +121,25 @@ export function ManualBookingForm({
     }
     if (name.trim().length < 2) return setError("Enter the customer name.");
     if (!/^[+\d][\d\s-]{8,15}$/.test(phone.trim())) return setError("Enter a valid mobile number.");
-    if (!licenceFile || !govtIdFile) return setError("Upload the customer's driving licence and a government ID.");
+    if (!kycComplete) {
+      return setError("Upload the driver's licence, government ID and passport-size photo before creating the booking.");
+    }
+    const dlNumber = documents.licence?.number?.trim() ?? "";
+    if (!/^[A-Z]{2}\d{2} \d{11}$/.test(dlNumber)) {
+      return setError("Enter the driver licence number in the format KA04 12345678901.");
+    }
+    const dlExpiry = documents.licence?.expiry ?? "";
+    if (!dlExpiry) {
+      return setError("Enter the driver licence expiry date.");
+    }
+    if (dlExpiry < returnAt.slice(0, 10)) {
+      return setError("The driver's licence expires before the return date. A licence valid through the rental is required.");
+    }
 
     startTransition(async () => {
-      setUploading(true);
-      let documents: Array<{ kind: string; url: string }>;
-      try {
-        documents = await Promise.all([
-          uploadDoc(licenceFile, "licence"),
-          uploadDoc(govtIdFile, "govt_id"),
-        ]);
-      } catch (err) {
-        setUploading(false);
-        setError(err instanceof Error ? err.message : "Could not upload the documents.");
-        return;
-      }
-      setUploading(false);
+      const docPayload = Object.entries(documents)
+        .filter(([, d]) => d.url)
+        .map(([kind, d]) => ({ kind, url: d.url, number: d.number, expiry: d.expiry }));
 
       const res = await createManualBooking({
         vehicleId: Number(vehicleId),
@@ -124,7 +158,7 @@ export function ManualBookingForm({
         instant,
         startOdometer: startOdometer ? Number(startOdometer) : undefined,
         fuelLevel: fuelLevel || undefined,
-        documents,
+        documents: docPayload,
       });
 
       if (!res.ok) {
@@ -236,31 +270,68 @@ export function ManualBookingForm({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Driving licence *</label>
-          <input
-            className="input"
-            type="file"
-            accept=".pdf,image/jpeg,image/png,image/webp"
-            onChange={(e) => setLicenceFile(e.target.files?.[0] || null)}
-            disabled={pending}
-          />
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-ink-900">Driving licence &amp; documents</h3>
+        <p className="text-[11px] text-ink-500">
+          The driver&rsquo;s three documents are required for handover verification, same as an online
+          booking. Pillion documents are optional — add them only if someone is riding along.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {DOC_FIELDS.map(([kind, label]) => (
+            <label
+              key={kind}
+              className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-ink-200 bg-ink-50 p-4 text-center text-xs text-ink-500 hover:border-brand-500"
+            >
+              {documents[kind]?.url ? (
+                <span className="font-semibold text-emerald-700">✓ {label.replace(" *", "")} uploaded</span>
+              ) : (
+                <span>{uploading === kind ? "Uploading…" : `Upload ${label}`}</span>
+              )}
+              {uploadErrors[kind] && <span className="text-[11px] font-medium text-red-600">{uploadErrors[kind]} Tap to retry.</span>}
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                disabled={pending}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    upload(kind, file).catch(console.error);
+                    e.target.value = "";
+                  }
+                }}
+              />
+            </label>
+          ))}
         </div>
-        <div>
-          <label className="label">Government ID *</label>
-          <input
-            className="input"
-            type="file"
-            accept=".pdf,image/jpeg,image/png,image/webp"
-            onChange={(e) => setGovtIdFile(e.target.files?.[0] || null)}
-            disabled={pending}
-          />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">Driver licence number *</label>
+            <input
+              className="input font-mono uppercase"
+              placeholder="e.g. KA04 12345678901"
+              maxLength={16}
+              value={documents.licence?.number ?? ""}
+              disabled={pending}
+              onChange={(e) => {
+                const val = formatDlNumber(e.target.value);
+                setDocuments((d) => ({ ...d, licence: { ...d.licence, url: d.licence?.url ?? "", number: val } }));
+              }}
+            />
+            <p className="mt-1 text-[11px] text-ink-400">Format: 2 letters, 2 digits, space, 11 digits (e.g. KA04 12345678901)</p>
+          </div>
+          <div>
+            <label className="label">Driver licence expiry date *</label>
+            <input
+              className="input"
+              type="date"
+              value={documents.licence?.expiry ?? ""}
+              disabled={pending}
+              onChange={(e) => setDocuments((d) => ({ ...d, licence: { ...d.licence, url: d.licence?.url ?? "", expiry: e.target.value } }))}
+            />
+          </div>
         </div>
       </div>
-      <p className="text-[11px] text-ink-500 -mt-2">
-        Photograph or scan both documents — required before the vehicle can go out, same as an online booking.
-      </p>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div>
@@ -289,10 +360,8 @@ export function ManualBookingForm({
       </p>
 
       <div className="flex justify-end">
-        <button type="submit" disabled={pending} className="btn-primary text-sm font-semibold px-5 py-2">
-          {pending
-            ? (uploading ? "Uploading documents..." : "Creating booking...")
-            : instant ? "Create and hand over now" : "Create counter booking"}
+        <button type="submit" disabled={pending || Boolean(uploading)} className="btn-primary text-sm font-semibold px-5 py-2">
+          {pending ? "Creating booking..." : instant ? "Create and hand over now" : "Create counter booking"}
         </button>
       </div>
     </form>

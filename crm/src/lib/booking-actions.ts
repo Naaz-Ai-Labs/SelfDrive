@@ -82,7 +82,7 @@ const submitSchema = z.object({
   termsAccepted: z.literal(true, { errorMap: () => ({ message: "Please accept the terms and conditions to continue." }) }),
 });
 
-function normalizeDocKind(kind: string): string {
+export function normalizeDocKind(kind: string): string {
   switch (kind) {
     case "licence":
     case "driver_licence":
